@@ -1,0 +1,325 @@
+package app
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	"gopkg.in/yaml.v3"
+)
+
+type Config struct {
+	Root       string `yaml:"root" json:"root"`
+	ModelRoot  string `yaml:"model_root" json:"model_root"`
+	TmpRoot    string `yaml:"tmp_root" json:"tmp_root"`
+	LocksRoot  string `yaml:"locks_root" json:"locks_root"`
+	JournalDir string `yaml:"journal_dir" json:"journal_dir"`
+	StateDB    string `yaml:"state_db" json:"state_db"`
+	LogLevel   string `yaml:"log_level" json:"log_level"`
+
+	Registry      RegistryConfig      `yaml:"registry" json:"registry"`
+	Transfer      TransferConfig      `yaml:"transfer" json:"transfer"`
+	Download      DownloadConfig      `yaml:"download" json:"download"`
+	Integrity     IntegrityConfig     `yaml:"integrity" json:"integrity"`
+	Publish       PublishConfig       `yaml:"publish" json:"publish"`
+	Retention     RetentionConfig     `yaml:"retention" json:"retention"`
+	Observability ObservabilityConfig `yaml:"observability" json:"observability"`
+}
+
+type RegistryConfig struct {
+	TimeoutSeconds        int               `yaml:"timeout_seconds" json:"timeout_seconds"`
+	RequestTimeoutSeconds int               `yaml:"request_timeout_seconds" json:"request_timeout_seconds"`
+	Retries               int               `yaml:"retries" json:"retries"`
+	BackoffInitialMS      int               `yaml:"backoff_initial_ms" json:"backoff_initial_ms"`
+	BackoffMaxMS          int               `yaml:"backoff_max_ms" json:"backoff_max_ms"`
+	Mirrors               []string          `yaml:"mirrors" json:"mirrors"`
+	Auth                  RegistryAuth      `yaml:"auth" json:"auth"`
+	PlainHTTP             bool              `yaml:"plain_http" json:"plain_http"`
+	Headers               map[string]string `yaml:"headers" json:"headers"`
+}
+
+type RegistryAuth struct {
+	Mode             string `yaml:"mode" json:"mode"`
+	DockerConfigPath string `yaml:"docker_config_path" json:"docker_config_path"`
+}
+
+type TransferConfig struct {
+	MaxModelsConcurrent         int `yaml:"max_models_concurrent" json:"max_models_concurrent"`
+	MaxShardsConcurrentPerModel int `yaml:"max_shards_concurrent_per_model" json:"max_shards_concurrent_per_model"`
+	MaxConnectionsPerRegistry   int `yaml:"max_connections_per_registry" json:"max_connections_per_registry"`
+	StreamBufferBytes           int `yaml:"stream_buffer_bytes" json:"stream_buffer_bytes"`
+	MaxResumeAttempts           int `yaml:"max_resume_attempts" json:"max_resume_attempts"`
+}
+
+type DownloadConfig struct {
+	MaxConcurrentRequestsGlobal   int                 `yaml:"max_concurrent_requests_global" json:"max_concurrent_requests_global"`
+	MaxConcurrentRequestsPerModel int                 `yaml:"max_concurrent_requests_per_model" json:"max_concurrent_requests_per_model"`
+	MaxConcurrentChunksPerBlob    int                 `yaml:"max_concurrent_chunks_per_blob" json:"max_concurrent_chunks_per_blob"`
+	ChunkSizeBytes                int64               `yaml:"chunk_size_bytes" json:"chunk_size_bytes"`
+	MaxIdleConns                  int                 `yaml:"max_idle_conns" json:"max_idle_conns"`
+	MaxIdleConnsPerHost           int                 `yaml:"max_idle_conns_per_host" json:"max_idle_conns_per_host"`
+	MaxConnsPerHost               int                 `yaml:"max_conns_per_host" json:"max_conns_per_host"`
+	RequestTimeoutSec             int                 `yaml:"request_timeout_sec" json:"request_timeout_sec"`
+	ResponseHeaderTimeoutSec      int                 `yaml:"response_header_timeout_sec" json:"response_header_timeout_sec"`
+	Retry                         DownloadRetryConfig `yaml:"retry" json:"retry"`
+}
+
+type DownloadRetryConfig struct {
+	MaxRetries   int  `yaml:"max_retries" json:"max_retries"`
+	MinBackoffMS int  `yaml:"min_backoff_ms" json:"min_backoff_ms"`
+	MaxBackoffMS int  `yaml:"max_backoff_ms" json:"max_backoff_ms"`
+	Jitter       bool `yaml:"jitter" json:"jitter"`
+}
+
+type IntegrityConfig struct {
+	StrictDigest       bool `yaml:"strict_digest" json:"strict_digest"`
+	StrictSignature    bool `yaml:"strict_signature" json:"strict_signature"`
+	AllowUnsignedInDev bool `yaml:"allow_unsigned_in_dev" json:"allow_unsigned_in_dev"`
+}
+
+type PublishConfig struct {
+	RequireReadyMarker bool `yaml:"require_ready_marker" json:"require_ready_marker"`
+	FsyncFiles         bool `yaml:"fsync_files" json:"fsync_files"`
+	FsyncDirectory     bool `yaml:"fsync_directory" json:"fsync_directory"`
+	AtomicPublish      bool `yaml:"atomic_publish" json:"atomic_publish"`
+	DenyPartialReads   bool `yaml:"deny_partial_reads" json:"deny_partial_reads"`
+}
+
+type RetentionConfig struct {
+	Policy                string `yaml:"policy" json:"policy"`
+	MinFreeBytes          int64  `yaml:"min_free_bytes" json:"min_free_bytes"`
+	MaxModels             int    `yaml:"max_models" json:"max_models"`
+	TTLHours              int    `yaml:"ttl_hours" json:"ttl_hours"`
+	EmergencyLowSpaceMode bool   `yaml:"emergency_low_space_mode" json:"emergency_low_space_mode"`
+}
+
+type ObservabilityConfig struct {
+	MetricsEnabled bool   `yaml:"metrics_enabled" json:"metrics_enabled"`
+	MetricsListen  string `yaml:"metrics_listen" json:"metrics_listen"`
+	EventsJSONLog  bool   `yaml:"events_json_log" json:"events_json_log"`
+}
+
+func DefaultConfig() Config {
+	root := "/var/lib/oci2gdsd"
+	return Config{
+		Root:       root,
+		ModelRoot:  filepath.Join(root, "models"),
+		TmpRoot:    filepath.Join(root, "tmp"),
+		LocksRoot:  filepath.Join(root, "locks"),
+		JournalDir: filepath.Join(root, "journal"),
+		StateDB:    filepath.Join(root, "state.db"),
+		LogLevel:   "info",
+		Registry: RegistryConfig{
+			TimeoutSeconds:        30,
+			RequestTimeoutSeconds: 30,
+			Retries:               5,
+			BackoffInitialMS:      250,
+			BackoffMaxMS:          8000,
+			Auth: RegistryAuth{
+				Mode: "docker-config",
+			},
+		},
+		Transfer: TransferConfig{
+			MaxModelsConcurrent:         2,
+			MaxShardsConcurrentPerModel: 4,
+			MaxConnectionsPerRegistry:   16,
+			StreamBufferBytes:           4 * 1024 * 1024,
+			MaxResumeAttempts:           2,
+		},
+		Download: DownloadConfig{
+			MaxConcurrentRequestsGlobal:   64,
+			MaxConcurrentRequestsPerModel: 12,
+			MaxConcurrentChunksPerBlob:    6,
+			ChunkSizeBytes:                16 * 1024 * 1024,
+			MaxIdleConns:                  256,
+			MaxIdleConnsPerHost:           128,
+			MaxConnsPerHost:               128,
+			RequestTimeoutSec:             300,
+			ResponseHeaderTimeoutSec:      5,
+			Retry: DownloadRetryConfig{
+				MaxRetries:   8,
+				MinBackoffMS: 30,
+				MaxBackoffMS: 300000,
+				Jitter:       true,
+			},
+		},
+		Integrity: IntegrityConfig{
+			StrictDigest:       true,
+			StrictSignature:    true,
+			AllowUnsignedInDev: false,
+		},
+		Publish: PublishConfig{
+			RequireReadyMarker: true,
+			FsyncFiles:         true,
+			FsyncDirectory:     true,
+			AtomicPublish:      true,
+			DenyPartialReads:   true,
+		},
+		Retention: RetentionConfig{
+			Policy:                "lru_no_lease",
+			MinFreeBytes:          200 * 1024 * 1024 * 1024,
+			MaxModels:             16,
+			TTLHours:              168,
+			EmergencyLowSpaceMode: true,
+		},
+		Observability: ObservabilityConfig{
+			MetricsEnabled: true,
+			MetricsListen:  "127.0.0.1:9098",
+			EventsJSONLog:  true,
+		},
+	}
+}
+
+func LoadConfig(path string) (Config, error) {
+	cfg := DefaultConfig()
+	if path == "" {
+		return cfg, cfg.Validate()
+	}
+
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return Config{}, NewAppError(ExitValidation, ReasonValidationFailed, "failed to read config", err)
+	}
+	if err := yaml.Unmarshal(b, &cfg); err != nil {
+		return Config{}, NewAppError(ExitValidation, ReasonValidationFailed, "failed to parse config", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		return Config{}, err
+	}
+	return cfg, nil
+}
+
+func (c *Config) ApplyGlobalOverrides(root string, targetRoot string, logLevel string) {
+	if root != "" {
+		c.Root = root
+		if c.ModelRoot == "" || c.ModelRoot == filepath.Join("/var/lib/oci2gdsd", "models") {
+			c.ModelRoot = filepath.Join(root, "models")
+		}
+		if c.TmpRoot == "" || c.TmpRoot == filepath.Join("/var/lib/oci2gdsd", "tmp") {
+			c.TmpRoot = filepath.Join(root, "tmp")
+		}
+		if c.LocksRoot == "" || c.LocksRoot == filepath.Join("/var/lib/oci2gdsd", "locks") {
+			c.LocksRoot = filepath.Join(root, "locks")
+		}
+		if c.JournalDir == "" || c.JournalDir == filepath.Join("/var/lib/oci2gdsd", "journal") {
+			c.JournalDir = filepath.Join(root, "journal")
+		}
+		if c.StateDB == "" || c.StateDB == filepath.Join("/var/lib/oci2gdsd", "state.db") {
+			c.StateDB = filepath.Join(root, "state.db")
+		}
+	}
+	if targetRoot != "" {
+		c.ModelRoot = targetRoot
+	}
+	if logLevel != "" {
+		c.LogLevel = logLevel
+	}
+}
+
+func (c Config) Validate() error {
+	if c.Root == "" {
+		return NewAppError(ExitValidation, ReasonValidationFailed, "root must not be empty", nil)
+	}
+	if !filepath.IsAbs(c.Root) {
+		return NewAppError(ExitValidation, ReasonValidationFailed, "root must be an absolute path", nil)
+	}
+	if c.ModelRoot == "" {
+		c.ModelRoot = filepath.Join(c.Root, "models")
+	}
+	if !filepath.IsAbs(c.ModelRoot) {
+		return NewAppError(ExitValidation, ReasonValidationFailed, "model_root must be an absolute path", nil)
+	}
+	if c.TmpRoot == "" {
+		c.TmpRoot = filepath.Join(c.Root, "tmp")
+	}
+	if !filepath.IsAbs(c.TmpRoot) {
+		return NewAppError(ExitValidation, ReasonValidationFailed, "tmp_root must be an absolute path", nil)
+	}
+	if c.LocksRoot == "" {
+		c.LocksRoot = filepath.Join(c.Root, "locks")
+	}
+	if !filepath.IsAbs(c.LocksRoot) {
+		return NewAppError(ExitValidation, ReasonValidationFailed, "locks_root must be an absolute path", nil)
+	}
+	if c.JournalDir == "" {
+		c.JournalDir = filepath.Join(c.Root, "journal")
+	}
+	if !filepath.IsAbs(c.JournalDir) {
+		return NewAppError(ExitValidation, ReasonValidationFailed, "journal_dir must be an absolute path", nil)
+	}
+	if c.StateDB == "" {
+		c.StateDB = filepath.Join(c.Root, "state.db")
+	}
+	if !filepath.IsAbs(c.StateDB) {
+		return NewAppError(ExitValidation, ReasonValidationFailed, "state_db must be an absolute path", nil)
+	}
+	if c.Transfer.MaxShardsConcurrentPerModel <= 0 {
+		return NewAppError(ExitValidation, ReasonValidationFailed, "transfer.max_shards_concurrent_per_model must be > 0", nil)
+	}
+	if c.Transfer.StreamBufferBytes <= 0 {
+		return NewAppError(ExitValidation, ReasonValidationFailed, "transfer.stream_buffer_bytes must be > 0", nil)
+	}
+	if c.Retention.MinFreeBytes < 0 {
+		return NewAppError(ExitValidation, ReasonValidationFailed, "retention.min_free_bytes must be >= 0", nil)
+	}
+	if c.Integrity.StrictSignature && c.Integrity.AllowUnsignedInDev {
+		return NewAppError(ExitValidation, ReasonValidationFailed, "integrity.strict_signature and allow_unsigned_in_dev cannot both be true", nil)
+	}
+	if c.Registry.Auth.DockerConfigPath != "" && !filepath.IsAbs(c.Registry.Auth.DockerConfigPath) {
+		return NewAppError(ExitValidation, ReasonValidationFailed, "registry.auth.docker_config_path must be absolute", nil)
+	}
+	return nil
+}
+
+func (c Config) EnsureDirectories() error {
+	dirs := []string{
+		c.Root,
+		c.ModelRoot,
+		c.TmpRoot,
+		c.LocksRoot,
+		c.JournalDir,
+	}
+	for _, d := range dirs {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			return NewAppError(ExitFilesystem, ReasonFilesystemError, fmt.Sprintf("failed to create directory %s", d), err)
+		}
+	}
+	return nil
+}
+
+func (c Config) TimeoutOrDefault(d time.Duration) time.Duration {
+	if d > 0 {
+		return d
+	}
+	timeoutSeconds := c.Registry.RequestTimeoutSeconds
+	if timeoutSeconds <= 0 {
+		timeoutSeconds = c.Registry.TimeoutSeconds
+	}
+	if timeoutSeconds <= 0 {
+		timeoutSeconds = 30
+	}
+	return time.Duration(timeoutSeconds) * time.Second
+}
+
+func (c Config) EffectiveDockerConfig() string {
+	if c.Registry.Auth.DockerConfigPath != "" {
+		return c.Registry.Auth.DockerConfigPath
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, ".docker", "config.json")
+	}
+	return ""
+}
+
+func parseMinFreeBytesOrDefault(flagValue string, fallback int64) (int64, error) {
+	if flagValue == "" {
+		return fallback, nil
+	}
+	n, err := ParseByteSize(flagValue)
+	if err != nil {
+		return 0, errors.New("invalid --min-free-bytes")
+	}
+	return n, nil
+}

@@ -1,0 +1,7 @@
+oci2gdsd
+
+# Test harness runtime artifacts
+testharness/nvkind-e2e/work/
+
+# macOS
+.DS_Store
