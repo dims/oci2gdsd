@@ -72,6 +72,11 @@ oci2gdsd gc --policy lru_no_lease --min-free-bytes 200G --json
 - GPU direct loader is available behind `-tags gds` (`gpu probe`, `gpu load`).
 - Section 37 high-speed chunked range download semantics are represented in config and HTTP transport tuning, but full per-blob parallel range fetching is not yet implemented.
 
+## User Docs
+
+- CLI reference: `/Users/dsrinivas/go/src/github.com/dims/oci2gdsd/docs/cli-reference.md`
+- Config reference: `/Users/dsrinivas/go/src/github.com/dims/oci2gdsd/docs/config-reference.md`
+
 ## Reproducible Qwen3 OCI Packaging
 
 See:
@@ -79,3 +84,9 @@ See:
 - `/Users/dsrinivas/go/src/github.com/dims/oci2gdsd/packaging/qwen3-oci-modelprofile-v1`
 
 It contains a Dockerized workflow to pull Qwen3 from Hugging Face and push an OCI artifact with `OCI-ModelProfile-v1` semantics for `oci2gdsd`.
+
+## OCI-ModelProfile-v1 Principles
+
+Design rationale and compatibility principles are documented in:
+
+- `/Users/dsrinivas/go/src/github.com/dims/oci2gdsd/docs/OCI-ModelProfile-v1.md`
