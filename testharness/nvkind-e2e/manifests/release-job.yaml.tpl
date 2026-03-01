@@ -34,7 +34,7 @@ spec:
         command: ["/bin/sh", "-ec"]
         args:
         - |
-          set -euo pipefail
+          set -eu
           oci2gdsd --registry-config /etc/oci2gdsd/config.yaml --json release \
             --model-id "__MODEL_ID__" \
             --digest "__MODEL_DIGEST__" \

@@ -9,6 +9,7 @@ It is designed to run directly by an operator on a machine and does not require 
 - Local OCI registry in-cluster for repeatable artifact tests.
 - `oci2gdsd ensure/status/verify` in an init container.
 - PyTorch container reading preloaded model files and running CUDA compute.
+- Validation of `examples/qwen-hello` deployment on the same cluster.
 - `oci2gdsd release + gc + status` on the same node as workload pod.
 
 ## Run
@@ -30,6 +31,9 @@ MODEL_REF_OVERRIDE=oci-model-registry.oci2gdsd-registry.svc.cluster.local:5000/m
 MODEL_DIGEST_OVERRIDE=sha256:... \
 make nvkind-e2e
 
+# Skip qwen-hello example validation (enabled by default)
+VALIDATE_QWEN_HELLO=false make nvkind-e2e
+
 # Force namespace/cluster names
 CLUSTER_NAME=oci2gdsd-e2e E2E_NAMESPACE=oci2gdsd-e2e make nvkind-e2e
 ```
@@ -46,4 +50,5 @@ Logs are written under:
 
 - `testharness/nvkind-e2e/work/results/preload.log`
 - `testharness/nvkind-e2e/work/results/pytorch.log`
+- `testharness/nvkind-e2e/work/results/qwen-hello.log`
 - `testharness/nvkind-e2e/work/results/release-gc.log`

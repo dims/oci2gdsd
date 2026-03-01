@@ -37,7 +37,7 @@ spec:
         command: ["/bin/sh", "-ec"]
         args:
         - |
-          set -euo pipefail
+          set -eu
           oci2gdsd --registry-config /etc/oci2gdsd/config.yaml --json ensure \
             --ref "__MODEL_REF__" \
             --model-id "__MODEL_ID__" \
@@ -63,7 +63,7 @@ spec:
         command: ["/bin/sh", "-ec"]
         args:
         - |
-          set -euo pipefail
+          set -eu
           python /scripts/pytorch_smoke.py
         env:
         - name: MODEL_ROOT_PATH

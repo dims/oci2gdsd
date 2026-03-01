@@ -15,6 +15,7 @@ install_gpu_operator
 verify_gpu_pod
 
 build_and_load_oci2gdsd_image
+preload_workload_image
 if [[ -n "${MODEL_REF_OVERRIDE:-}" && -n "${MODEL_DIGEST_OVERRIDE:-}" ]]; then
   log "MODEL_REF_OVERRIDE and MODEL_DIGEST_OVERRIDE set; skipping local model packaging"
   package_model_to_registry
@@ -69,6 +70,17 @@ if ! grep -q 'PYTORCH_SMOKE_SUCCESS' "${WORK_DIR}/results/pytorch.log"; then
   die "pytorch smoke container did not report success marker"
 fi
 
+if [[ "${VALIDATE_QWEN_HELLO}" == "true" ]]; then
+  log "validating examples/qwen-hello deployment"
+  if ! validate_qwen_hello_example; then
+    collect_debug
+    kubectl --context "${KUBECTL_CONTEXT}" -n "${QWEN_HELLO_NAMESPACE}" logs deploy/qwen-hello -c preload-model || true
+    kubectl --context "${KUBECTL_CONTEXT}" -n "${QWEN_HELLO_NAMESPACE}" logs deploy/qwen-hello -c hello || true
+    die "qwen hello example validation failed"
+  fi
+  cleanup_qwen_hello_example
+fi
+
 POD_NAME="$(kubectl --context "${KUBECTL_CONTEXT}" -n "${E2E_NAMESPACE}" get pod -l job-name=oci2gdsd-pytorch-smoke -o jsonpath='{.items[0].metadata.name}')"
 NODE_NAME="$(kubectl --context "${KUBECTL_CONTEXT}" -n "${E2E_NAMESPACE}" get pod "${POD_NAME}" -o jsonpath='{.spec.nodeName}')"
 if [[ -z "${NODE_NAME}" ]]; then
@@ -103,4 +115,7 @@ log "nvkind e2e harness completed successfully"
 log "artifacts:"
 log "  ${WORK_DIR}/results/preload.log"
 log "  ${WORK_DIR}/results/pytorch.log"
+if [[ -f "${WORK_DIR}/results/qwen-hello.log" ]]; then
+  log "  ${WORK_DIR}/results/qwen-hello.log"
+fi
 log "  ${WORK_DIR}/results/release-gc.log"

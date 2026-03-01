@@ -11,6 +11,7 @@ mkdir -p "${WORK_DIR}" "${LOG_DIR}"
 CLUSTER_NAME="${CLUSTER_NAME:-oci2gdsd-e2e}"
 KUBECTL_CONTEXT="kind-${CLUSTER_NAME}"
 E2E_NAMESPACE="${E2E_NAMESPACE:-oci2gdsd-e2e}"
+QWEN_HELLO_NAMESPACE="${QWEN_HELLO_NAMESPACE:-qwen-hello}"
 REGISTRY_NAMESPACE="${REGISTRY_NAMESPACE:-oci2gdsd-registry}"
 REGISTRY_SERVICE="${REGISTRY_SERVICE:-oci-model-registry}"
 LOCAL_REGISTRY_PORT="${LOCAL_REGISTRY_PORT:-5002}"
@@ -23,6 +24,7 @@ MODEL_TAG="${MODEL_TAG:-v1}"
 LEASE_HOLDER="${LEASE_HOLDER:-k8s-e2e}"
 MODEL_REF_OVERRIDE="${MODEL_REF_OVERRIDE:-}"
 MODEL_DIGEST_OVERRIDE="${MODEL_DIGEST_OVERRIDE:-}"
+VALIDATE_QWEN_HELLO="${VALIDATE_QWEN_HELLO:-true}"
 
 OCI2GDSD_IMAGE="${OCI2GDSD_IMAGE:-oci2gdsd:e2e}"
 PACKAGER_IMAGE="${PACKAGER_IMAGE:-oci2gdsd-qwen3-packager:local}"
@@ -79,9 +81,19 @@ ensure_apt_available() {
 
 install_go_if_missing() {
   if command -v go >/dev/null 2>&1; then
-    return
+    local current
+    current="$(go version 2>/dev/null | awk '{print $3}' | tr -d '\r' | gsed 's/^go//')"
+    if [[ -n "${current}" ]]; then
+      local older
+      older="$(printf '%s\n%s\n' "${current}" "${GO_VERSION}" | sort -V | head -n1)"
+      if [[ "${older}" != "${current}" || "${current}" == "${GO_VERSION}" ]]; then
+        return
+      fi
+      log "upgrading Go from ${current} to ${GO_VERSION}"
+    fi
+  else
+    log "installing Go ${GO_VERSION}"
   fi
-  log "installing Go ${GO_VERSION}"
   curl -fsSL -o /tmp/go${GO_VERSION}.linux-amd64.tar.gz "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
   maybe_sudo rm -rf /usr/local/go
   maybe_sudo tar -C /usr/local -xzf /tmp/go${GO_VERSION}.linux-amd64.tar.gz
@@ -89,11 +101,22 @@ install_go_if_missing() {
 }
 
 ensure_go_path() {
-  if command -v go >/dev/null 2>&1; then
-    return
-  fi
   if [[ -x /usr/local/go/bin/go ]]; then
-    export PATH="/usr/local/go/bin:${PATH}"
+    local preferred
+    preferred="$(/usr/local/go/bin/go version 2>/dev/null | awk '{print $3}' | tr -d '\r' | gsed 's/^go//')"
+    if ! command -v go >/dev/null 2>&1; then
+      export PATH="/usr/local/go/bin:${PATH}"
+      return
+    fi
+    local current
+    current="$(go version 2>/dev/null | awk '{print $3}' | tr -d '\r' | gsed 's/^go//')"
+    if [[ -n "${preferred}" && -n "${current}" ]]; then
+      local older
+      older="$(printf '%s\n%s\n' "${current}" "${preferred}" | sort -V | head -n1)"
+      if [[ "${older}" == "${current}" && "${current}" != "${preferred}" ]]; then
+        export PATH="/usr/local/go/bin:${PATH}"
+      fi
+    fi
   fi
 }
 
@@ -289,6 +312,20 @@ build_and_load_oci2gdsd_image() {
   kind load docker-image "${OCI2GDSD_IMAGE}" --name "${CLUSTER_NAME}"
 }
 
+preload_workload_image() {
+  local tries=0
+  local max_tries=3
+  until docker pull "${PYTORCH_IMAGE}"; do
+    tries=$((tries + 1))
+    if [[ "${tries}" -ge "${max_tries}" ]]; then
+      die "failed to pull workload image after ${max_tries} attempts: ${PYTORCH_IMAGE}"
+    fi
+    warn "retrying workload image pull (${tries}/${max_tries}): ${PYTORCH_IMAGE}"
+    sleep 5
+  done
+  kind load docker-image "${PYTORCH_IMAGE}" --name "${CLUSTER_NAME}"
+}
+
 build_packager_image() {
   log "building packager image ${PACKAGER_IMAGE}"
   docker build -t "${PACKAGER_IMAGE}" "${REPO_ROOT}/packaging/qwen3-oci-modelprofile-v1"
@@ -357,10 +394,14 @@ package_model_to_registry() {
   fi
   local packager_work="${WORK_DIR}/packager"
   mkdir -p "${packager_work}"
+  mkdir -p "${packager_work}/.cache/huggingface"
   log "packaging model ${HF_REPO}@${HF_REVISION} to local registry"
   docker run --rm --network host \
     -u "$(id -u):$(id -g)" \
     -e HF_TOKEN="${HF_TOKEN:-}" \
+    -e HOME="/work" \
+    -e HF_HOME="/work/.cache/huggingface" \
+    -e XDG_CACHE_HOME="/work/.cache" \
     -v "${packager_work}:/work" \
     "${PACKAGER_IMAGE}" \
     --hf-repo "${HF_REPO}" \
@@ -379,6 +420,60 @@ package_model_to_registry() {
   log "model ref for pods: ${MODEL_REF}"
 }
 
+validate_qwen_hello_example() {
+  local template="${REPO_ROOT}/examples/qwen-hello/qwen-nvkind-hello-deployment.yaml.tpl"
+  if [[ ! -f "${template}" ]]; then
+    warn "missing example template: ${template}"
+    return 1
+  fi
+  mkdir -p "${WORK_DIR}/rendered" "${WORK_DIR}/results"
+  local rendered="${WORK_DIR}/rendered/qwen-hello.yaml"
+  local model_root="${OCI2GDSD_ROOT_PATH}/models/${MODEL_ID}/${MODEL_DIGEST//:/-}"
+  render_template "${template}" "${rendered}" \
+    "QWEN_HELLO_NAMESPACE=${QWEN_HELLO_NAMESPACE}" \
+    "MODEL_ID=${MODEL_ID}" \
+    "MODEL_REF=${MODEL_REF}" \
+    "MODEL_DIGEST=${MODEL_DIGEST}" \
+    "MODEL_ROOT_PATH=${model_root}" \
+    "OCI2GDSD_IMAGE=${OCI2GDSD_IMAGE}" \
+    "OCI2GDSD_ROOT_PATH=${OCI2GDSD_ROOT_PATH}" \
+    "LEASE_HOLDER=${LEASE_HOLDER}"
+
+  kubectl --context "${KUBECTL_CONTEXT}" apply -f "${rendered}"
+  kubectl --context "${KUBECTL_CONTEXT}" -n "${QWEN_HELLO_NAMESPACE}" \
+    rollout status deploy/qwen-hello --timeout=1800s
+  local log_file="${WORK_DIR}/results/qwen-hello.log"
+  : > "${log_file}"
+  local pod_name
+  pod_name="$(kubectl --context "${KUBECTL_CONTEXT}" -n "${QWEN_HELLO_NAMESPACE}" \
+    get pod -l app=qwen-hello -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+  if [[ -z "${pod_name}" ]]; then
+    warn "failed to resolve qwen-hello pod name"
+    return 1
+  fi
+
+  local start_ts timeout_secs now
+  start_ts="$(date +%s)"
+  timeout_secs=180
+  while true; do
+    kubectl --context "${KUBECTL_CONTEXT}" -n "${QWEN_HELLO_NAMESPACE}" \
+      logs "pod/${pod_name}" -c hello > "${log_file}" 2>/dev/null || true
+    if grep -q 'QWEN_NVKIND_HELLO_SUCCESS' "${log_file}"; then
+      return 0
+    fi
+    now="$(date +%s)"
+    if (( now - start_ts >= timeout_secs )); then
+      warn "qwen hello example did not report success marker within ${timeout_secs}s"
+      return 1
+    fi
+    sleep 3
+  done
+}
+
+cleanup_qwen_hello_example() {
+  kubectl --context "${KUBECTL_CONTEXT}" delete namespace "${QWEN_HELLO_NAMESPACE}" --ignore-not-found >/dev/null || true
+}
+
 collect_debug() {
   warn "collecting debug artifacts"
   kubectl --context "${KUBECTL_CONTEXT}" get nodes -o wide || true
@@ -386,4 +481,5 @@ collect_debug() {
   kubectl --context "${KUBECTL_CONTEXT}" -n gpu-operator get pods -o wide || true
   kubectl --context "${KUBECTL_CONTEXT}" -n "${E2E_NAMESPACE}" get pods -o wide || true
   kubectl --context "${KUBECTL_CONTEXT}" -n "${E2E_NAMESPACE}" get jobs || true
+  kubectl --context "${KUBECTL_CONTEXT}" -n "${QWEN_HELLO_NAMESPACE}" get pods -o wide || true
 }

@@ -10,6 +10,7 @@ stop_registry_port_forward || true
 
 if kind get clusters 2>/dev/null | grep -Fxq "${CLUSTER_NAME}"; then
   kubectl --context "${KUBECTL_CONTEXT}" delete namespace "${E2E_NAMESPACE}" --ignore-not-found >/dev/null || true
+  kubectl --context "${KUBECTL_CONTEXT}" delete namespace "${QWEN_HELLO_NAMESPACE}" --ignore-not-found >/dev/null || true
   kubectl --context "${KUBECTL_CONTEXT}" delete namespace "${REGISTRY_NAMESPACE}" --ignore-not-found >/dev/null || true
   if command -v nvkind >/dev/null 2>&1; then
     nvkind cluster delete --name="${CLUSTER_NAME}" || true
