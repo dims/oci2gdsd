@@ -331,7 +331,7 @@ EOF
 build_and_load_oci2gdsd_image() {
   log "building oci2gdsd image ${OCI2GDSD_IMAGE}"
   docker build -f "${HARNESS_DIR}/Dockerfile.oci2gdsd" -t "${OCI2GDSD_IMAGE}" "${REPO_ROOT}"
-  kind load docker-image "${OCI2GDSD_IMAGE}" --name "${CLUSTER_NAME}"
+  kind_load_image "${OCI2GDSD_IMAGE}"
 }
 
 preload_workload_image() {
@@ -345,7 +345,19 @@ preload_workload_image() {
     warn "retrying workload image pull (${tries}/${max_tries}): ${PYTORCH_IMAGE}"
     sleep 5
   done
-  kind load docker-image "${PYTORCH_IMAGE}" --name "${CLUSTER_NAME}"
+  kind_load_image "${PYTORCH_IMAGE}"
+}
+
+kind_load_image() {
+  local image="$1"
+  if kind load docker-image "${image}" --name "${CLUSTER_NAME}"; then
+    return
+  fi
+  if [[ "$(id -u)" -eq 0 ]]; then
+    die "kind load docker-image failed for ${image}"
+  fi
+  warn "kind load docker-image failed for ${image}; retrying with sudo"
+  maybe_sudo kind load docker-image "${image}" --name "${CLUSTER_NAME}"
 }
 
 build_packager_image() {

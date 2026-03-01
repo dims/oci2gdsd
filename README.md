@@ -19,7 +19,7 @@ to a deterministic local model cache with strict integrity checks and atomic pub
 ## Build
 
 ```bash
-cd /Users/dsrinivas/go/src/github.com/dims/oci2gdsd
+cd /path/to/oci2gdsd
 go build ./cmd/oci2gdsd
 ```
 
@@ -74,14 +74,14 @@ oci2gdsd gc --policy lru_no_lease --min-free-bytes 200G --json
 
 ## User Docs
 
-- CLI reference: `/Users/dsrinivas/go/src/github.com/dims/oci2gdsd/docs/cli-reference.md`
-- Config reference: `/Users/dsrinivas/go/src/github.com/dims/oci2gdsd/docs/config-reference.md`
+- CLI reference: [docs/cli-reference.md](docs/cli-reference.md)
+- Config reference: [docs/config-reference.md](docs/config-reference.md)
 
 ## Reproducible Qwen3 OCI Packaging
 
 See:
 
-- `/Users/dsrinivas/go/src/github.com/dims/oci2gdsd/packaging/qwen3-oci-modelprofile-v1`
+- [packaging/qwen3-oci-modelprofile-v1](packaging/qwen3-oci-modelprofile-v1)
 
 It contains a Dockerized workflow to pull Qwen3 from Hugging Face and push an OCI artifact with `OCI-ModelProfile-v1` semantics for `oci2gdsd`.
 
@@ -89,4 +89,4 @@ It contains a Dockerized workflow to pull Qwen3 from Hugging Face and push an OC
 
 Design rationale and compatibility principles are documented in:
 
-- `/Users/dsrinivas/go/src/github.com/dims/oci2gdsd/docs/OCI-ModelProfile-v1.md`
+- [docs/OCI-ModelProfile-v1.md](docs/OCI-ModelProfile-v1.md)
