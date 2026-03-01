@@ -69,6 +69,13 @@ maybe_sudo() {
   fi
 }
 
+strip_go_prefix() {
+  local version="$1"
+  version="${version//$'\r'/}"
+  version="${version#go}"
+  echo "${version}"
+}
+
 require_linux_host() {
   if [[ "$(uname -s)" != "Linux" ]]; then
     die "this harness currently supports Linux hosts (Brev/Ubuntu expected)"
@@ -82,7 +89,7 @@ ensure_apt_available() {
 install_go_if_missing() {
   if command -v go >/dev/null 2>&1; then
     local current
-    current="$(go version 2>/dev/null | awk '{print $3}' | tr -d '\r' | gsed 's/^go//')"
+    current="$(strip_go_prefix "$(go version 2>/dev/null | awk '{print $3}')")"
     if [[ -n "${current}" ]]; then
       local older
       older="$(printf '%s\n%s\n' "${current}" "${GO_VERSION}" | sort -V | head -n1)"
@@ -103,13 +110,13 @@ install_go_if_missing() {
 ensure_go_path() {
   if [[ -x /usr/local/go/bin/go ]]; then
     local preferred
-    preferred="$(/usr/local/go/bin/go version 2>/dev/null | awk '{print $3}' | tr -d '\r' | gsed 's/^go//')"
+    preferred="$(strip_go_prefix "$(/usr/local/go/bin/go version 2>/dev/null | awk '{print $3}')")"
     if ! command -v go >/dev/null 2>&1; then
       export PATH="/usr/local/go/bin:${PATH}"
       return
     fi
     local current
-    current="$(go version 2>/dev/null | awk '{print $3}' | tr -d '\r' | gsed 's/^go//')"
+    current="$(strip_go_prefix "$(go version 2>/dev/null | awk '{print $3}')")"
     if [[ -n "${preferred}" && -n "${current}" ]]; then
       local older
       older="$(printf '%s\n%s\n' "${current}" "${preferred}" | sort -V | head -n1)"
@@ -189,7 +196,16 @@ ensure_docker_access() {
     return
   fi
   if maybe_sudo docker info >/dev/null 2>&1; then
-    die "docker is installed but current user cannot access it yet; run 'newgrp docker' or log out/in, then rerun"
+    warn "docker is installed but current user cannot access it yet; using sudo docker shim for this run"
+    local shim_dir="${WORK_DIR}/bin"
+    mkdir -p "${shim_dir}"
+    cat > "${shim_dir}/docker" <<'EOF'
+#!/usr/bin/env bash
+exec sudo docker "$@"
+EOF
+    chmod +x "${shim_dir}/docker"
+    export PATH="${shim_dir}:${PATH}"
+    return
   fi
   die "docker daemon is not reachable"
 }
@@ -215,6 +231,12 @@ install_nvkind_if_missing() {
   ensure_go_path
   if command -v nvkind >/dev/null 2>&1; then
     return
+  fi
+  if ! command -v gcc >/dev/null 2>&1 || [[ ! -f /usr/include/nvml.h ]]; then
+    ensure_apt_available
+    log "installing nvkind build dependencies (build-essential, libnvidia-ml-dev)"
+    maybe_sudo apt-get update -y >/dev/null
+    maybe_sudo apt-get install -y build-essential libnvidia-ml-dev >/dev/null
   fi
   log "installing nvkind"
   go install github.com/NVIDIA/nvkind/cmd/nvkind@latest
