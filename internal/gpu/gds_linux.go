@@ -1,6 +1,6 @@
 //go:build linux && cgo && gds
 
-package app
+package gpu
 
 /*
 #cgo LDFLAGS: -lcuda -lcufile
@@ -154,11 +154,13 @@ import (
 	"os"
 	"time"
 	"unsafe"
+
+	"github.com/dims/oci2gdsd/internal/app"
 )
 
 type gdsLoader struct{}
 
-func newDefaultGPULoader() GPULoader {
+func NewDefaultGPULoader() app.GPULoader {
 	return &gdsLoader{}
 }
 
@@ -166,10 +168,10 @@ func (l *gdsLoader) Name() string {
 	return "cufile"
 }
 
-func (l *gdsLoader) Probe(_ context.Context, device int) (GPUProbeResult, error) {
+func (l *gdsLoader) Probe(_ context.Context, device int) (app.GPUProbeResult, error) {
 	code := int(C.gds_init())
 	if code != 0 {
-		return GPUProbeResult{
+		return app.GPUProbeResult{
 			Available: false,
 			Loader:    l.Name(),
 			Device:    device,
@@ -182,7 +184,7 @@ func (l *gdsLoader) Probe(_ context.Context, device int) (GPUProbeResult, error)
 	var cnt C.int
 	code = int(C.gds_device_count(&cnt))
 	if code != 0 {
-		return GPUProbeResult{
+		return app.GPUProbeResult{
 			Available: false,
 			Loader:    l.Name(),
 			Device:    device,
@@ -191,7 +193,7 @@ func (l *gdsLoader) Probe(_ context.Context, device int) (GPUProbeResult, error)
 		}, nil
 	}
 	if int(cnt) <= device {
-		return GPUProbeResult{
+		return app.GPUProbeResult{
 			Available:   false,
 			Loader:      l.Name(),
 			Device:      device,
@@ -200,7 +202,7 @@ func (l *gdsLoader) Probe(_ context.Context, device int) (GPUProbeResult, error)
 			Message:     fmt.Sprintf("device index %d out of range (device_count=%d)", device, int(cnt)),
 		}, nil
 	}
-	return GPUProbeResult{
+	return app.GPUProbeResult{
 		Available:   true,
 		Loader:      l.Name(),
 		Device:      device,
@@ -209,10 +211,10 @@ func (l *gdsLoader) Probe(_ context.Context, device int) (GPUProbeResult, error)
 	}, nil
 }
 
-func (l *gdsLoader) LoadFile(ctx context.Context, req GPULoadFileRequest) (GPULoadFileResult, error) {
+func (l *gdsLoader) LoadFile(ctx context.Context, req app.GPULoadFileRequest) (app.GPULoadFileResult, error) {
 	select {
 	case <-ctx.Done():
-		return GPULoadFileResult{}, NewAppError(ExitRegistry, ReasonRegistryTimeout, "context canceled before GDS read", ctx.Err())
+		return app.GPULoadFileResult{}, app.NewAppError(app.ExitRegistry, app.ReasonRegistryTimeout, "context canceled before GDS read", ctx.Err())
 	default:
 	}
 	if req.ChunkBytes <= 0 {
@@ -220,13 +222,13 @@ func (l *gdsLoader) LoadFile(ctx context.Context, req GPULoadFileRequest) (GPULo
 	}
 	fi, err := os.Stat(req.Path)
 	if err != nil {
-		return GPULoadFileResult{}, NewAppError(ExitFilesystem, ReasonFilesystemError, "failed to stat shard path", err)
+		return app.GPULoadFileResult{}, app.NewAppError(app.ExitFilesystem, app.ReasonFilesystemError, "failed to stat shard path", err)
 	}
 
 	code := int(C.gds_init())
 	if code != 0 {
 		if req.Strict {
-			return GPULoadFileResult{}, NewAppError(ExitPolicy, ReasonDirectPathIneligible, fmt.Sprintf("failed to initialize CUDA/GDS driver: code=%d", code), nil)
+			return app.GPULoadFileResult{}, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, fmt.Sprintf("failed to initialize CUDA/GDS driver: code=%d", code), nil)
 		}
 		return hostReadFallback(req.Path, req.ChunkBytes)
 	}
@@ -246,19 +248,19 @@ func (l *gdsLoader) LoadFile(ctx context.Context, req GPULoadFileRequest) (GPULo
 	))
 	if code != 0 {
 		if req.Strict {
-			return GPULoadFileResult{}, NewAppError(ExitPolicy, ReasonDirectPathIneligible, fmt.Sprintf("cuFile read failed: code=%d", code), nil)
+			return app.GPULoadFileResult{}, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, fmt.Sprintf("cuFile read failed: code=%d", code), nil)
 		}
 		res, fallbackErr := hostReadFallback(req.Path, req.ChunkBytes)
 		if fallbackErr != nil {
-			return GPULoadFileResult{}, fallbackErr
+			return app.GPULoadFileResult{}, fallbackErr
 		}
 		res.Message = fmt.Sprintf("direct GDS read failed (code=%d), used host fallback", code)
 		return res, nil
 	}
 	if int64(total) != fi.Size() {
-		return GPULoadFileResult{}, NewAppError(ExitIntegrity, ReasonBlobSizeMismatch, fmt.Sprintf("GDS read size mismatch: expected=%d got=%d", fi.Size(), int64(total)), nil)
+		return app.GPULoadFileResult{}, app.NewAppError(app.ExitIntegrity, app.ReasonBlobSizeMismatch, fmt.Sprintf("GDS read size mismatch: expected=%d got=%d", fi.Size(), int64(total)), nil)
 	}
-	return GPULoadFileResult{
+	return app.GPULoadFileResult{
 		Path:       req.Path,
 		Bytes:      int64(total),
 		DurationMS: int64(elapsed) / 1000,
@@ -266,11 +268,11 @@ func (l *gdsLoader) LoadFile(ctx context.Context, req GPULoadFileRequest) (GPULo
 	}, nil
 }
 
-func hostReadFallback(path string, chunkBytes int64) (GPULoadFileResult, error) {
+func hostReadFallback(path string, chunkBytes int64) (app.GPULoadFileResult, error) {
 	start := time.Now()
 	f, err := os.Open(path)
 	if err != nil {
-		return GPULoadFileResult{}, NewAppError(ExitFilesystem, ReasonFilesystemError, "host fallback failed to open shard file", err)
+		return app.GPULoadFileResult{}, app.NewAppError(app.ExitFilesystem, app.ReasonFilesystemError, "host fallback failed to open shard file", err)
 	}
 	defer f.Close()
 	if chunkBytes <= 0 {
@@ -279,9 +281,9 @@ func hostReadFallback(path string, chunkBytes int64) (GPULoadFileResult, error) 
 	buf := make([]byte, chunkBytes)
 	n, err := io.CopyBuffer(io.Discard, f, buf)
 	if err != nil {
-		return GPULoadFileResult{}, NewAppError(ExitFilesystem, ReasonFilesystemError, "host fallback failed to read shard file", err)
+		return app.GPULoadFileResult{}, app.NewAppError(app.ExitFilesystem, app.ReasonFilesystemError, "host fallback failed to read shard file", err)
 	}
-	return GPULoadFileResult{
+	return app.GPULoadFileResult{
 		Path:       path,
 		Bytes:      n,
 		DurationMS: time.Since(start).Milliseconds(),

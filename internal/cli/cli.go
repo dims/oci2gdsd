@@ -1,4 +1,4 @@
-package app
+package cli
 
 import (
 	"context"
@@ -8,12 +8,16 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	"github.com/dims/oci2gdsd/internal/app"
+	"github.com/dims/oci2gdsd/internal/gpu"
+	"github.com/dims/oci2gdsd/internal/registry"
 )
 
 func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
 	if len(args) == 0 {
 		printUsage(stderr)
-		return ExitValidation
+		return app.ExitValidation
 	}
 
 	globalFS := flag.NewFlagSet("oci2gdsd", flag.ContinueOnError)
@@ -32,17 +36,17 @@ func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 	globalFS.StringVar(&timeoutStr, "timeout", "", "timeout duration")
 	if err := globalFS.Parse(args); err != nil {
 		fmt.Fprintf(stderr, "global flag parse error: %v\n", err)
-		return ExitValidation
+		return app.ExitValidation
 	}
 	remaining := globalFS.Args()
 	if len(remaining) == 0 {
 		printUsage(stderr)
-		return ExitValidation
+		return app.ExitValidation
 	}
 	command := remaining[0]
 	commandArgs := remaining[1:]
 
-	cfg, err := LoadConfig(configPath)
+	cfg, err := app.LoadConfig(configPath)
 	if err != nil {
 		return emitError(err, jsonOut, stderr)
 	}
@@ -50,7 +54,7 @@ func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 	if err := cfg.Validate(); err != nil {
 		return emitError(err, jsonOut, stderr)
 	}
-	svc, err := NewService(cfg, nil)
+	svc, err := app.NewService(cfg, registry.NewORASModelFetcher(cfg), gpu.NewDefaultGPULoader())
 	if err != nil {
 		return emitError(err, jsonOut, stderr)
 	}
@@ -59,7 +63,7 @@ func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 	if timeoutStr != "" {
 		timeout, err = time.ParseDuration(timeoutStr)
 		if err != nil {
-			return emitError(NewAppError(ExitValidation, ReasonValidationFailed, "invalid --timeout value", err), jsonOut, stderr)
+			return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid --timeout value", err), jsonOut, stderr)
 		}
 	}
 
@@ -83,11 +87,11 @@ func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 	default:
 		fmt.Fprintf(stderr, "unknown command: %s\n", command)
 		printUsage(stderr)
-		return ExitValidation
+		return app.ExitValidation
 	}
 }
 
-func runEnsure(ctx context.Context, svc *Service, args []string, timeout time.Duration, globalJSON bool, stdout, stderr io.Writer) int {
+func runEnsure(ctx context.Context, svc *app.Service, args []string, timeout time.Duration, globalJSON bool, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("ensure", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var ref string
@@ -105,9 +109,9 @@ func runEnsure(ctx context.Context, svc *Service, args []string, timeout time.Du
 	fs.BoolVar(&wait, "wait", false, "wait for lock")
 	fs.BoolVar(&commandJSON, "json", globalJSON, "json output")
 	if err := fs.Parse(args); err != nil {
-		return emitError(NewAppError(ExitValidation, ReasonValidationFailed, "invalid ensure flags", err), commandJSON, stderr)
+		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid ensure flags", err), commandJSON, stderr)
 	}
-	result, err := svc.Ensure(ctx, EnsureRequest{
+	result, err := svc.Ensure(ctx, app.EnsureRequest{
 		Ref:              ref,
 		ModelID:          modelID,
 		LeaseHolder:      leaseHolder,
@@ -124,14 +128,14 @@ func runEnsure(ctx context.Context, svc *Service, args []string, timeout time.Du
 	}
 	if err != nil {
 		if commandJSON {
-			return AsAppError(err).ExitCode
+			return app.AsAppError(err).ExitCode
 		}
 		return emitError(err, false, stderr)
 	}
-	return ExitSuccess
+	return app.ExitSuccess
 }
 
-func runStatus(svc *Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
+func runStatus(svc *app.Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var modelID string
@@ -141,10 +145,10 @@ func runStatus(svc *Service, args []string, globalJSON bool, stdout, stderr io.W
 	fs.StringVar(&digest, "digest", "", "manifest digest")
 	fs.BoolVar(&commandJSON, "json", globalJSON, "json output")
 	if err := fs.Parse(args); err != nil {
-		return emitError(NewAppError(ExitValidation, ReasonValidationFailed, "invalid status flags", err), commandJSON, stderr)
+		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid status flags", err), commandJSON, stderr)
 	}
 	if modelID == "" || digest == "" {
-		return emitError(NewAppError(ExitValidation, ReasonValidationFailed, "--model-id and --digest are required", nil), commandJSON, stderr)
+		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "--model-id and --digest are required", nil), commandJSON, stderr)
 	}
 	result, err := svc.Status(modelID, digest)
 	if err != nil {
@@ -156,16 +160,16 @@ func runStatus(svc *Service, args []string, globalJSON bool, stdout, stderr io.W
 		fmt.Fprintf(stdout, "status=%s model=%s digest=%s path=%s bytes=%d leases=%d reason=%s\n",
 			result.Status, result.ModelID, result.ManifestDigest, result.Path, result.Bytes, len(result.ActiveLeases), result.ReasonCode)
 	}
-	return ExitSuccess
+	return app.ExitSuccess
 }
 
-func runList(svc *Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
+func runList(svc *app.Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var commandJSON bool
 	fs.BoolVar(&commandJSON, "json", globalJSON, "json output")
 	if err := fs.Parse(args); err != nil {
-		return emitError(NewAppError(ExitValidation, ReasonValidationFailed, "invalid list flags", err), commandJSON, stderr)
+		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid list flags", err), commandJSON, stderr)
 	}
 	results, err := svc.List()
 	if err != nil {
@@ -178,10 +182,10 @@ func runList(svc *Service, args []string, globalJSON bool, stdout, stderr io.Wri
 			fmt.Fprintf(stdout, "%s %s %s %s leases=%d bytes=%d\n", r.Status, r.ModelID, r.ManifestDigest, r.Path, len(r.ActiveLeases), r.Bytes)
 		}
 	}
-	return ExitSuccess
+	return app.ExitSuccess
 }
 
-func runRelease(ctx context.Context, svc *Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
+func runRelease(ctx context.Context, svc *app.Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("release", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var modelID string
@@ -195,7 +199,7 @@ func runRelease(ctx context.Context, svc *Service, args []string, globalJSON boo
 	fs.BoolVar(&cleanup, "cleanup", false, "delete immediately when lease count hits zero")
 	fs.BoolVar(&commandJSON, "json", globalJSON, "json output")
 	if err := fs.Parse(args); err != nil {
-		return emitError(NewAppError(ExitValidation, ReasonValidationFailed, "invalid release flags", err), commandJSON, stderr)
+		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid release flags", err), commandJSON, stderr)
 	}
 	result, err := svc.Release(ctx, modelID, digest, leaseHolder, cleanup)
 	if err != nil {
@@ -206,10 +210,10 @@ func runRelease(ctx context.Context, svc *Service, args []string, globalJSON boo
 	} else {
 		fmt.Fprintf(stdout, "status=%s model=%s digest=%s remaining_leases=%d\n", result.Status, result.ModelID, result.ManifestDigest, result.RemainingLeases)
 	}
-	return ExitSuccess
+	return app.ExitSuccess
 }
 
-func runGC(svc *Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
+func runGC(svc *app.Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("gc", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var policy string
@@ -221,11 +225,11 @@ func runGC(svc *Service, args []string, globalJSON bool, stdout, stderr io.Write
 	fs.BoolVar(&dryRun, "dry-run", false, "dry run")
 	fs.BoolVar(&commandJSON, "json", globalJSON, "json output")
 	if err := fs.Parse(args); err != nil {
-		return emitError(NewAppError(ExitValidation, ReasonValidationFailed, "invalid gc flags", err), commandJSON, stderr)
+		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid gc flags", err), commandJSON, stderr)
 	}
-	minBytes, err := parseMinFreeBytesOrDefault(minFree, svc.cfg.Retention.MinFreeBytes)
+	minBytes, err := app.ParseMinFreeBytesOrDefault(minFree, svc.MinFreeBytesDefault())
 	if err != nil {
-		return emitError(NewAppError(ExitValidation, ReasonValidationFailed, err.Error(), nil), commandJSON, stderr)
+		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, err.Error(), nil), commandJSON, stderr)
 	}
 	result, err := svc.GC(policy, minBytes, dryRun)
 	if err != nil {
@@ -237,10 +241,10 @@ func runGC(svc *Service, args []string, globalJSON bool, stdout, stderr io.Write
 		fmt.Fprintf(stdout, "policy=%s deleted=%d bytes_freed=%d remaining_models=%d\n",
 			result.Policy, len(result.DeletedModels), result.BytesFreed, result.RemainingModels)
 	}
-	return ExitSuccess
+	return app.ExitSuccess
 }
 
-func runVerify(svc *Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
+func runVerify(svc *app.Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var path string
@@ -252,7 +256,7 @@ func runVerify(svc *Service, args []string, globalJSON bool, stdout, stderr io.W
 	fs.StringVar(&digest, "digest", "", "manifest digest")
 	fs.BoolVar(&commandJSON, "json", globalJSON, "json output")
 	if err := fs.Parse(args); err != nil {
-		return emitError(NewAppError(ExitValidation, ReasonValidationFailed, "invalid verify flags", err), commandJSON, stderr)
+		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid verify flags", err), commandJSON, stderr)
 	}
 	result, err := svc.Verify(path, modelID, digest)
 	if commandJSON {
@@ -262,17 +266,17 @@ func runVerify(svc *Service, args []string, globalJSON bool, stdout, stderr io.W
 	}
 	if err != nil {
 		if commandJSON {
-			return AsAppError(err).ExitCode
+			return app.AsAppError(err).ExitCode
 		}
 		return emitError(err, false, stderr)
 	}
-	return ExitSuccess
+	return app.ExitSuccess
 }
 
-func runProfile(ctx context.Context, svc *Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
+func runProfile(ctx context.Context, svc *app.Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "profile subcommand required: lint|inspect")
-		return ExitValidation
+		return app.ExitValidation
 	}
 	switch args[0] {
 	case "lint":
@@ -281,11 +285,11 @@ func runProfile(ctx context.Context, svc *Service, args []string, globalJSON boo
 		return runProfileInspect(ctx, svc, args[1:], globalJSON, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown profile subcommand: %s\n", args[0])
-		return ExitValidation
+		return app.ExitValidation
 	}
 }
 
-func runProfileLint(ctx context.Context, svc *Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
+func runProfileLint(ctx context.Context, svc *app.Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("profile lint", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var configPath string
@@ -297,11 +301,11 @@ func runProfileLint(ctx context.Context, svc *Service, args []string, globalJSON
 	fs.StringVar(&digest, "digest", "", "expected manifest digest when using --config")
 	fs.BoolVar(&commandJSON, "json", globalJSON, "json output")
 	if err := fs.Parse(args); err != nil {
-		return emitError(NewAppError(ExitValidation, ReasonValidationFailed, "invalid profile lint flags", err), commandJSON, stderr)
+		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid profile lint flags", err), commandJSON, stderr)
 	}
 
-	var profile *ModelProfile
-	var layers []ManifestLayer
+	var profile *app.ModelProfile
+	var layers []app.ManifestLayer
 	var manifestDigest string
 	var err error
 
@@ -318,10 +322,10 @@ func runProfileLint(ctx context.Context, svc *Service, args []string, globalJSON
 		}
 		manifestDigest = digest
 	default:
-		return emitError(NewAppError(ExitValidation, ReasonValidationFailed, "either --ref or --config is required", nil), commandJSON, stderr)
+		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "either --ref or --config is required", nil), commandJSON, stderr)
 	}
 
-	result := LintProfile(profile, manifestDigest, layers)
+	result := app.LintProfile(profile, manifestDigest, layers)
 	if commandJSON {
 		_ = emitJSON(stdout, result)
 	} else {
@@ -338,12 +342,12 @@ func runProfileLint(ctx context.Context, svc *Service, args []string, globalJSON
 		}
 	}
 	if !result.Valid {
-		return ExitValidation
+		return app.ExitValidation
 	}
-	return ExitSuccess
+	return app.ExitSuccess
 }
 
-func runProfileInspect(ctx context.Context, svc *Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
+func runProfileInspect(ctx context.Context, svc *app.Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("profile inspect", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var configPath string
@@ -353,10 +357,10 @@ func runProfileInspect(ctx context.Context, svc *Service, args []string, globalJ
 	fs.StringVar(&ref, "ref", "", "digest-pinned OCI ref")
 	fs.BoolVar(&commandJSON, "json", globalJSON, "json output")
 	if err := fs.Parse(args); err != nil {
-		return emitError(NewAppError(ExitValidation, ReasonValidationFailed, "invalid profile inspect flags", err), commandJSON, stderr)
+		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid profile inspect flags", err), commandJSON, stderr)
 	}
 
-	var profile *ModelProfile
+	var profile *app.ModelProfile
 	var manifestDigest string
 	var err error
 
@@ -373,24 +377,24 @@ func runProfileInspect(ctx context.Context, svc *Service, args []string, globalJ
 		}
 		manifestDigest = profile.Integrity.ManifestDigest
 	default:
-		return emitError(NewAppError(ExitValidation, ReasonValidationFailed, "either --ref or --config is required", nil), commandJSON, stderr)
+		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "either --ref or --config is required", nil), commandJSON, stderr)
 	}
 	if profile.Integrity.ManifestDigest == "" {
 		profile.Integrity.ManifestDigest = manifestDigest
 	}
-	summary := BuildProfileSummary(profile)
+	summary := app.BuildProfileSummary(profile)
 	if commandJSON {
 		_ = emitJSON(stdout, summary)
 	} else {
 		fmt.Fprintf(stdout, "model_id=%s revision=%s framework=%s format=%s shards=%d total_bytes=%d manifest=%s\n",
 			summary.ModelID, summary.ModelRevision, summary.Framework, summary.Format, summary.ShardCount, summary.TotalShardSize, summary.ManifestDigest)
 	}
-	return ExitSuccess
+	return app.ExitSuccess
 }
 
-func runGPU(ctx context.Context, svc *Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
+func runGPU(ctx context.Context, svc *app.Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		return emitError(NewAppError(ExitValidation, ReasonValidationFailed, "gpu subcommand required: probe|load", nil), globalJSON, stderr)
+		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "gpu subcommand required: probe|load", nil), globalJSON, stderr)
 	}
 	switch args[0] {
 	case "probe":
@@ -398,11 +402,11 @@ func runGPU(ctx context.Context, svc *Service, args []string, globalJSON bool, s
 	case "load":
 		return runGPULoad(ctx, svc, args[1:], globalJSON, stdout, stderr)
 	default:
-		return emitError(NewAppError(ExitValidation, ReasonValidationFailed, fmt.Sprintf("unknown gpu subcommand: %s", args[0]), nil), globalJSON, stderr)
+		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, fmt.Sprintf("unknown gpu subcommand: %s", args[0]), nil), globalJSON, stderr)
 	}
 }
 
-func runGPUProbe(ctx context.Context, svc *Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
+func runGPUProbe(ctx context.Context, svc *app.Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("gpu probe", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var device int
@@ -410,7 +414,7 @@ func runGPUProbe(ctx context.Context, svc *Service, args []string, globalJSON bo
 	fs.IntVar(&device, "device", 0, "GPU device index")
 	fs.BoolVar(&commandJSON, "json", globalJSON, "json output")
 	if err := fs.Parse(args); err != nil {
-		return emitError(NewAppError(ExitValidation, ReasonValidationFailed, "invalid gpu probe flags", err), commandJSON, stderr)
+		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid gpu probe flags", err), commandJSON, stderr)
 	}
 	res, err := svc.GPUProbe(ctx, device)
 	if err != nil {
@@ -423,12 +427,12 @@ func runGPUProbe(ctx context.Context, svc *Service, args []string, globalJSON bo
 			res.Available, res.Loader, res.Device, res.DeviceCount, res.GDSDriver, res.Message)
 	}
 	if !res.Available {
-		return ExitPolicy
+		return app.ExitPolicy
 	}
-	return ExitSuccess
+	return app.ExitSuccess
 }
 
-func runGPULoad(ctx context.Context, svc *Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
+func runGPULoad(ctx context.Context, svc *app.Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("gpu load", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var modelID string
@@ -448,13 +452,13 @@ func runGPULoad(ctx context.Context, svc *Service, args []string, globalJSON boo
 	fs.BoolVar(&strict, "strict", true, "fail if direct GDS read fails instead of fallback")
 	fs.BoolVar(&commandJSON, "json", globalJSON, "json output")
 	if err := fs.Parse(args); err != nil {
-		return emitError(NewAppError(ExitValidation, ReasonValidationFailed, "invalid gpu load flags", err), commandJSON, stderr)
+		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid gpu load flags", err), commandJSON, stderr)
 	}
-	chunk, err := ParseByteSize(chunkBytes)
+	chunk, err := app.ParseByteSize(chunkBytes)
 	if err != nil {
-		return emitError(NewAppError(ExitValidation, ReasonValidationFailed, "invalid --chunk-bytes", err), commandJSON, stderr)
+		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid --chunk-bytes", err), commandJSON, stderr)
 	}
-	res, err := svc.GPULoad(ctx, GPULoadRequest{
+	res, err := svc.GPULoad(ctx, app.GPULoadRequest{
 		ModelID:    modelID,
 		Digest:     digest,
 		Path:       path,
@@ -471,11 +475,11 @@ func runGPULoad(ctx context.Context, svc *Service, args []string, globalJSON boo
 	}
 	if err != nil {
 		if commandJSON {
-			return AsAppError(err).ExitCode
+			return app.AsAppError(err).ExitCode
 		}
 		return emitError(err, false, stderr)
 	}
-	return ExitSuccess
+	return app.ExitSuccess
 }
 
 func emitJSON(w io.Writer, v any) error {
@@ -485,9 +489,9 @@ func emitJSON(w io.Writer, v any) error {
 }
 
 func emitError(err error, jsonOut bool, stderr io.Writer) int {
-	appErr := AsAppError(err)
+	appErr := app.AsAppError(err)
 	if appErr == nil {
-		return ExitStateCorrupt
+		return app.ExitStateCorrupt
 	}
 	if jsonOut {
 		_ = emitJSON(stderr, map[string]any{

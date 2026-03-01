@@ -23,6 +23,10 @@ type Service struct {
 	gpuLoader GPULoader
 }
 
+func (s *Service) MinFreeBytesDefault() int64 {
+	return s.cfg.Retention.MinFreeBytes
+}
+
 type EnsureRequest struct {
 	Ref              string
 	ModelID          string
@@ -93,7 +97,7 @@ type localMetadata struct {
 	Profile        ModelProfile `json:"profile"`
 }
 
-func NewService(cfg Config, fetcher ModelFetcher) (*Service, error) {
+func NewService(cfg Config, fetcher ModelFetcher, gpuLoader GPULoader) (*Service, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -105,14 +109,17 @@ func NewService(cfg Config, fetcher ModelFetcher) (*Service, error) {
 		return nil, err
 	}
 	if fetcher == nil {
-		fetcher = NewORASModelFetcher(cfg)
+		return nil, NewAppError(ExitValidation, ReasonValidationFailed, "fetcher must not be nil", nil)
+	}
+	if gpuLoader == nil {
+		return nil, NewAppError(ExitValidation, ReasonValidationFailed, "gpu loader must not be nil", nil)
 	}
 	s := &Service{
 		cfg:       cfg,
 		store:     store,
 		locks:     NewLockManager(cfg.LocksRoot),
 		fetcher:   fetcher,
-		gpuLoader: newDefaultGPULoader(),
+		gpuLoader: gpuLoader,
 	}
 	if err := s.Recover(); err != nil {
 		return nil, err

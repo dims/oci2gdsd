@@ -1,12 +1,15 @@
-package app
+package config
 
 import (
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/dims/oci2gdsd/internal/apperr"
 	"gopkg.in/yaml.v3"
 )
 
@@ -180,10 +183,10 @@ func LoadConfig(path string) (Config, error) {
 
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return Config{}, NewAppError(ExitValidation, ReasonValidationFailed, "failed to read config", err)
+		return Config{}, apperr.NewAppError(apperr.ExitValidation, apperr.ReasonValidationFailed, "failed to read config", err)
 	}
 	if err := yaml.Unmarshal(b, &cfg); err != nil {
-		return Config{}, NewAppError(ExitValidation, ReasonValidationFailed, "failed to parse config", err)
+		return Config{}, apperr.NewAppError(apperr.ExitValidation, apperr.ReasonValidationFailed, "failed to parse config", err)
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -220,55 +223,55 @@ func (c *Config) ApplyGlobalOverrides(root string, targetRoot string, logLevel s
 
 func (c Config) Validate() error {
 	if c.Root == "" {
-		return NewAppError(ExitValidation, ReasonValidationFailed, "root must not be empty", nil)
+		return apperr.NewAppError(apperr.ExitValidation, apperr.ReasonValidationFailed, "root must not be empty", nil)
 	}
 	if !filepath.IsAbs(c.Root) {
-		return NewAppError(ExitValidation, ReasonValidationFailed, "root must be an absolute path", nil)
+		return apperr.NewAppError(apperr.ExitValidation, apperr.ReasonValidationFailed, "root must be an absolute path", nil)
 	}
 	if c.ModelRoot == "" {
 		c.ModelRoot = filepath.Join(c.Root, "models")
 	}
 	if !filepath.IsAbs(c.ModelRoot) {
-		return NewAppError(ExitValidation, ReasonValidationFailed, "model_root must be an absolute path", nil)
+		return apperr.NewAppError(apperr.ExitValidation, apperr.ReasonValidationFailed, "model_root must be an absolute path", nil)
 	}
 	if c.TmpRoot == "" {
 		c.TmpRoot = filepath.Join(c.Root, "tmp")
 	}
 	if !filepath.IsAbs(c.TmpRoot) {
-		return NewAppError(ExitValidation, ReasonValidationFailed, "tmp_root must be an absolute path", nil)
+		return apperr.NewAppError(apperr.ExitValidation, apperr.ReasonValidationFailed, "tmp_root must be an absolute path", nil)
 	}
 	if c.LocksRoot == "" {
 		c.LocksRoot = filepath.Join(c.Root, "locks")
 	}
 	if !filepath.IsAbs(c.LocksRoot) {
-		return NewAppError(ExitValidation, ReasonValidationFailed, "locks_root must be an absolute path", nil)
+		return apperr.NewAppError(apperr.ExitValidation, apperr.ReasonValidationFailed, "locks_root must be an absolute path", nil)
 	}
 	if c.JournalDir == "" {
 		c.JournalDir = filepath.Join(c.Root, "journal")
 	}
 	if !filepath.IsAbs(c.JournalDir) {
-		return NewAppError(ExitValidation, ReasonValidationFailed, "journal_dir must be an absolute path", nil)
+		return apperr.NewAppError(apperr.ExitValidation, apperr.ReasonValidationFailed, "journal_dir must be an absolute path", nil)
 	}
 	if c.StateDB == "" {
 		c.StateDB = filepath.Join(c.Root, "state.db")
 	}
 	if !filepath.IsAbs(c.StateDB) {
-		return NewAppError(ExitValidation, ReasonValidationFailed, "state_db must be an absolute path", nil)
+		return apperr.NewAppError(apperr.ExitValidation, apperr.ReasonValidationFailed, "state_db must be an absolute path", nil)
 	}
 	if c.Transfer.MaxShardsConcurrentPerModel <= 0 {
-		return NewAppError(ExitValidation, ReasonValidationFailed, "transfer.max_shards_concurrent_per_model must be > 0", nil)
+		return apperr.NewAppError(apperr.ExitValidation, apperr.ReasonValidationFailed, "transfer.max_shards_concurrent_per_model must be > 0", nil)
 	}
 	if c.Transfer.StreamBufferBytes <= 0 {
-		return NewAppError(ExitValidation, ReasonValidationFailed, "transfer.stream_buffer_bytes must be > 0", nil)
+		return apperr.NewAppError(apperr.ExitValidation, apperr.ReasonValidationFailed, "transfer.stream_buffer_bytes must be > 0", nil)
 	}
 	if c.Retention.MinFreeBytes < 0 {
-		return NewAppError(ExitValidation, ReasonValidationFailed, "retention.min_free_bytes must be >= 0", nil)
+		return apperr.NewAppError(apperr.ExitValidation, apperr.ReasonValidationFailed, "retention.min_free_bytes must be >= 0", nil)
 	}
 	if c.Integrity.StrictSignature && c.Integrity.AllowUnsignedInDev {
-		return NewAppError(ExitValidation, ReasonValidationFailed, "integrity.strict_signature and allow_unsigned_in_dev cannot both be true", nil)
+		return apperr.NewAppError(apperr.ExitValidation, apperr.ReasonValidationFailed, "integrity.strict_signature and allow_unsigned_in_dev cannot both be true", nil)
 	}
 	if c.Registry.Auth.DockerConfigPath != "" && !filepath.IsAbs(c.Registry.Auth.DockerConfigPath) {
-		return NewAppError(ExitValidation, ReasonValidationFailed, "registry.auth.docker_config_path must be absolute", nil)
+		return apperr.NewAppError(apperr.ExitValidation, apperr.ReasonValidationFailed, "registry.auth.docker_config_path must be absolute", nil)
 	}
 	return nil
 }
@@ -283,7 +286,7 @@ func (c Config) EnsureDirectories() error {
 	}
 	for _, d := range dirs {
 		if err := os.MkdirAll(d, 0o755); err != nil {
-			return NewAppError(ExitFilesystem, ReasonFilesystemError, fmt.Sprintf("failed to create directory %s", d), err)
+			return apperr.NewAppError(apperr.ExitFilesystem, apperr.ReasonFilesystemError, fmt.Sprintf("failed to create directory %s", d), err)
 		}
 	}
 	return nil
@@ -313,6 +316,52 @@ func (c Config) EffectiveDockerConfig() string {
 	return ""
 }
 
+func ParseByteSize(input string) (int64, error) {
+	s := strings.TrimSpace(strings.ToUpper(input))
+	if s == "" {
+		return 0, errors.New("empty size")
+	}
+	type unit struct {
+		suffix string
+		mul    int64
+	}
+	units := []unit{
+		{"TIB", 1024 * 1024 * 1024 * 1024},
+		{"GIB", 1024 * 1024 * 1024},
+		{"MIB", 1024 * 1024},
+		{"KIB", 1024},
+		{"TB", 1024 * 1024 * 1024 * 1024},
+		{"GB", 1024 * 1024 * 1024},
+		{"MB", 1024 * 1024},
+		{"KB", 1024},
+		{"TI", 1024 * 1024 * 1024 * 1024},
+		{"GI", 1024 * 1024 * 1024},
+		{"MI", 1024 * 1024},
+		{"KI", 1024},
+		{"T", 1024 * 1024 * 1024 * 1024},
+		{"G", 1024 * 1024 * 1024},
+		{"M", 1024 * 1024},
+		{"K", 1024},
+		{"B", 1},
+	}
+	for _, u := range units {
+		suffix := u.suffix
+		if strings.HasSuffix(s, suffix) {
+			num := strings.TrimSpace(strings.TrimSuffix(s, suffix))
+			v, err := strconv.ParseFloat(num, 64)
+			if err != nil {
+				return 0, err
+			}
+			return int64(v * float64(u.mul)), nil
+		}
+	}
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return v, nil
+}
+
 func parseMinFreeBytesOrDefault(flagValue string, fallback int64) (int64, error) {
 	if flagValue == "" {
 		return fallback, nil
@@ -322,4 +371,8 @@ func parseMinFreeBytesOrDefault(flagValue string, fallback int64) (int64, error)
 		return 0, errors.New("invalid --min-free-bytes")
 	}
 	return n, nil
+}
+
+func ParseMinFreeBytesOrDefault(flagValue string, fallback int64) (int64, error) {
+	return parseMinFreeBytesOrDefault(flagValue, fallback)
 }

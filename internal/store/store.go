@@ -1,4 +1,4 @@
-package app
+package store
 
 import (
 	"encoding/json"
@@ -9,6 +9,9 @@ import (
 	"sort"
 	"syscall"
 	"time"
+
+	"github.com/dims/oci2gdsd/internal/apperr"
+	"github.com/dims/oci2gdsd/internal/model"
 )
 
 type Lease struct {
@@ -17,20 +20,20 @@ type Lease struct {
 }
 
 type ModelRecord struct {
-	Key              string     `json:"key"`
-	ModelID          string     `json:"model_id"`
-	ManifestDigest   string     `json:"manifest_digest"`
-	Status           ModelState `json:"status"`
-	Path             string     `json:"path"`
-	Bytes            int64      `json:"bytes"`
-	Leases           []Lease    `json:"leases"`
-	Releasable       bool       `json:"releasable"`
-	ReleasableAt     *time.Time `json:"releasable_at,omitempty"`
-	LastError        ReasonCode `json:"last_error"`
-	LastErrorMessage string     `json:"last_error_message"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
-	LastAccessedAt   time.Time  `json:"last_accessed_at"`
+	Key              string            `json:"key"`
+	ModelID          string            `json:"model_id"`
+	ManifestDigest   string            `json:"manifest_digest"`
+	Status           model.ModelState  `json:"status"`
+	Path             string            `json:"path"`
+	Bytes            int64             `json:"bytes"`
+	Leases           []Lease           `json:"leases"`
+	Releasable       bool              `json:"releasable"`
+	ReleasableAt     *time.Time        `json:"releasable_at,omitempty"`
+	LastError        apperr.ReasonCode `json:"last_error"`
+	LastErrorMessage string            `json:"last_error_message"`
+	CreatedAt        time.Time         `json:"created_at"`
+	UpdatedAt        time.Time         `json:"updated_at"`
+	LastAccessedAt   time.Time         `json:"last_accessed_at"`
 }
 
 type stateDB struct {
@@ -52,7 +55,7 @@ func NewStateStore(path string) *StateStore {
 
 func (s *StateStore) Init() error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		return NewAppError(ExitFilesystem, ReasonFilesystemError, "failed to create state db directory", err)
+		return apperr.NewAppError(apperr.ExitFilesystem, apperr.ReasonFilesystemError, "failed to create state db directory", err)
 	}
 	if !fileExists(s.path) {
 		seed := stateDB{
@@ -61,15 +64,15 @@ func (s *StateStore) Init() error {
 		}
 		b, err := json.MarshalIndent(seed, "", "  ")
 		if err != nil {
-			return NewAppError(ExitStateCorrupt, ReasonStateDBCorrupt, "failed to initialize state db", err)
+			return apperr.NewAppError(apperr.ExitStateCorrupt, apperr.ReasonStateDBCorrupt, "failed to initialize state db", err)
 		}
 		if err := writeAtomicFile(s.path, b, 0o644, true); err != nil {
-			return NewAppError(ExitFilesystem, ReasonFilesystemError, "failed to write state db", err)
+			return apperr.NewAppError(apperr.ExitFilesystem, apperr.ReasonFilesystemError, "failed to write state db", err)
 		}
 	}
 	lockFile, err := os.OpenFile(s.lockPath, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
-		return NewAppError(ExitFilesystem, ReasonFilesystemError, "failed to initialize state lock", err)
+		return apperr.NewAppError(apperr.ExitFilesystem, apperr.ReasonFilesystemError, "failed to initialize state lock", err)
 	}
 	return lockFile.Close()
 }
@@ -77,12 +80,12 @@ func (s *StateStore) Init() error {
 func (s *StateStore) WithLockedDB(fn func(db *stateDB) error) error {
 	lockFile, err := os.OpenFile(s.lockPath, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
-		return NewAppError(ExitFilesystem, ReasonFilesystemError, "failed to open state lock", err)
+		return apperr.NewAppError(apperr.ExitFilesystem, apperr.ReasonFilesystemError, "failed to open state lock", err)
 	}
 	defer lockFile.Close()
 
 	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
-		return NewAppError(ExitFilesystem, ReasonFilesystemError, "failed to lock state db", err)
+		return apperr.NewAppError(apperr.ExitFilesystem, apperr.ReasonFilesystemError, "failed to lock state db", err)
 	}
 	defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
 
@@ -102,7 +105,7 @@ func (s *StateStore) WithLockedDB(fn func(db *stateDB) error) error {
 func (s *StateStore) load() (*stateDB, error) {
 	b, err := os.ReadFile(s.path)
 	if err != nil {
-		return nil, NewAppError(ExitStateCorrupt, ReasonStateDBCorrupt, "failed to read state db", err)
+		return nil, apperr.NewAppError(apperr.ExitStateCorrupt, apperr.ReasonStateDBCorrupt, "failed to read state db", err)
 	}
 	db := &stateDB{}
 	if len(b) == 0 {
@@ -111,7 +114,7 @@ func (s *StateStore) load() (*stateDB, error) {
 		return db, nil
 	}
 	if err := json.Unmarshal(b, db); err != nil {
-		return nil, NewAppError(ExitStateCorrupt, ReasonStateDBCorrupt, "failed to parse state db", err)
+		return nil, apperr.NewAppError(apperr.ExitStateCorrupt, apperr.ReasonStateDBCorrupt, "failed to parse state db", err)
 	}
 	if db.Models == nil {
 		db.Models = map[string]*ModelRecord{}
@@ -125,10 +128,10 @@ func (s *StateStore) load() (*stateDB, error) {
 func (s *StateStore) save(db *stateDB) error {
 	b, err := json.MarshalIndent(db, "", "  ")
 	if err != nil {
-		return NewAppError(ExitStateCorrupt, ReasonStateDBCorrupt, "failed to marshal state db", err)
+		return apperr.NewAppError(apperr.ExitStateCorrupt, apperr.ReasonStateDBCorrupt, "failed to marshal state db", err)
 	}
 	if err := writeAtomicFile(s.path, b, 0o644, true); err != nil {
-		return NewAppError(ExitFilesystem, ReasonFilesystemError, "failed to write state db", err)
+		return apperr.NewAppError(apperr.ExitFilesystem, apperr.ReasonFilesystemError, "failed to write state db", err)
 	}
 	return nil
 }
@@ -250,4 +253,50 @@ func (r *ModelRecord) ReleaseLease(holder string) int {
 	r.Leases = next
 	r.LastAccessedAt = time.Now().UTC()
 	return len(r.Leases)
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func fsyncFile(path string) error {
+	f, err := os.OpenFile(path, os.O_RDONLY, 0)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Sync()
+}
+
+func fsyncDir(path string) error {
+	d, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
+}
+
+func writeAtomicFile(path string, data []byte, perm os.FileMode, fsync bool) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, perm); err != nil {
+		return err
+	}
+	if fsync {
+		if err := fsyncFile(tmp); err != nil {
+			return err
+		}
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	if fsync {
+		return fsyncDir(dir)
+	}
+	return nil
 }
