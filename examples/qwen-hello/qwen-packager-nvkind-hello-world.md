@@ -116,6 +116,13 @@ docker pull nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1
 kind load docker-image nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1 --name "${CLUSTER_NAME}"
 ```
 
+To attempt direct GDS path from the daemon sidecar, use the GDS-enabled image:
+
+```bash
+docker build -f testharness/nvkind-e2e/Dockerfile.oci2gdsd.gds -t oci2gdsd:hello .
+kind load docker-image oci2gdsd:hello --name "${CLUSTER_NAME}"
+```
+
 ## 6. Render and apply FastAPI + PyTorch deployment
 
 ```bash

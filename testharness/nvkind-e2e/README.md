@@ -50,6 +50,12 @@ PRELOAD_PYTORCH_RUNTIME_IMAGE=true make nvkind-e2e
 # Optional: require daemon IPC probe to report status=ok (default false)
 REQUIRE_DAEMON_IPC_PROBE=true make nvkind-e2e
 
+# Build a GDS-capable oci2gdsd image for init/daemon containers
+OCI2GDSD_ENABLE_GDS_IMAGE=true REQUIRE_DAEMON_IPC_PROBE=true make nvkind-e2e
+
+# Or point to a custom Dockerfile for oci2gdsd image builds
+OCI2GDSD_DOCKERFILE=testharness/nvkind-e2e/Dockerfile.oci2gdsd.gds make nvkind-e2e
+
 # Force namespace/cluster names
 CLUSTER_NAME=oci2gdsd-e2e E2E_NAMESPACE=oci2gdsd-e2e make nvkind-e2e
 

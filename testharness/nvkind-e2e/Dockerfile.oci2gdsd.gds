@@ -1,0 +1,35 @@
+FROM nvidia/cuda:12.8.1-devel-ubuntu22.04 AS build
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates curl git build-essential pkg-config && \
+    rm -rf /var/lib/apt/lists/*
+
+ARG GO_VERSION=1.23.6
+RUN curl -fsSL -o /tmp/go${GO_VERSION}.linux-amd64.tar.gz "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" && \
+    tar -C /usr/local -xzf /tmp/go${GO_VERSION}.linux-amd64.tar.gz && \
+    rm -f /tmp/go${GO_VERSION}.linux-amd64.tar.gz
+ENV PATH="/usr/local/go/bin:${PATH}"
+
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY cmd ./cmd
+COPY internal ./internal
+RUN CGO_ENABLED=1 \
+    GOOS=linux \
+    GOARCH=amd64 \
+    CGO_CFLAGS="-I/usr/local/cuda/include" \
+    CGO_LDFLAGS="-L/usr/local/cuda/lib64 -Wl,-rpath,/usr/local/cuda/lib64" \
+    go build -tags gds -trimpath -ldflags="-s -w" -o /out/oci2gdsd ./cmd/oci2gdsd
+
+FROM nvidia/cuda:12.8.1-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates bash && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /out/oci2gdsd /usr/local/bin/oci2gdsd
+ENTRYPOINT ["/usr/local/bin/oci2gdsd"]

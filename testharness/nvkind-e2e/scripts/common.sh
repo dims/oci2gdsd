@@ -29,6 +29,8 @@ VALIDATE_LOCAL_GDS="${VALIDATE_LOCAL_GDS:-true}"
 REQUIRE_DAEMON_IPC_PROBE="${REQUIRE_DAEMON_IPC_PROBE:-false}"
 
 OCI2GDSD_IMAGE="${OCI2GDSD_IMAGE:-oci2gdsd:e2e}"
+OCI2GDSD_ENABLE_GDS_IMAGE="${OCI2GDSD_ENABLE_GDS_IMAGE:-false}"
+OCI2GDSD_DOCKERFILE="${OCI2GDSD_DOCKERFILE:-}"
 PACKAGER_IMAGE="${PACKAGER_IMAGE:-oci2gdsd-qwen3-packager:local}"
 VLLM_RUNTIME_IMAGE="${VLLM_RUNTIME_IMAGE:-nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1}"
 PYTORCH_RUNTIME_IMAGE="${PYTORCH_RUNTIME_IMAGE:-${VLLM_RUNTIME_IMAGE}}"
@@ -412,8 +414,17 @@ EOF
 }
 
 build_and_load_oci2gdsd_image() {
-  log "building oci2gdsd image ${OCI2GDSD_IMAGE}"
-  docker build -f "${HARNESS_DIR}/Dockerfile.oci2gdsd" -t "${OCI2GDSD_IMAGE}" "${REPO_ROOT}"
+  local dockerfile="${OCI2GDSD_DOCKERFILE}"
+  if [[ -z "${dockerfile}" ]]; then
+    if [[ "${OCI2GDSD_ENABLE_GDS_IMAGE}" == "true" ]]; then
+      dockerfile="${HARNESS_DIR}/Dockerfile.oci2gdsd.gds"
+    else
+      dockerfile="${HARNESS_DIR}/Dockerfile.oci2gdsd"
+    fi
+  fi
+  [[ -f "${dockerfile}" ]] || die "oci2gdsd dockerfile not found: ${dockerfile}"
+  log "building oci2gdsd image ${OCI2GDSD_IMAGE} using ${dockerfile}"
+  docker build -f "${dockerfile}" -t "${OCI2GDSD_IMAGE}" "${REPO_ROOT}"
   kind_load_image "${OCI2GDSD_IMAGE}"
 }
 
