@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -29,6 +30,7 @@ type Config struct {
 	Publish       PublishConfig       `yaml:"publish" json:"publish"`
 	Retention     RetentionConfig     `yaml:"retention" json:"retention"`
 	Observability ObservabilityConfig `yaml:"observability" json:"observability"`
+	Security      SecurityConfig      `yaml:"security" json:"security"`
 }
 
 type RegistryConfig struct {
@@ -104,6 +106,10 @@ type ObservabilityConfig struct {
 	EventsJSONLog  bool   `yaml:"events_json_log" json:"events_json_log"`
 }
 
+type SecurityConfig struct {
+	ModelIDAllowlistRegex string `yaml:"model_id_allowlist_regex" json:"model_id_allowlist_regex"`
+}
+
 func DefaultConfig() Config {
 	root := "/var/lib/oci2gdsd"
 	return Config{
@@ -171,6 +177,9 @@ func DefaultConfig() Config {
 			MetricsEnabled: true,
 			MetricsListen:  "127.0.0.1:9098",
 			EventsJSONLog:  true,
+		},
+		Security: SecurityConfig{
+			ModelIDAllowlistRegex: "",
 		},
 	}
 }
@@ -272,6 +281,11 @@ func (c Config) Validate() error {
 	}
 	if c.Registry.Auth.DockerConfigPath != "" && !filepath.IsAbs(c.Registry.Auth.DockerConfigPath) {
 		return apperr.NewAppError(apperr.ExitValidation, apperr.ReasonValidationFailed, "registry.auth.docker_config_path must be absolute", nil)
+	}
+	if c.Security.ModelIDAllowlistRegex != "" {
+		if _, err := regexp.Compile(c.Security.ModelIDAllowlistRegex); err != nil {
+			return apperr.NewAppError(apperr.ExitValidation, apperr.ReasonValidationFailed, "security.model_id_allowlist_regex is not a valid regex", err)
+		}
 	}
 	return nil
 }

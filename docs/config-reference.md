@@ -126,6 +126,18 @@ All currently `reserved`:
 
 No metrics endpoint/event pipeline is wired yet.
 
+## `security` section
+
+Actively used:
+
+- `security.model_id_allowlist_regex` (`active`): optional regex gate for `--model-id` on service-backed paths (`ensure`, `status`, `release`, `verify`, `gpu load/unload` when model-id is provided).
+
+Behavior:
+
+- when empty (default), model IDs are validated only by structural checks (single path component, no separators, non-empty).
+- when set, model ID must pass both structural checks and regex match.
+- invalid regex at config load time fails validation.
+
 ## Validation rules enforced today
 
 - all major path fields must be absolute
@@ -134,6 +146,7 @@ No metrics endpoint/event pipeline is wired yet.
 - `retention.min_free_bytes >= 0`
 - `integrity.strict_signature && integrity.allow_unsigned_in_dev` is invalid
 - `registry.auth.docker_config_path` must be absolute when set
+- `security.model_id_allowlist_regex` must compile when set
 
 ## Minimal working config
 
@@ -173,6 +186,9 @@ publish:
 retention:
   policy: lru_no_lease
   min_free_bytes: 214748364800
+
+security:
+  model_id_allowlist_regex: "^[a-z0-9][a-z0-9._-]*$"
 ```
 
 ## Size value parsing

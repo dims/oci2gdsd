@@ -22,3 +22,11 @@ func TestReservedFieldWarnings(t *testing.T) {
 		t.Fatalf("expected observability.metrics_enabled warning, got: %s", joined)
 	}
 }
+
+func TestValidateRejectsInvalidModelIDAllowlistRegex(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Security.ModelIDAllowlistRegex = "["
+	if err := cfg.Validate(); err == nil {
+		t.Fatalf("expected invalid regex validation error")
+	}
+}

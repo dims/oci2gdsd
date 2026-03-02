@@ -136,7 +136,7 @@ func (s *Service) GPULoad(ctx context.Context, req GPULoadRequest) (GPULoadResul
 		if modelID == "" || manifestDigest == "" {
 			return GPULoadResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "either --path or (--model-id and --digest) is required", nil)
 		}
-		if err := ValidateModelID(modelID); err != nil {
+		if err := s.validateModelID(modelID); err != nil {
 			return GPULoadResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "invalid --model-id", err)
 		}
 		rec, ok, err := s.store.Get(modelKey(modelID, manifestDigest))
@@ -407,7 +407,7 @@ func (s *Service) GPUUnload(ctx context.Context, req GPUUnloadRequest) (GPUUnloa
 		if modelID == "" || manifestDigest == "" {
 			return GPUUnloadResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "either --path or (--model-id and --digest) is required", nil)
 		}
-		if err := ValidateModelID(modelID); err != nil {
+		if err := s.validateModelID(modelID); err != nil {
 			return GPUUnloadResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "invalid --model-id", err)
 		}
 		rec, ok, err := s.store.Get(modelKey(modelID, manifestDigest))

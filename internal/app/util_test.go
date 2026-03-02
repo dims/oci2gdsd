@@ -1,6 +1,7 @@
 package app
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -91,13 +92,47 @@ func TestValidateModelID(t *testing.T) {
 }
 
 func TestEnsurePathWithinRoot(t *testing.T) {
-	root := filepath.Join("/tmp", "oci2gdsd", "models")
+	root := filepath.Join(t.TempDir(), "models")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("mkdir root: %v", err)
+	}
 	okPath := filepath.Join(root, "demo", "sha256-abc")
 	if err := ensurePathWithinRoot(root, okPath); err != nil {
 		t.Fatalf("expected in-root path to pass, got %v", err)
 	}
-	outside := filepath.Join("/tmp", "oci2gdsd", "other")
+	outside := filepath.Join(t.TempDir(), "outside")
 	if err := ensurePathWithinRoot(root, outside); err == nil {
 		t.Fatalf("expected out-of-root path to fail")
+	}
+}
+
+func TestEnsureUnderRootRejectsSymlinkEscape(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "root")
+	outside := filepath.Join(base, "outside")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("mkdir root: %v", err)
+	}
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatalf("mkdir outside: %v", err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	escaped := filepath.Join(link, "payload")
+	if err := EnsureUnderRoot(root, escaped); err == nil {
+		t.Fatalf("expected symlink escape to fail")
+	}
+}
+
+func TestSafeJoinUnderRootRejectsEscape(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "models")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("mkdir root: %v", err)
+	}
+	if _, err := SafeJoinUnderRoot(root, "..", "escape"); err == nil {
+		t.Fatalf("expected SafeJoinUnderRoot to reject escaping join")
 	}
 }

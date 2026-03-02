@@ -24,8 +24,8 @@ func digestToPathComponent(d string) string {
 	return strings.ReplaceAll(d, ":", "-")
 }
 
-func modelRootPath(base, modelID, manifestDigest string) string {
-	return filepath.Join(base, modelID, digestToPathComponent(manifestDigest))
+func modelRootPath(base, modelID, manifestDigest string) (string, error) {
+	return SafeJoinUnderRoot(base, modelID, digestToPathComponent(manifestDigest))
 }
 
 func readyMarkerPath(path string) string {
@@ -80,7 +80,7 @@ func ValidateModelID(modelID string) error {
 	return nil
 }
 
-func ensurePathWithinRoot(root, path string) error {
+func EnsureUnderRoot(root, path string) error {
 	r := strings.TrimSpace(root)
 	p := strings.TrimSpace(path)
 	if r == "" {
@@ -93,11 +93,16 @@ func ensurePathWithinRoot(root, path string) error {
 	if err != nil {
 		return fmt.Errorf("failed to resolve root path: %w", err)
 	}
-	absPath, err := filepath.Abs(filepath.Clean(p))
+	canonicalRoot, err := filepath.EvalSymlinks(absRoot)
+	if err != nil {
+		return fmt.Errorf("failed to resolve root path symlinks: %w", err)
+	}
+
+	canonicalPath, err := resolvePathWithSymlinksAllowMissing(p)
 	if err != nil {
 		return fmt.Errorf("failed to resolve target path: %w", err)
 	}
-	rel, err := filepath.Rel(absRoot, absPath)
+	rel, err := filepath.Rel(canonicalRoot, canonicalPath)
 	if err != nil {
 		return fmt.Errorf("failed to compare root and target paths: %w", err)
 	}
@@ -105,14 +110,65 @@ func ensurePathWithinRoot(root, path string) error {
 		return nil
 	}
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return fmt.Errorf("target path %q escapes configured root %q", absPath, absRoot)
+		return fmt.Errorf("target path %q escapes configured root %q", canonicalPath, canonicalRoot)
 	}
 	return nil
 }
 
-func tmpTxnPath(tmpRoot, modelID, manifestDigest string) string {
+func ensurePathWithinRoot(root, path string) error {
+	return EnsureUnderRoot(root, path)
+}
+
+func SafeJoinUnderRoot(root string, components ...string) (string, error) {
+	parts := make([]string, 0, 1+len(components))
+	parts = append(parts, strings.TrimSpace(root))
+	parts = append(parts, components...)
+	joined := filepath.Join(parts...)
+	if err := EnsureUnderRoot(root, joined); err != nil {
+		return "", err
+	}
+	return filepath.Clean(joined), nil
+}
+
+func resolvePathWithSymlinksAllowMissing(path string) (string, error) {
+	absPath, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(absPath)
+	if err == nil {
+		return filepath.Clean(resolved), nil
+	}
+	if !os.IsNotExist(err) {
+		return "", err
+	}
+
+	parent := absPath
+	missing := make([]string, 0)
+	for {
+		resolvedParent, parentErr := filepath.EvalSymlinks(parent)
+		if parentErr == nil {
+			out := resolvedParent
+			for i := len(missing) - 1; i >= 0; i-- {
+				out = filepath.Join(out, missing[i])
+			}
+			return filepath.Clean(out), nil
+		}
+		if !os.IsNotExist(parentErr) {
+			return "", parentErr
+		}
+		next := filepath.Dir(parent)
+		if next == parent {
+			return "", fmt.Errorf("no existing parent found for %q", absPath)
+		}
+		missing = append(missing, filepath.Base(parent))
+		parent = next
+	}
+}
+
+func tmpTxnPath(tmpRoot, modelID, manifestDigest string) (string, error) {
 	token := shortToken(modelID + ":" + manifestDigest + ":" + time.Now().UTC().Format(time.RFC3339Nano))
-	return filepath.Join(tmpRoot, modelID, digestToPathComponent(manifestDigest), token)
+	return SafeJoinUnderRoot(tmpRoot, modelID, digestToPathComponent(manifestDigest), token)
 }
 
 func shortToken(s string) string {

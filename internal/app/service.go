@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -25,6 +26,8 @@ type Service struct {
 	locks     *LockManager
 	fetcher   ModelFetcher
 	gpuLoader GPULoader
+	// Optional allowlist regex for tenant-safe model identifiers.
+	modelIDAllowlist *regexp.Regexp
 }
 
 func (s *Service) MinFreeBytesDefault() int64 {
@@ -118,17 +121,36 @@ func NewService(cfg configpkg.Config, fetcher ModelFetcher, gpuLoader GPULoader)
 	if gpuLoader == nil {
 		return nil, NewAppError(ExitValidation, ReasonValidationFailed, "gpu loader must not be nil", nil)
 	}
+	var modelIDAllowlist *regexp.Regexp
+	if cfg.Security.ModelIDAllowlistRegex != "" {
+		rx, err := regexp.Compile(cfg.Security.ModelIDAllowlistRegex)
+		if err != nil {
+			return nil, NewAppError(ExitValidation, ReasonValidationFailed, "invalid security.model_id_allowlist_regex", err)
+		}
+		modelIDAllowlist = rx
+	}
 	s := &Service{
-		cfg:       cfg,
-		store:     store,
-		locks:     NewLockManager(cfg.LocksRoot),
-		fetcher:   fetcher,
-		gpuLoader: gpuLoader,
+		cfg:              cfg,
+		store:            store,
+		locks:            NewLockManager(cfg.LocksRoot),
+		fetcher:          fetcher,
+		gpuLoader:        gpuLoader,
+		modelIDAllowlist: modelIDAllowlist,
 	}
 	if err := s.Recover(); err != nil {
 		return nil, err
 	}
 	return s, nil
+}
+
+func (s *Service) validateModelID(modelID string) error {
+	if err := ValidateModelID(modelID); err != nil {
+		return err
+	}
+	if s.modelIDAllowlist != nil && !s.modelIDAllowlist.MatchString(modelID) {
+		return fmt.Errorf("model id %q does not match allowlist regex", modelID)
+	}
+	return nil
 }
 
 func (s *Service) Recover() error {
@@ -150,7 +172,7 @@ func (s *Service) Recover() error {
 				return nil
 			}
 			if time.Since(info.ModTime()) > 24*time.Hour {
-				_ = os.RemoveAll(path)
+				_ = safeRemoveAll(s.cfg.TmpRoot, path)
 				return filepath.SkipDir
 			}
 			return nil
@@ -239,7 +261,7 @@ func (s *Service) Ensure(ctx context.Context, req EnsureRequest) (EnsureResult, 
 	if strings.TrimSpace(req.ModelID) == "" {
 		return EnsureResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "--model-id is required", nil)
 	}
-	if err := ValidateModelID(req.ModelID); err != nil {
+	if err := s.validateModelID(req.ModelID); err != nil {
 		return EnsureResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "invalid --model-id", err)
 	}
 	if req.StrictDirectPath {
@@ -302,8 +324,8 @@ func (s *Service) Ensure(ctx context.Context, req EnsureRequest) (EnsureResult, 
 		}
 	}
 
-	finalPath := modelRootPath(s.cfg.ModelRoot, req.ModelID, manifestDigest)
-	if err := ensurePathWithinRoot(s.cfg.ModelRoot, finalPath); err != nil {
+	finalPath, err := modelRootPath(s.cfg.ModelRoot, req.ModelID, manifestDigest)
+	if err != nil {
 		return EnsureResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "computed model path escapes configured model_root", err)
 	}
 
@@ -394,9 +416,12 @@ func (s *Service) Ensure(ctx context.Context, req EnsureRequest) (EnsureResult, 
 		return EnsureResult{}, err
 	}
 
-	txnPath := tmpTxnPath(s.cfg.TmpRoot, req.ModelID, manifestDigest)
-	if err := ensurePathWithinRoot(s.cfg.TmpRoot, txnPath); err != nil {
+	txnPath, err := tmpTxnPath(s.cfg.TmpRoot, req.ModelID, manifestDigest)
+	if err != nil {
 		return fail(ReasonValidationFailed, "computed transaction path escapes configured tmp_root", err)
+	}
+	cleanupTxn := func() {
+		_ = safeRemoveAll(s.cfg.TmpRoot, txnPath)
 	}
 	stagingRoot := filepath.Join(txnPath, "publish")
 	metadataDir := filepath.Join(stagingRoot, "metadata")
@@ -412,23 +437,23 @@ func (s *Service) Ensure(ctx context.Context, req EnsureRequest) (EnsureResult, 
 	buffer := make([]byte, s.cfg.Transfer.StreamBufferBytes)
 	for _, blob := range fetched.Blobs {
 		if err := ValidateShardName(blob.Name); err != nil {
-			_ = os.RemoveAll(txnPath)
+			cleanupTxn()
 			return fail(ReasonProfileLintFailed, fmt.Sprintf("invalid shard name %q: %v", blob.Name, err), nil)
 		}
 		target := filepath.Join(shardsDir, blob.Name)
 		if err := s.downloadBlob(ctx, blob, target, buffer); err != nil {
 			appErr := AsAppError(err)
-			_ = os.RemoveAll(txnPath)
+			cleanupTxn()
 			return fail(appErr.Reason, "blob download failed", appErr)
 		}
 		bytesDownloaded += blob.Size
 	}
 	if err := journal.Append(JournalBlobsWritten); err != nil {
-		_ = os.RemoveAll(txnPath)
+		cleanupTxn()
 		return EnsureResult{}, err
 	}
 	if err := journal.Append(JournalBlobsVerified); err != nil {
-		_ = os.RemoveAll(txnPath)
+		cleanupTxn()
 		return EnsureResult{}, err
 	}
 
@@ -459,25 +484,25 @@ func (s *Service) Ensure(ctx context.Context, req EnsureRequest) (EnsureResult, 
 	}
 	metaBytes, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
-		_ = os.RemoveAll(txnPath)
+		cleanupTxn()
 		return fail(ReasonFilesystemError, "failed to marshal metadata", err)
 	}
 	if err := writeAtomicFile(filepath.Join(metadataDir, "model.json"), metaBytes, 0o444, s.cfg.Publish.FsyncFiles); err != nil {
-		_ = os.RemoveAll(txnPath)
+		cleanupTxn()
 		return fail(ReasonFilesystemError, "failed to write metadata", err)
 	}
 	if err := journal.Append(JournalMetadataWritten); err != nil {
-		_ = os.RemoveAll(txnPath)
+		cleanupTxn()
 		return EnsureResult{}, err
 	}
 
 	readyBody := []byte(time.Now().UTC().Format(time.RFC3339) + "\n")
 	if err := writeAtomicFile(filepath.Join(stagingRoot, "READY"), readyBody, 0o444, s.cfg.Publish.FsyncFiles); err != nil {
-		_ = os.RemoveAll(txnPath)
+		cleanupTxn()
 		return fail(ReasonFilesystemError, "failed to write READY marker", err)
 	}
 	if err := journal.Append(JournalReadyWritten); err != nil {
-		_ = os.RemoveAll(txnPath)
+		cleanupTxn()
 		return EnsureResult{}, err
 	}
 
@@ -485,17 +510,25 @@ func (s *Service) Ensure(ctx context.Context, req EnsureRequest) (EnsureResult, 
 	if fileExists(finalPath) {
 		ok, reason, verifyErr := s.verifyPublishedPath(finalPath)
 		if verifyErr != nil || !ok {
-			_ = os.RemoveAll(txnPath)
+			cleanupTxn()
 			return fail(reason, "final path already exists but is not valid READY content", verifyErr)
 		}
-		_ = os.RemoveAll(txnPath)
+		cleanupTxn()
 	} else {
 		if err := os.MkdirAll(filepath.Dir(finalPath), 0o755); err != nil {
-			_ = os.RemoveAll(txnPath)
+			cleanupTxn()
 			return fail(ReasonFilesystemError, "failed to create final model parent directory", err)
 		}
+		if err := ensurePathWithinRoot(s.cfg.TmpRoot, stagingRoot); err != nil {
+			cleanupTxn()
+			return fail(ReasonValidationFailed, "computed staging path escapes configured tmp_root", err)
+		}
+		if err := ensurePathWithinRoot(s.cfg.ModelRoot, finalPath); err != nil {
+			cleanupTxn()
+			return fail(ReasonValidationFailed, "computed final path escapes configured model_root", err)
+		}
 		if err := os.Rename(stagingRoot, finalPath); err != nil {
-			_ = os.RemoveAll(txnPath)
+			cleanupTxn()
 			return fail(ReasonPublishRenameFailed, "atomic publish rename failed", err)
 		}
 		if s.cfg.Publish.FsyncDirectory {
@@ -503,7 +536,7 @@ func (s *Service) Ensure(ctx context.Context, req EnsureRequest) (EnsureResult, 
 				return fail(ReasonFilesystemError, "failed to fsync final model parent directory", err)
 			}
 		}
-		_ = os.RemoveAll(txnPath)
+		cleanupTxn()
 	}
 
 	if err := journal.Append(JournalCommitted); err != nil {
@@ -576,7 +609,7 @@ func (s *Service) Status(modelID, manifestDigest string) (StatusResult, error) {
 	if strings.TrimSpace(modelID) == "" || strings.TrimSpace(manifestDigest) == "" {
 		return StatusResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "--model-id and --digest are required", nil)
 	}
-	if err := ValidateModelID(modelID); err != nil {
+	if err := s.validateModelID(modelID); err != nil {
 		return StatusResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "invalid --model-id", err)
 	}
 	key := modelKey(modelID, manifestDigest)
@@ -637,7 +670,7 @@ func (s *Service) Release(ctx context.Context, modelID, manifestDigest, leaseHol
 	if strings.TrimSpace(modelID) == "" || strings.TrimSpace(manifestDigest) == "" {
 		return ReleaseResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "--model-id and --digest are required", nil)
 	}
-	if err := ValidateModelID(modelID); err != nil {
+	if err := s.validateModelID(modelID); err != nil {
 		return ReleaseResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "invalid --model-id", err)
 	}
 	if strings.TrimSpace(leaseHolder) == "" {
@@ -680,7 +713,7 @@ func (s *Service) Release(ctx context.Context, modelID, manifestDigest, leaseHol
 		rec.ReleasableAt = &now
 		if cleanup {
 			if rec.Path != "" && fileExists(rec.Path) {
-				if err := os.RemoveAll(rec.Path); err != nil {
+				if err := safeRemoveAll(s.cfg.ModelRoot, rec.Path); err != nil {
 					return ReleaseResult{}, NewAppError(ExitFilesystem, ReasonFilesystemError, "failed to cleanup model path", err)
 				}
 			}
@@ -806,7 +839,7 @@ func (s *Service) GC(policy string, minFreeBytes int64, dryRun bool) (GCResult, 
 		}
 		freedBytes := rec.Bytes
 		if !dryRun {
-			if err := os.RemoveAll(rec.Path); err != nil {
+			if err := safeRemoveAll(s.cfg.ModelRoot, rec.Path); err != nil {
 				unlock()
 				return result, NewAppError(ExitFilesystem, ReasonFilesystemError, "failed to delete model during gc", err)
 			}
@@ -835,6 +868,13 @@ func (s *Service) GC(policy string, minFreeBytes int64, dryRun bool) (GCResult, 
 	return result, nil
 }
 
+func safeRemoveAll(root, path string) error {
+	if err := EnsureUnderRoot(root, path); err != nil {
+		return err
+	}
+	return os.RemoveAll(path)
+}
+
 func sumShardSizes(shards []ModelShard) (int64, error) {
 	var total int64
 	for i, shard := range shards {
@@ -854,7 +894,7 @@ func (s *Service) Verify(path string, modelID string, manifestDigest string) (Ve
 		if modelID == "" || manifestDigest == "" {
 			return VerifyResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "either --path or (--model-id and --digest) are required", nil)
 		}
-		if err := ValidateModelID(modelID); err != nil {
+		if err := s.validateModelID(modelID); err != nil {
 			return VerifyResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "invalid --model-id", err)
 		}
 		key := modelKey(modelID, manifestDigest)
