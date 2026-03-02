@@ -285,6 +285,16 @@ create_nvkind_cluster() {
     log "creating nvkind cluster ${CLUSTER_NAME}"
     nvkind cluster create --name="${CLUSTER_NAME}" || warn "nvkind returned non-zero (continuing)"
   fi
+  local tries=0
+  local max_tries=30
+  until kubectl --context "${KUBECTL_CONTEXT}" get nodes >/dev/null 2>&1; do
+    tries=$((tries + 1))
+    if [[ "${tries}" -ge "${max_tries}" ]]; then
+      die "kubernetes API for ${KUBECTL_CONTEXT} did not become queryable after ${max_tries} attempts"
+    fi
+    warn "waiting for kubernetes API/RBAC bootstrap (${tries}/${max_tries})"
+    sleep 5
+  done
   kubectl --context "${KUBECTL_CONTEXT}" wait --for=condition=Ready nodes --all --timeout=300s
   kubectl --context "${KUBECTL_CONTEXT}" get nodes -o wide
   nvkind cluster print-gpus --name="${CLUSTER_NAME}" || true
