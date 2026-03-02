@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -159,6 +160,54 @@ func TestGCOrderingPrefersExplicitReleasableAtOverNil(t *testing.T) {
 	}
 	if res.DeletedModels[0] != recA.Key {
 		t.Fatalf("expected explicit releasable_at candidate first, got %s", res.DeletedModels[0])
+	}
+}
+
+func TestGCSkipsBusyModelLock(t *testing.T) {
+	svc := newStateOnlyService(t)
+	now := time.Now().UTC()
+	manifest := "sha256:" + strings.Repeat("f", 64)
+	modelPath := filepath.Join(svc.cfg.ModelRoot, "model-lock", "sha256-lock")
+	mustWriteReadyOnly(t, modelPath)
+	rec := &ModelRecord{
+		Key:            modelKey("model-lock", manifest),
+		ModelID:        "model-lock",
+		ManifestDigest: manifest,
+		Status:         StateReady,
+		Path:           modelPath,
+		Bytes:          64 * 1024 * 1024,
+		Releasable:     true,
+		ReleasableAt:   &now,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		LastAccessedAt: now,
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatalf("put rec: %v", err)
+	}
+
+	unlock, pending, err := svc.locks.Acquire(context.Background(), rec.Key, false)
+	if err != nil {
+		t.Fatalf("acquire lock: %v", err)
+	}
+	if pending {
+		t.Fatalf("expected lock acquisition to succeed")
+	}
+	defer unlock()
+
+	free, err := diskFreeBytes(svc.cfg.ModelRoot)
+	if err != nil {
+		t.Fatalf("disk free: %v", err)
+	}
+	res, err := svc.GC("lru_no_lease", free+(32*1024*1024), false)
+	if err != nil {
+		t.Fatalf("gc: %v", err)
+	}
+	if len(res.DeletedModels) != 0 {
+		t.Fatalf("expected locked model to be skipped, got deleted models: %+v", res.DeletedModels)
+	}
+	if !fileExists(modelPath) {
+		t.Fatalf("expected model path to remain while lock is held")
 	}
 }
 

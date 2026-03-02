@@ -193,6 +193,14 @@ func (s *Service) GPULoad(ctx context.Context, req GPULoadRequest) (GPULoadResul
 	}
 }
 
+func gpuWeightShards(profile ModelProfile) ([]ModelShard, error) {
+	weights := SortShardsByOrdinal(FilterWeightShards(profile.Shards))
+	if len(weights) == 0 {
+		return nil, NewAppError(ExitValidation, ReasonValidationFailed, "profile has no weight shards for GPU load", nil)
+	}
+	return weights, nil
+}
+
 func (s *Service) gpuBenchmarkLoad(ctx context.Context, start time.Time, req GPULoadRequest, modelPath, modelID, manifestDigest string, md *localMetadata) (GPULoadResult, error) {
 	if sessionLoader, ok := s.gpuLoader.(GPULoaderSession); ok {
 		end, err := sessionLoader.BeginSession(ctx, req.Device)
@@ -216,7 +224,10 @@ func (s *Service) gpuBenchmarkLoad(ctx context.Context, start time.Time, req GPU
 		defer end()
 	}
 
-	shards := SortShardsByOrdinal(md.Profile.Shards)
+	shards, err := gpuWeightShards(md.Profile)
+	if err != nil {
+		return GPULoadResult{}, err
+	}
 	files := make([]GPULoadFileResult, 0, len(shards))
 	var total int64
 	for i, shard := range shards {
@@ -304,7 +315,13 @@ func (s *Service) gpuPersistentLoad(ctx context.Context, start time.Time, req GP
 	}
 	rollbackLease := !hadLease
 
-	shards := SortShardsByOrdinal(md.Profile.Shards)
+	shards, err := gpuWeightShards(md.Profile)
+	if err != nil {
+		if rollbackLease {
+			_, _ = s.releaseLeaseOnlyLocked(rec, leaseHolder)
+		}
+		return GPULoadResult{}, err
+	}
 	files := make([]GPULoadFileResult, 0, len(shards))
 	var total int64
 	for i, shard := range shards {
@@ -364,7 +381,7 @@ func (s *Service) gpuPersistentLoad(ctx context.Context, start time.Time, req GP
 		TotalBytes:     total,
 		DurationMS:     time.Since(start).Milliseconds(),
 		ReasonCode:     ReasonNone,
-		Message:        "persistent mode loaded model shards into GPU memory and attached a lease; unload via gpu unload",
+		Message:        "persistent mode loaded weight shards into GPU memory for the current oci2gdsd process lifetime and attached a lease; unload via gpu unload",
 	}, nil
 }
 
@@ -432,7 +449,10 @@ func (s *Service) GPUUnload(ctx context.Context, req GPUUnloadRequest) (GPUUnloa
 		return GPUUnloadResult{}, NewAppError(ExitValidation, ReasonValidationFailed, fmt.Sprintf("lease holder %q not found on model", leaseHolder), nil)
 	}
 
-	shards := SortShardsByOrdinal(md.Profile.Shards)
+	shards, err := gpuWeightShards(md.Profile)
+	if err != nil {
+		return GPUUnloadResult{}, err
+	}
 	files := make([]GPULoadFileResult, 0, len(shards))
 	var total int64
 	for _, shard := range shards {

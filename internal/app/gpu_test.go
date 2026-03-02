@@ -267,6 +267,24 @@ func TestGPULoadPersistentLeaseLifecycle(t *testing.T) {
 	}
 }
 
+func TestGPUWeightShardsFiltersRuntimeEntries(t *testing.T) {
+	shards := []ModelShard{
+		{Name: "weights-1.safetensors", Ordinal: 1, Kind: "weight"},
+		{Name: "config.json", Ordinal: 2, Kind: "runtime"},
+		{Name: "weights-2.safetensors", Ordinal: 3},
+	}
+	got, err := gpuWeightShards(ModelProfile{Shards: shards})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 weight shards, got %d", len(got))
+	}
+	if got[0].Name != "weights-1.safetensors" || got[1].Name != "weights-2.safetensors" {
+		t.Fatalf("unexpected weight shard ordering/filter result: %+v", got)
+	}
+}
+
 func writeReadyModelForGPUTest(t *testing.T, modelRoot, modelID, manifest string) (string, int64) {
 	t.Helper()
 	modelPath := filepath.Join(modelRoot, modelID, strings.ReplaceAll(manifest, ":", "-"))

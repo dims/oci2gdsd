@@ -150,3 +150,40 @@ func TestLintProfileRejectsTraversalShardName(t *testing.T) {
 		t.Fatalf("expected invalid shard name lint error, got: %+v", got.Errors)
 	}
 }
+
+func TestLintProfileRejectsUnknownShardKind(t *testing.T) {
+	profile := &ModelProfile{
+		SchemaVersion: 1,
+		ModelID:       "demo-model",
+		ModelRevision: "r1",
+		Framework:     "pytorch",
+		Format:        "safetensors",
+		Shards: []ModelShard{
+			{
+				Name:    "model-00001-of-00001.safetensors",
+				Digest:  "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				Size:    1024,
+				Ordinal: 1,
+				Kind:    "unknown",
+			},
+		},
+		Integrity: ModelIntegrity{
+			ManifestDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		},
+	}
+
+	got := LintProfile(profile, "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", nil)
+	if got.Valid {
+		t.Fatalf("expected invalid profile for unknown shard kind")
+	}
+	found := false
+	for _, err := range got.Errors {
+		if strings.Contains(err, "kind must be one of") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected shard kind lint error, got: %+v", got.Errors)
+	}
+}

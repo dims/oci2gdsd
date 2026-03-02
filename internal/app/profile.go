@@ -38,6 +38,7 @@ type ModelShard struct {
 	Digest    string `json:"digest" yaml:"digest"`
 	Size      int64  `json:"size" yaml:"size"`
 	Ordinal   int    `json:"ordinal" yaml:"ordinal"`
+	Kind      string `json:"kind,omitempty" yaml:"kind,omitempty"`
 	Alignment int64  `json:"alignment,omitempty" yaml:"alignment,omitempty"`
 }
 
@@ -130,6 +131,9 @@ func LintProfile(profile *ModelProfile, manifestDigest string, layers []Manifest
 		if shard.Ordinal <= 0 {
 			errs = append(errs, fmt.Sprintf("shards[%d].ordinal must be > 0", i))
 		}
+		if kind := strings.ToLower(strings.TrimSpace(shard.Kind)); kind != "" && kind != "weight" && kind != "runtime" {
+			errs = append(errs, fmt.Sprintf("shards[%d].kind must be one of: weight,runtime", i))
+		}
 		if ordinals[shard.Ordinal] {
 			errs = append(errs, fmt.Sprintf("duplicate shard ordinal %d", shard.Ordinal))
 		}
@@ -198,4 +202,19 @@ func SortShardsByOrdinal(shards []ModelShard) []ModelShard {
 		return cp[i].Ordinal < cp[j].Ordinal
 	})
 	return cp
+}
+
+func ShardIsWeight(shard ModelShard) bool {
+	kind := strings.ToLower(strings.TrimSpace(shard.Kind))
+	return kind == "" || kind == "weight"
+}
+
+func FilterWeightShards(shards []ModelShard) []ModelShard {
+	out := make([]ModelShard, 0, len(shards))
+	for _, shard := range shards {
+		if ShardIsWeight(shard) {
+			out = append(out, shard)
+		}
+	}
+	return out
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -296,13 +297,16 @@ func (s *Service) Ensure(ctx context.Context, req EnsureRequest) (EnsureResult, 
 		return fail(ReasonProfileLintFailed, fmt.Sprintf("profile modelId %q does not match --model-id %q", fetched.Profile.ModelID, req.ModelID), nil)
 	}
 
-	var totalExpected int64
-	for _, shard := range fetched.Profile.Shards {
-		totalExpected += shard.Size
+	totalExpected, err := sumShardSizes(fetched.Profile.Shards)
+	if err != nil {
+		return fail(ReasonProfileLintFailed, "invalid aggregate shard size", err)
 	}
 	freeBytes, err := diskFreeBytes(s.cfg.ModelRoot)
 	if err != nil {
 		return fail(ReasonFilesystemError, "failed to measure free disk space", err)
+	}
+	if s.cfg.Retention.MinFreeBytes > math.MaxInt64-totalExpected {
+		return fail(ReasonDiskSpaceInsufficient, "requested min_free_bytes plus shard sizes exceeds int64 range", nil)
 	}
 	requiredFloor := s.cfg.Retention.MinFreeBytes + totalExpected
 	if freeBytes < requiredFloor {
@@ -681,21 +685,45 @@ func (s *Service) GC(policy string, minFreeBytes int64, dryRun bool) (GCResult, 
 			break
 		}
 		key := modelKey(c.rec.ModelID, c.rec.ManifestDigest)
-		freedBytes := c.rec.Bytes
+		unlock, pending, lockErr := s.locks.Acquire(context.Background(), key, false)
+		if lockErr != nil {
+			return result, lockErr
+		}
+		if pending {
+			continue
+		}
+
+		rec, ok, getErr := s.store.Get(key)
+		if getErr != nil {
+			unlock()
+			return result, getErr
+		}
+		if !ok {
+			unlock()
+			continue
+		}
+		if len(rec.Leases) > 0 || rec.Path == "" || (rec.Status != StateReady && rec.Status != StateReleased) || !fileExists(readyMarkerPath(rec.Path)) {
+			unlock()
+			continue
+		}
+		freedBytes := rec.Bytes
 		if !dryRun {
-			if err := os.RemoveAll(c.rec.Path); err != nil {
+			if err := os.RemoveAll(rec.Path); err != nil {
+				unlock()
 				return result, NewAppError(ExitFilesystem, ReasonFilesystemError, "failed to delete model during gc", err)
 			}
-			c.rec.Status = StateReleased
-			c.rec.Path = ""
-			c.rec.Bytes = 0
-			c.rec.Releasable = true
+			rec.Status = StateReleased
+			rec.Path = ""
+			rec.Bytes = 0
+			rec.Releasable = true
 			now := time.Now().UTC()
-			c.rec.ReleasableAt = &now
-			if err := s.store.Put(&c.rec); err != nil {
+			rec.ReleasableAt = &now
+			if err := s.store.Put(rec); err != nil {
+				unlock()
 				return result, err
 			}
 		}
+		unlock()
 		result.DeletedModels = append(result.DeletedModels, key)
 		result.BytesFreed += freedBytes
 		free += freedBytes
@@ -706,6 +734,20 @@ func (s *Service) GC(policy string, minFreeBytes int64, dryRun bool) (GCResult, 
 	}
 	result.RemainingModels = len(updated)
 	return result, nil
+}
+
+func sumShardSizes(shards []ModelShard) (int64, error) {
+	var total int64
+	for i, shard := range shards {
+		if shard.Size < 0 {
+			return 0, fmt.Errorf("shard[%d] has negative size %d", i, shard.Size)
+		}
+		if total > math.MaxInt64-shard.Size {
+			return 0, fmt.Errorf("aggregate shard size overflow at shard[%d]", i)
+		}
+		total += shard.Size
+	}
+	return total, nil
 }
 
 func (s *Service) Verify(path string, modelID string, manifestDigest string) (VerifyResult, error) {

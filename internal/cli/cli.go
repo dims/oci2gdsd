@@ -462,6 +462,19 @@ func runGPULoad(ctx context.Context, svc *app.Service, args []string, globalJSON
 	if err := fs.Parse(args); err != nil {
 		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid gpu load flags", err), commandJSON, stderr)
 	}
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "persistent" {
+		return emitError(
+			app.NewAppError(
+				app.ExitPolicy,
+				app.ReasonPolicyRejected,
+				"gpu load --mode persistent is not available in standalone one-shot CLI mode; use --mode benchmark",
+				nil,
+			),
+			commandJSON,
+			stderr,
+		)
+	}
 	chunk, err := app.ParseByteSize(chunkBytes)
 	if err != nil {
 		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid --chunk-bytes", err), commandJSON, stderr)

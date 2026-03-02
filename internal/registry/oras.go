@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,12 +11,20 @@ import (
 	"time"
 
 	"github.com/dims/oci2gdsd/internal/app"
+	digest "github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/credentials"
 	"oras.land/oras-go/v2/registry/remote/retry"
 )
+
+const (
+	maxManifestBytes = int64(16 << 20)  // 16 MiB
+	maxConfigBytes   = int64(100 << 20) // 100 MiB
+)
+
+var errReadLimitExceeded = errors.New("read limit exceeded")
 
 type ORASModelFetcher struct {
 	cfg app.Config
@@ -46,14 +55,24 @@ func (f *ORASModelFetcher) Fetch(ctx context.Context, ref string) (*app.FetchedM
 	if err != nil {
 		return nil, wrapRegistryError("failed to resolve manifest", err)
 	}
+	if manifestDesc.Digest.String() != manifestDigest {
+		return nil, app.NewAppError(app.ExitIntegrity, app.ReasonBlobDigestMismatch, fmt.Sprintf("resolved manifest digest mismatch: expected %s got %s", manifestDigest, manifestDesc.Digest.String()), nil)
+	}
 	manifestRC, err := repo.Fetch(ctx, manifestDesc)
 	if err != nil {
 		return nil, wrapRegistryError("failed to fetch manifest", err)
 	}
 	defer manifestRC.Close()
-	manifestBytes, err := io.ReadAll(manifestRC)
+	manifestBytes, err := readAllWithLimit(manifestRC, maxManifestBytes)
 	if err != nil {
+		if errors.Is(err, errReadLimitExceeded) {
+			return nil, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, fmt.Sprintf("manifest exceeds max allowed size (%d bytes)", maxManifestBytes), nil)
+		}
 		return nil, wrapRegistryError("failed to read manifest", err)
+	}
+	computedManifestDigest := digest.FromBytes(manifestBytes).String()
+	if computedManifestDigest != manifestDigest {
+		return nil, app.NewAppError(app.ExitIntegrity, app.ReasonBlobDigestMismatch, fmt.Sprintf("manifest digest mismatch: expected %s got %s", manifestDigest, computedManifestDigest), nil)
 	}
 
 	manifest := ocispec.Manifest{}
@@ -66,9 +85,26 @@ func (f *ORASModelFetcher) Fetch(ctx context.Context, ref string) (*app.FetchedM
 		return nil, wrapRegistryError("failed to fetch model config", err)
 	}
 	defer configRC.Close()
-	configBytes, err := io.ReadAll(configRC)
+	configLimit := maxConfigBytes
+	if manifest.Config.Size > 0 {
+		if manifest.Config.Size > maxConfigBytes {
+			return nil, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, fmt.Sprintf("config size %d exceeds max allowed size (%d bytes)", manifest.Config.Size, maxConfigBytes), nil)
+		}
+		configLimit = manifest.Config.Size
+	}
+	configBytes, err := readAllWithLimit(configRC, configLimit)
 	if err != nil {
+		if errors.Is(err, errReadLimitExceeded) {
+			return nil, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, fmt.Sprintf("config exceeds max allowed read size (%d bytes)", configLimit), nil)
+		}
 		return nil, wrapRegistryError("failed to read model config", err)
+	}
+	if manifest.Config.Size > 0 && int64(len(configBytes)) != manifest.Config.Size {
+		return nil, app.NewAppError(app.ExitIntegrity, app.ReasonBlobSizeMismatch, fmt.Sprintf("config size mismatch: expected %d got %d", manifest.Config.Size, len(configBytes)), nil)
+	}
+	computedConfigDigest := digest.FromBytes(configBytes).String()
+	if expected := manifest.Config.Digest.String(); expected != "" && computedConfigDigest != expected {
+		return nil, app.NewAppError(app.ExitIntegrity, app.ReasonBlobDigestMismatch, fmt.Sprintf("config digest mismatch: expected %s got %s", expected, computedConfigDigest), nil)
 	}
 
 	profile := &app.ModelProfile{}
@@ -202,4 +238,19 @@ func wrapRegistryError(message string, err error) error {
 	default:
 		return app.NewAppError(app.ExitRegistry, app.ReasonRegistryUnreachable, message, err)
 	}
+}
+
+func readAllWithLimit(r io.Reader, limit int64) ([]byte, error) {
+	if limit <= 0 {
+		return nil, fmt.Errorf("invalid read limit %d", limit)
+	}
+	lr := io.LimitReader(r, limit+1)
+	b, err := io.ReadAll(lr)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(b)) > limit {
+		return nil, errReadLimitExceeded
+	}
+	return b, nil
 }
