@@ -9,10 +9,10 @@ import (
 )
 
 const (
-	MediaTypeModelArtifact = "application/vnd.acme.model.v1"
-	MediaTypeModelConfig   = "application/vnd.acme.model.config.v1+json"
-	MediaTypeModelShard    = "application/vnd.acme.model.shard.v1+safetensors"
-	MediaTypeTensorMap     = "application/vnd.acme.model.tensor-map.v1+json"
+	MediaTypeModelArtifact = "application/vnd.oci2gdsd.model.v1"
+	MediaTypeModelConfig   = "application/vnd.oci2gdsd.model.config.v1+json"
+	MediaTypeModelShard    = "application/vnd.oci2gdsd.model.shard.v1+safetensors"
+	MediaTypeTensorMap     = "application/vnd.oci2gdsd.model.tensor-map.v1+json"
 
 	// ManifestDigestPlaceholder avoids impossible self-referential manifest digest
 	// pinning in config payloads. The resolved manifest digest is still known at

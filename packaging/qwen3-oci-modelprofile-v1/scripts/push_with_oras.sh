@@ -3,10 +3,10 @@ set -euo pipefail
 
 PAYLOAD_DIR=""
 OCI_REF=""
-ARTIFACT_TYPE="application/vnd.acme.model.v1"
-CONFIG_MEDIA_TYPE="application/vnd.acme.model.config.v1+json"
-WEIGHT_MEDIA_TYPE="application/vnd.acme.model.shard.v1+safetensors"
-RUNTIME_FILE_MEDIA_TYPE="application/vnd.acme.model.file.v1"
+ARTIFACT_TYPE="application/vnd.oci2gdsd.model.v1"
+CONFIG_MEDIA_TYPE="application/vnd.oci2gdsd.model.config.v1+json"
+WEIGHT_MEDIA_TYPE="application/vnd.oci2gdsd.model.shard.v1+safetensors"
+RUNTIME_FILE_MEDIA_TYPE="application/vnd.oci2gdsd.model.file.v1"
 OUT_DIR=""
 PLAIN_HTTP="false"
 

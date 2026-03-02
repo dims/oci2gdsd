@@ -80,6 +80,7 @@ func transitionState(current, next ModelState) error {
 		StatePublishing:  {StateReady, StateFailed},
 		StateReady:       {StateReleasing},
 		StateReleasing:   {StateReady, StateReleased},
+		StateFailed:      {StateResolving, StateReleased},
 	}
 	allowed, ok := valid[current]
 	if !ok {

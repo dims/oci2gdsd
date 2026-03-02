@@ -3,8 +3,8 @@
 This directory provides a reproducible workflow to package a Qwen3 model from
 Hugging Face into an OCI artifact that matches `oci2gdsd` expectations:
 
-- `artifactType`: `application/vnd.acme.model.v1`
-- config media type: `application/vnd.acme.model.config.v1+json`
+- `artifactType`: `application/vnd.oci2gdsd.model.v1`
+- config media type: `application/vnd.oci2gdsd.model.config.v1+json`
 - one layer per payload file under `shards/`:
   - model weight shards (`*.safetensors`)
   - runtime model files (`config.json`, tokenizer files, and related metadata)

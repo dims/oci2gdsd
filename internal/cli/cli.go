@@ -54,6 +54,9 @@ func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 	if err := cfg.Validate(); err != nil {
 		return emitError(err, jsonOut, stderr)
 	}
+	for _, w := range cfg.ReservedFieldWarnings() {
+		fmt.Fprintf(stderr, "warning: %s\n", w)
+	}
 	svc, err := app.NewService(cfg, registry.NewORASModelFetcher(cfg), gpu.NewDefaultGPULoader())
 	if err != nil {
 		return emitError(err, jsonOut, stderr)

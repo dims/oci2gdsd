@@ -1,8 +1,10 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -208,6 +210,136 @@ func TestGCSkipsBusyModelLock(t *testing.T) {
 	}
 	if !fileExists(modelPath) {
 		t.Fatalf("expected model path to remain while lock is held")
+	}
+}
+
+func TestRecoverReplaysReadyWrittenJournal(t *testing.T) {
+	svc := newStateOnlyService(t)
+	content := []byte("recover-ready")
+	manifest := "sha256:" + strings.Repeat("9", 64)
+	modelPath := filepath.Join(svc.cfg.ModelRoot, "demo", "sha256-"+strings.Repeat("9", 64))
+	if err := os.MkdirAll(filepath.Join(modelPath, "metadata"), 0o755); err != nil {
+		t.Fatalf("mkdir metadata: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(modelPath, "shards"), 0o755); err != nil {
+		t.Fatalf("mkdir shards: %v", err)
+	}
+	shardName := "weights-00001.safetensors"
+	if err := os.WriteFile(filepath.Join(modelPath, "shards", shardName), content, 0o444); err != nil {
+		t.Fatalf("write shard: %v", err)
+	}
+	md := localMetadata{
+		SchemaVersion:  1,
+		ModelID:        "demo",
+		ManifestDigest: manifest,
+		Profile: ModelProfile{
+			SchemaVersion: 1,
+			ModelID:       "demo",
+			ModelRevision: "r1",
+			Framework:     "pytorch",
+			Format:        "safetensors",
+			Shards: []ModelShard{{
+				Name:    shardName,
+				Digest:  digest.FromBytes(content).String(),
+				Size:    int64(len(content)),
+				Ordinal: 1,
+				Kind:    "weight",
+			}},
+			Integrity: ModelIntegrity{ManifestDigest: manifest},
+		},
+	}
+	mb, err := json.Marshal(md)
+	if err != nil {
+		t.Fatalf("marshal metadata: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(modelPath, "metadata", "model.json"), mb, 0o444); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(modelPath, "READY"), []byte("ok\n"), 0o444); err != nil {
+		t.Fatalf("write READY: %v", err)
+	}
+
+	key := modelKey("demo", manifest)
+	rec := &ModelRecord{
+		Key:            key,
+		ModelID:        "demo",
+		ManifestDigest: manifest,
+		Status:         StatePublishing,
+		Path:           modelPath,
+		Bytes:          int64(len(content)),
+		CreatedAt:      time.Now().UTC(),
+		UpdatedAt:      time.Now().UTC(),
+		LastAccessedAt: time.Now().UTC(),
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatalf("put record: %v", err)
+	}
+
+	j := NewJournal(svc.cfg.JournalDir, "demo", manifest)
+	if err := j.Append(JournalTxnStarted); err != nil {
+		t.Fatalf("append txn started: %v", err)
+	}
+	if err := j.Append(JournalReadyWritten); err != nil {
+		t.Fatalf("append ready written: %v", err)
+	}
+
+	if err := svc.Recover(); err != nil {
+		t.Fatalf("recover: %v", err)
+	}
+
+	stored, ok, err := svc.store.Get(key)
+	if err != nil {
+		t.Fatalf("store get: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected record")
+	}
+	if stored.Status != StateReady {
+		t.Fatalf("expected READY after recover replay, got %s", stored.Status)
+	}
+	if fileExists(j.Path()) {
+		t.Fatalf("expected replayed journal to be cleaned up")
+	}
+}
+
+func TestGCCollectsFailedRecordWithoutReadyMarker(t *testing.T) {
+	svc := newStateOnlyService(t)
+	now := time.Now().UTC()
+	manifest := "sha256:" + strings.Repeat("e", 64)
+	modelPath := filepath.Join(svc.cfg.ModelRoot, "failed-model", "sha256-failed")
+	if err := os.MkdirAll(modelPath, 0o755); err != nil {
+		t.Fatalf("mkdir failed path: %v", err)
+	}
+	blob := bytes.Repeat([]byte{0x1}, 1024)
+	if err := os.WriteFile(filepath.Join(modelPath, "partial.bin"), blob, 0o644); err != nil {
+		t.Fatalf("write partial file: %v", err)
+	}
+	rec := &ModelRecord{
+		Key:            modelKey("failed-model", manifest),
+		ModelID:        "failed-model",
+		ManifestDigest: manifest,
+		Status:         StateFailed,
+		Path:           modelPath,
+		Bytes:          int64(len(blob)),
+		Releasable:     true,
+		ReleasableAt:   &now,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		LastAccessedAt: now,
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatalf("put failed record: %v", err)
+	}
+
+	res, err := svc.GC("lru_no_lease", math.MaxInt64/4, false)
+	if err != nil {
+		t.Fatalf("gc failed: %v", err)
+	}
+	if len(res.DeletedModels) != 1 || res.DeletedModels[0] != rec.Key {
+		t.Fatalf("expected failed record to be gc candidate, got %+v", res.DeletedModels)
+	}
+	if fileExists(modelPath) {
+		t.Fatalf("expected failed path to be deleted by gc")
 	}
 }
 

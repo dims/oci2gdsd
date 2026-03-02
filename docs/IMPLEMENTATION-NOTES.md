@@ -23,7 +23,8 @@
   - `TXN_READY_WRITTEN`
   - `TXN_COMMITTED`
 - `READY` read contract enforcement.
-- `gpu load` contract is explicit benchmark mode; persistent GPU residency/IPC is not yet implemented.
+- Standalone CLI `gpu load` contract is explicit benchmark mode; `--mode persistent` is rejected in one-shot CLI mode.
+- `gpu unload` and `gpu status` commands are implemented; they are primarily useful for embedded/long-running process integrations.
 - Lease-aware release and GC behavior.
 - Crash-recovery guardrails for stale temp paths and inconsistent READY entries
   using lightweight READY/metadata/shard-size checks at startup.

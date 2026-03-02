@@ -15,6 +15,8 @@ to a deterministic local model cache with strict integrity checks and atomic pub
 - `profile inspect`
 - `gpu probe`
 - `gpu load`
+- `gpu unload`
+- `gpu status`
 
 ## Build
 
@@ -69,7 +71,7 @@ oci2gdsd gc --policy lru_no_lease --min-free-bytes 200G --json
 - ORAS client path is implemented with Docker credential-store support.
 - `ensure` is idempotent per `model-id + manifest-digest` with per-model file locks.
 - Publish path is transactional with journal markers and `READY` as a final-read contract marker.
-- GPU direct loader is available behind `-tags gds` (`gpu probe`, `gpu load`).
+- GPU direct loader is available behind `-tags gds` (`gpu probe`, `gpu load`, `gpu unload`, `gpu status`).
 - Section 37 high-speed chunked range download semantics are represented in config and HTTP transport tuning, but full per-blob parallel range fetching is not yet implemented.
 
 ## User Docs

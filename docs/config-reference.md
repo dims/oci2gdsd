@@ -19,6 +19,8 @@ Config resolution:
    - `--target-root`
    - `--log-level`
 
+When reserved fields are set to non-default values, the CLI emits `warning:` lines on `stderr` so operators can see that those fields are currently no-ops.
+
 ## Path and core fields
 
 - `root` (`active`): base state directory.

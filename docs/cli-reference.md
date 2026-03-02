@@ -17,6 +17,8 @@ Top-level commands:
 - `profile inspect`
 - `gpu probe`
 - `gpu load`
+- `gpu unload`
+- `gpu status`
 
 ## Global flags
 
@@ -179,7 +181,39 @@ Path resolution:
 Current mode semantics:
 
 - `benchmark`: reads shard files through the configured loader path and reports throughput/progress metadata.
-- `persistent`: currently rejected with policy error (persistent GPU allocations/IPC handles are not implemented yet).
+- `persistent`: rejected in standalone one-shot CLI mode with `POLICY_REJECTED`.
+
+## `gpu unload`
+
+Attempts to unload persistent GPU allocations for a model path.
+
+Flags:
+
+- `--model-id <id>`
+- `--digest sha256:...`
+- `--path <published-model-path>`
+- `--lease-holder <holder>` (required)
+- `--device <index>` (default: `0`)
+- `--json`
+
+Notes:
+
+- In standalone CLI mode, `gpu load --mode persistent` is rejected, so `gpu unload` is
+  primarily relevant for embedded/long-running service integrations that keep process state.
+
+## `gpu status`
+
+Lists persistent GPU allocations tracked by the current process for a device.
+
+Flags:
+
+- `--device <index>` (default: `0`)
+- `--json`
+
+Notes:
+
+- In standalone one-shot CLI mode this will usually return an empty list because no
+  cross-command process state is retained.
 
 ## Output behavior
 

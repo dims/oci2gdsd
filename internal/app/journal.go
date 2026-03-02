@@ -75,3 +75,13 @@ func (j *Journal) Markers() (map[string]bool, error) {
 func (j *Journal) Path() string {
 	return j.path
 }
+
+func (j *Journal) Delete() error {
+	if !fileExists(j.path) {
+		return nil
+	}
+	if err := os.Remove(j.path); err != nil {
+		return NewAppError(ExitFilesystem, ReasonFilesystemError, "failed to delete journal", err)
+	}
+	return nil
+}

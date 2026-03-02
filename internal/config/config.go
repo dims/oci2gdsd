@@ -316,6 +316,54 @@ func (c Config) EffectiveDockerConfig() string {
 	return ""
 }
 
+func (c Config) ReservedFieldWarnings() []string {
+	def := DefaultConfig()
+	warnings := make([]string, 0)
+	add := func(ok bool, msg string) {
+		if ok {
+			warnings = append(warnings, msg)
+		}
+	}
+
+	add(c.LogLevel != def.LogLevel, "log_level is reserved and does not currently change runtime logging behavior")
+	add(c.Registry.Retries != def.Registry.Retries, "registry.retries is reserved and not used by current retry policy")
+	add(c.Registry.BackoffInitialMS != def.Registry.BackoffInitialMS, "registry.backoff_initial_ms is reserved and not used by current retry policy")
+	add(c.Registry.BackoffMaxMS != def.Registry.BackoffMaxMS, "registry.backoff_max_ms is reserved and not used by current retry policy")
+	add(len(c.Registry.Mirrors) > 0, "registry.mirrors is reserved and not implemented")
+	add(len(c.Registry.Headers) > 0, "registry.headers is reserved and not implemented")
+	add(c.Registry.Auth.Mode != "" && c.Registry.Auth.Mode != def.Registry.Auth.Mode, "registry.auth.mode is reserved and not implemented")
+
+	add(c.Transfer.MaxModelsConcurrent != def.Transfer.MaxModelsConcurrent, "transfer.max_models_concurrent is reserved and not used")
+	add(c.Transfer.MaxShardsConcurrentPerModel != def.Transfer.MaxShardsConcurrentPerModel, "transfer.max_shards_concurrent_per_model is validation-only in current implementation")
+	add(c.Transfer.MaxConnectionsPerRegistry != def.Transfer.MaxConnectionsPerRegistry, "transfer.max_connections_per_registry is reserved and not used")
+	add(c.Transfer.MaxResumeAttempts != def.Transfer.MaxResumeAttempts, "transfer.max_resume_attempts is reserved and not used")
+
+	add(c.Download.MaxConcurrentRequestsGlobal != def.Download.MaxConcurrentRequestsGlobal, "download.max_concurrent_requests_global is reserved and not used")
+	add(c.Download.MaxConcurrentRequestsPerModel != def.Download.MaxConcurrentRequestsPerModel, "download.max_concurrent_requests_per_model is reserved and not used")
+	add(c.Download.MaxConcurrentChunksPerBlob != def.Download.MaxConcurrentChunksPerBlob, "download.max_concurrent_chunks_per_blob is reserved and not used")
+	add(c.Download.ChunkSizeBytes != def.Download.ChunkSizeBytes, "download.chunk_size_bytes is reserved and not used")
+	add(c.Download.RequestTimeoutSec != def.Download.RequestTimeoutSec, "download.request_timeout_sec is reserved and not used")
+	add(c.Download.Retry.Jitter != def.Download.Retry.Jitter, "download.retry.jitter is reserved and not used")
+
+	add(c.Integrity.StrictDigest != def.Integrity.StrictDigest, "integrity.strict_digest is reserved and not used as a runtime toggle")
+	add(c.Integrity.StrictSignature != def.Integrity.StrictSignature, "integrity.strict_signature is validation-only in current implementation")
+	add(c.Integrity.AllowUnsignedInDev != def.Integrity.AllowUnsignedInDev, "integrity.allow_unsigned_in_dev is validation-only in current implementation")
+
+	add(c.Publish.RequireReadyMarker != def.Publish.RequireReadyMarker, "publish.require_ready_marker is reserved (READY marker is always enforced)")
+	add(c.Publish.AtomicPublish != def.Publish.AtomicPublish, "publish.atomic_publish is reserved (atomic publish is always enforced)")
+	add(c.Publish.DenyPartialReads != def.Publish.DenyPartialReads, "publish.deny_partial_reads is reserved and not used")
+
+	add(c.Retention.MaxModels != def.Retention.MaxModels, "retention.max_models is reserved and not used")
+	add(c.Retention.TTLHours != def.Retention.TTLHours, "retention.ttl_hours is reserved and not used")
+	add(c.Retention.EmergencyLowSpaceMode != def.Retention.EmergencyLowSpaceMode, "retention.emergency_low_space_mode is reserved and not used")
+
+	add(c.Observability.MetricsEnabled != def.Observability.MetricsEnabled, "observability.metrics_enabled is reserved and not used")
+	add(c.Observability.MetricsListen != def.Observability.MetricsListen, "observability.metrics_listen is reserved and not used")
+	add(c.Observability.EventsJSONLog != def.Observability.EventsJSONLog, "observability.events_json_log is reserved and not used")
+
+	return warnings
+}
+
 func ParseByteSize(input string) (int64, error) {
 	s := strings.TrimSpace(strings.ToUpper(input))
 	if s == "" {

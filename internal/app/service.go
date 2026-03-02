@@ -158,6 +158,46 @@ func (s *Service) Recover() error {
 		return err
 	}
 	for _, rec := range records {
+		journal := NewJournal(s.cfg.JournalDir, rec.ModelID, rec.ManifestDigest)
+		markers, markerErr := journal.Markers()
+		if markerErr != nil {
+			return markerErr
+		}
+		if len(markers) > 0 {
+			if markers[JournalCommitted] {
+				_ = journal.Delete()
+			} else if markers[JournalReadyWritten] {
+				ready, _, verifyErr := s.verifyPublishedPathQuick(rec.Path)
+				if verifyErr == nil && ready {
+					rec.Status = StateReady
+					rec.LastError = ReasonNone
+					rec.LastErrorMessage = ""
+					if putErr := s.store.Put(&rec); putErr != nil {
+						return putErr
+					}
+					_ = journal.Append(JournalCommitted)
+					_ = journal.Delete()
+					continue
+				}
+				rec.Status = StateFailed
+				rec.LastError = ReasonStateDBCorrupt
+				rec.LastErrorMessage = "recovery found incomplete ensure transaction after READY write"
+				if putErr := s.store.Put(&rec); putErr != nil {
+					return putErr
+				}
+				_ = journal.Delete()
+				continue
+			} else {
+				rec.Status = StateFailed
+				rec.LastError = ReasonStateDBCorrupt
+				rec.LastErrorMessage = "recovery found incomplete ensure transaction"
+				if putErr := s.store.Put(&rec); putErr != nil {
+					return putErr
+				}
+				_ = journal.Delete()
+				continue
+			}
+		}
 		if rec.Status != StateReady {
 			continue
 		}
@@ -251,6 +291,11 @@ func (s *Service) Ensure(ctx context.Context, req EnsureRequest) (EnsureResult, 
 	}
 	if existing != nil {
 		record.Leases = append([]Lease(nil), existing.Leases...)
+		if existing.Status == StateFailed {
+			if err := transitionState(existing.Status, StateResolving); err != nil {
+				return EnsureResult{}, NewAppError(ExitStateCorrupt, ReasonStateDBCorrupt, err.Error(), err)
+			}
+		}
 	}
 	record.AcquireLease(req.LeaseHolder)
 	if err := s.store.Put(record); err != nil {
@@ -445,6 +490,7 @@ func (s *Service) Ensure(ctx context.Context, req EnsureRequest) (EnsureResult, 
 	if err := s.store.Put(record); err != nil {
 		return EnsureResult{}, err
 	}
+	_ = journal.Delete()
 
 	return EnsureResult{
 		Status:          "READY",
@@ -638,10 +684,10 @@ func (s *Service) GC(policy string, minFreeBytes int64, dryRun bool) (GCResult, 
 		if rec.Path == "" {
 			continue
 		}
-		if rec.Status != StateReady && rec.Status != StateReleased {
+		if rec.Status != StateReady && rec.Status != StateReleased && rec.Status != StateFailed {
 			continue
 		}
-		if !fileExists(readyMarkerPath(rec.Path)) {
+		if rec.Status != StateFailed && !fileExists(readyMarkerPath(rec.Path)) {
 			continue
 		}
 		candidates = append(candidates, candidate{rec: rec})
@@ -702,7 +748,7 @@ func (s *Service) GC(policy string, minFreeBytes int64, dryRun bool) (GCResult, 
 			unlock()
 			continue
 		}
-		if len(rec.Leases) > 0 || rec.Path == "" || (rec.Status != StateReady && rec.Status != StateReleased) || !fileExists(readyMarkerPath(rec.Path)) {
+		if len(rec.Leases) > 0 || rec.Path == "" || (rec.Status != StateReady && rec.Status != StateReleased && rec.Status != StateFailed) || (rec.Status != StateFailed && !fileExists(readyMarkerPath(rec.Path))) {
 			unlock()
 			continue
 		}
@@ -722,6 +768,7 @@ func (s *Service) GC(policy string, minFreeBytes int64, dryRun bool) (GCResult, 
 				unlock()
 				return result, err
 			}
+			_ = NewJournal(s.cfg.JournalDir, rec.ModelID, rec.ManifestDigest).Delete()
 		}
 		unlock()
 		result.DeletedModels = append(result.DeletedModels, key)
