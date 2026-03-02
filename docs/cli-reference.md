@@ -128,7 +128,7 @@ Lints OCI-ModelProfile-v1 metadata.
 Flags:
 
 - `--ref <repo@sha256:...>`
-- `--config <path-to-model-config.json>`
+- `--config <path-to-model-config.(json|yaml|yml)>`
 - `--digest sha256:...` (expected digest when linting via `--config`)
 - `--json`
 
@@ -141,7 +141,7 @@ Prints profile summary (model id, framework, format, shard count, total bytes, m
 Flags:
 
 - `--ref <repo@sha256:...>`
-- `--config <path-to-model-config.json>`
+- `--config <path-to-model-config.(json|yaml|yml)>`
 - `--json`
 
 One of `--ref` or `--config` is required.

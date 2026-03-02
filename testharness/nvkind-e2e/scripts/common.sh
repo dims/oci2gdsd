@@ -25,6 +25,7 @@ LEASE_HOLDER="${LEASE_HOLDER:-k8s-e2e}"
 MODEL_REF_OVERRIDE="${MODEL_REF_OVERRIDE:-}"
 MODEL_DIGEST_OVERRIDE="${MODEL_DIGEST_OVERRIDE:-}"
 VALIDATE_QWEN_HELLO="${VALIDATE_QWEN_HELLO:-true}"
+VALIDATE_LOCAL_GDS="${VALIDATE_LOCAL_GDS:-true}"
 
 OCI2GDSD_IMAGE="${OCI2GDSD_IMAGE:-oci2gdsd:e2e}"
 PACKAGER_IMAGE="${PACKAGER_IMAGE:-oci2gdsd-qwen3-packager:local}"
@@ -39,6 +40,8 @@ KIND_VERSION="${KIND_VERSION:-0.31.0}"
 KUBECTL_VERSION="${KUBECTL_VERSION:-1.32.0}"
 HELM_VERSION="${HELM_VERSION:-3.17.3}"
 GO_VERSION="${GO_VERSION:-1.23.6}"
+CUDA_INCLUDE_DIR="${CUDA_INCLUDE_DIR:-/usr/local/cuda/include}"
+CUDA_LIB_DIR="${CUDA_LIB_DIR:-/usr/local/cuda/lib64}"
 
 PF_PID_FILE="${WORK_DIR}/registry-port-forward.pid"
 
@@ -329,6 +332,71 @@ EOF
   kubectl --context "${KUBECTL_CONTEXT}" -n kube-system wait pod/gpu-smoke --for=jsonpath='{.status.phase}'=Succeeded --timeout=180s
   kubectl --context "${KUBECTL_CONTEXT}" -n kube-system logs pod/gpu-smoke
   kubectl --context "${KUBECTL_CONTEXT}" -n kube-system delete pod/gpu-smoke --ignore-not-found >/dev/null
+}
+
+validate_local_gds_loader() {
+  if [[ "${VALIDATE_LOCAL_GDS}" != "true" ]]; then
+    log "skipping local GDS validation"
+    return
+  fi
+  ensure_go_path
+  mkdir -p "${WORK_DIR}/results"
+  local bin_path="${WORK_DIR}/oci2gdsd-gds"
+  local gds_root="${WORK_DIR}/gds-root"
+  local model_path="${gds_root}/models/demo/sha256-1111111111111111111111111111111111111111111111111111111111111111"
+  log "building local oci2gdsd binary with -tags gds for preflight validation"
+  (
+    cd "${REPO_ROOT}"
+    CGO_ENABLED=1 \
+      CGO_CFLAGS="-I${CUDA_INCLUDE_DIR}" \
+      CGO_LDFLAGS="-L${CUDA_LIB_DIR}" \
+      go build -tags gds -o "${bin_path}" ./cmd/oci2gdsd
+  )
+  "${bin_path}" --root "${gds_root}" --target-root "${gds_root}/models" gpu probe --json > "${WORK_DIR}/results/gpu-probe.json"
+  if ! jq -e '.available == true' "${WORK_DIR}/results/gpu-probe.json" >/dev/null; then
+    die "local GDS probe failed; see ${WORK_DIR}/results/gpu-probe.json"
+  fi
+
+  mkdir -p "${model_path}/shards" "${model_path}/metadata"
+  dd if=/dev/zero of="${model_path}/shards/weights-00001.safetensors" bs=4096 count=1 status=none
+  printf "{}\n" > "${model_path}/shards/config.json"
+  local w_digest r_digest w_size r_size
+  w_digest="$(sha256sum "${model_path}/shards/weights-00001.safetensors" | awk '{print $1}')"
+  r_digest="$(sha256sum "${model_path}/shards/config.json" | awk '{print $1}')"
+  w_size="$(stat -c %s "${model_path}/shards/weights-00001.safetensors")"
+  r_size="$(stat -c %s "${model_path}/shards/config.json")"
+  cat > "${model_path}/metadata/model.json" <<EOF
+{
+  "schemaVersion": 1,
+  "modelId": "demo",
+  "manifestDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "profile": {
+    "schemaVersion": 1,
+    "modelId": "demo",
+    "modelRevision": "r1",
+    "framework": "pytorch",
+    "format": "safetensors",
+    "shards": [
+      {"name": "weights-00001.safetensors", "digest": "sha256:${w_digest}", "size": ${w_size}, "ordinal": 1, "kind": "weight"},
+      {"name": "config.json", "digest": "sha256:${r_digest}", "size": ${r_size}, "ordinal": 2, "kind": "runtime"}
+    ],
+    "integrity": {"manifestDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"}
+  }
+}
+EOF
+  printf "ok\n" > "${model_path}/READY"
+
+  "${bin_path}" --root "${gds_root}" --target-root "${gds_root}/models" \
+    gpu load --path "${model_path}" --mode benchmark --device 0 --chunk-bytes 4096 --strict --json > "${WORK_DIR}/results/gpu-load-benchmark.json"
+  if ! jq -e '.status == "READY"' "${WORK_DIR}/results/gpu-load-benchmark.json" >/dev/null; then
+    die "local GDS benchmark load failed; see ${WORK_DIR}/results/gpu-load-benchmark.json"
+  fi
+  if ! jq -e '.files | length == 1' "${WORK_DIR}/results/gpu-load-benchmark.json" >/dev/null; then
+    die "expected exactly one weight shard to be loaded; see ${WORK_DIR}/results/gpu-load-benchmark.json"
+  fi
+  if ! jq -e '.files[0].direct == true' "${WORK_DIR}/results/gpu-load-benchmark.json" >/dev/null; then
+    die "expected direct=true in local GDS benchmark result; see ${WORK_DIR}/results/gpu-load-benchmark.json"
+  fi
 }
 
 build_and_load_oci2gdsd_image() {

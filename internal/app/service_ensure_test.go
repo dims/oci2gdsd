@@ -5,12 +5,15 @@ import (
 	"context"
 	"io"
 	"math"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	configpkg "github.com/dims/oci2gdsd/internal/config"
+	storepkg "github.com/dims/oci2gdsd/internal/store"
 	digest "github.com/opencontainers/go-digest"
 )
 
@@ -94,7 +97,7 @@ func buildFetchedModelForEnsure(ref, modelID, manifestDigest string, blobs []ens
 func newEnsureTestService(t *testing.T, fetcher ModelFetcher) *Service {
 	t.Helper()
 	root := t.TempDir()
-	cfg := DefaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.Root = root
 	cfg.ModelRoot = filepath.Join(root, "models")
 	cfg.TmpRoot = filepath.Join(root, "tmp")
@@ -105,7 +108,7 @@ func newEnsureTestService(t *testing.T, fetcher ModelFetcher) *Service {
 	if err := cfg.EnsureDirectories(); err != nil {
 		t.Fatalf("ensure directories: %v", err)
 	}
-	store := NewStateStore(cfg.StateDB)
+	store := storepkg.NewStateStore(cfg.StateDB)
 	if err := store.Init(); err != nil {
 		t.Fatalf("state init: %v", err)
 	}
@@ -290,5 +293,35 @@ func TestEnsureConcurrentWaitersReuseSingleDownload(t *testing.T) {
 	}
 	if len(rec.Leases) != 2 {
 		t.Fatalf("expected two lease holders after concurrent ensure, got %+v", rec.Leases)
+	}
+}
+
+func TestProfileFromFileParsesYAML(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "model-config.yaml")
+	body := `
+schemaVersion: 1
+modelId: demo
+modelRevision: r1
+framework: pytorch
+format: safetensors
+shards:
+  - name: weights-00001.safetensors
+    digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    size: 4096
+    ordinal: 1
+integrity:
+  manifestDigest: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write yaml: %v", err)
+	}
+
+	profile, err := (&Service{}).ProfileFromFile(path)
+	if err != nil {
+		t.Fatalf("expected YAML parse success, got %v", err)
+	}
+	if profile.ModelID != "demo" {
+		t.Fatalf("unexpected model ID: %+v", profile)
 	}
 }

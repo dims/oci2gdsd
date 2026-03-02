@@ -15,6 +15,7 @@
   - digest format checks
   - shard ordinal checks
   - manifest/profile linkage checks
+  - profile config parsing from JSON and YAML file inputs
 - Atomic publish path with state transitions and durable transaction markers:
   - `TXN_STARTED`
   - `TXN_BLOBS_WRITTEN`

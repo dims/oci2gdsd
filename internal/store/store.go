@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dims/oci2gdsd/internal/apperr"
+	"github.com/dims/oci2gdsd/internal/fsutil"
 	"github.com/dims/oci2gdsd/internal/model"
 )
 
@@ -256,47 +257,17 @@ func (r *ModelRecord) ReleaseLease(holder string) int {
 }
 
 func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
+	return fsutil.FileExists(path)
 }
 
 func fsyncFile(path string) error {
-	f, err := os.OpenFile(path, os.O_RDONLY, 0)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return f.Sync()
+	return fsutil.FsyncFile(path)
 }
 
 func fsyncDir(path string) error {
-	d, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	return d.Sync()
+	return fsutil.FsyncDir(path)
 }
 
 func writeAtomicFile(path string, data []byte, perm os.FileMode, fsync bool) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, perm); err != nil {
-		return err
-	}
-	if fsync {
-		if err := fsyncFile(tmp); err != nil {
-			return err
-		}
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return err
-	}
-	if fsync {
-		return fsyncDir(dir)
-	}
-	return nil
+	return fsutil.WriteAtomicFile(path, data, perm, fsync)
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dims/oci2gdsd/internal/app"
+	configpkg "github.com/dims/oci2gdsd/internal/config"
 	digest "github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/registry/remote"
@@ -27,10 +28,10 @@ const (
 var errReadLimitExceeded = errors.New("read limit exceeded")
 
 type ORASModelFetcher struct {
-	cfg app.Config
+	cfg configpkg.Config
 }
 
-func NewORASModelFetcher(cfg app.Config) *ORASModelFetcher {
+func NewORASModelFetcher(cfg configpkg.Config) *ORASModelFetcher {
 	return &ORASModelFetcher{cfg: cfg}
 }
 

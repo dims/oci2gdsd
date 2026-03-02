@@ -13,12 +13,15 @@ import (
 	"strings"
 	"time"
 
+	configpkg "github.com/dims/oci2gdsd/internal/config"
+	storepkg "github.com/dims/oci2gdsd/internal/store"
 	digest "github.com/opencontainers/go-digest"
+	"gopkg.in/yaml.v3"
 )
 
 type Service struct {
-	cfg       Config
-	store     *StateStore
+	cfg       configpkg.Config
+	store     *storepkg.StateStore
 	locks     *LockManager
 	fetcher   ModelFetcher
 	gpuLoader GPULoader
@@ -51,15 +54,15 @@ type EnsureResult struct {
 }
 
 type StatusResult struct {
-	ModelID        string     `json:"model_id"`
-	ManifestDigest string     `json:"manifest_digest"`
-	Status         string     `json:"status"`
-	Path           string     `json:"path"`
-	ActiveLeases   []Lease    `json:"active_leases"`
-	LastError      ReasonCode `json:"last_error"`
-	ReasonCode     ReasonCode `json:"reason_code"`
-	Message        string     `json:"message,omitempty"`
-	Bytes          int64      `json:"bytes"`
+	ModelID        string           `json:"model_id"`
+	ManifestDigest string           `json:"manifest_digest"`
+	Status         string           `json:"status"`
+	Path           string           `json:"path"`
+	ActiveLeases   []storepkg.Lease `json:"active_leases"`
+	LastError      ReasonCode       `json:"last_error"`
+	ReasonCode     ReasonCode       `json:"reason_code"`
+	Message        string           `json:"message,omitempty"`
+	Bytes          int64            `json:"bytes"`
 }
 
 type ReleaseResult struct {
@@ -98,14 +101,14 @@ type localMetadata struct {
 	Profile        ModelProfile `json:"profile"`
 }
 
-func NewService(cfg Config, fetcher ModelFetcher, gpuLoader GPULoader) (*Service, error) {
+func NewService(cfg configpkg.Config, fetcher ModelFetcher, gpuLoader GPULoader) (*Service, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	if err := cfg.EnsureDirectories(); err != nil {
 		return nil, err
 	}
-	store := NewStateStore(cfg.StateDB)
+	store := storepkg.NewStateStore(cfg.StateDB)
 	if err := store.Init(); err != nil {
 		return nil, err
 	}
@@ -279,7 +282,7 @@ func (s *Service) Ensure(ctx context.Context, req EnsureRequest) (EnsureResult, 
 		}
 	}
 
-	record := &ModelRecord{
+	record := &storepkg.ModelRecord{
 		Key:            key,
 		ModelID:        req.ModelID,
 		ManifestDigest: manifestDigest,
@@ -290,7 +293,7 @@ func (s *Service) Ensure(ctx context.Context, req EnsureRequest) (EnsureResult, 
 		LastAccessedAt: time.Now().UTC(),
 	}
 	if existing != nil {
-		record.Leases = append([]Lease(nil), existing.Leases...)
+		record.Leases = append([]storepkg.Lease(nil), existing.Leases...)
 		if existing.Status == StateFailed {
 			if err := transitionState(existing.Status, StateResolving); err != nil {
 				return EnsureResult{}, NewAppError(ExitStateCorrupt, ReasonStateDBCorrupt, err.Error(), err)
@@ -674,7 +677,7 @@ func (s *Service) GC(policy string, minFreeBytes int64, dryRun bool) (GCResult, 
 		return GCResult{}, err
 	}
 	type candidate struct {
-		rec ModelRecord
+		rec storepkg.ModelRecord
 	}
 	candidates := make([]candidate, 0)
 	for _, rec := range records {
@@ -975,6 +978,13 @@ func (s *Service) ProfileFromFile(path string) (*ModelProfile, error) {
 		return nil, NewAppError(ExitValidation, ReasonValidationFailed, "failed to read profile config file", err)
 	}
 	profile := &ModelProfile{}
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext == ".yaml" || ext == ".yml" {
+		if err := yaml.Unmarshal(b, profile); err != nil {
+			return nil, NewAppError(ExitValidation, ReasonValidationFailed, "failed to parse profile config YAML", err)
+		}
+		return profile, nil
+	}
 	if err := json.Unmarshal(b, profile); err != nil {
 		return nil, NewAppError(ExitValidation, ReasonValidationFailed, "failed to parse profile config JSON", err)
 	}

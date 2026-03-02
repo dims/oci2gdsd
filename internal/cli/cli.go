@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dims/oci2gdsd/internal/app"
+	configpkg "github.com/dims/oci2gdsd/internal/config"
 	"github.com/dims/oci2gdsd/internal/gpu"
 	"github.com/dims/oci2gdsd/internal/registry"
 )
@@ -46,7 +47,7 @@ func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 	command := remaining[0]
 	commandArgs := remaining[1:]
 
-	cfg, err := app.LoadConfig(configPath)
+	cfg, err := configpkg.LoadConfig(configPath)
 	if err != nil {
 		return emitError(err, jsonOut, stderr)
 	}
@@ -230,7 +231,7 @@ func runGC(svc *app.Service, args []string, globalJSON bool, stdout, stderr io.W
 	if err := fs.Parse(args); err != nil {
 		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid gc flags", err), commandJSON, stderr)
 	}
-	minBytes, err := app.ParseMinFreeBytesOrDefault(minFree, svc.MinFreeBytesDefault())
+	minBytes, err := configpkg.ParseMinFreeBytesOrDefault(minFree, svc.MinFreeBytesDefault())
 	if err != nil {
 		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, err.Error(), nil), commandJSON, stderr)
 	}

@@ -599,7 +599,7 @@ func (l *gdsLoader) Probe(_ context.Context, device int) (app.GPUProbeResult, er
 			Loader:    l.Name(),
 			Device:    device,
 			GDSDriver: false,
-			Message:   fmt.Sprintf("failed to initialize CUDA/GDS driver: code=%d", code),
+			Message:   fmt.Sprintf("failed to initialize CUDA/GDS driver: %s", describeGDSCode(code)),
 		}, nil
 	}
 	if !l.ready {
@@ -648,12 +648,12 @@ func (l *gdsLoader) BeginSession(_ context.Context, device int) (func(), error) 
 	}
 	code := int(C.gds_init())
 	if code != 0 {
-		return nil, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, fmt.Sprintf("failed to initialize CUDA/GDS driver: code=%d", code), nil)
+		return nil, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, fmt.Sprintf("failed to initialize CUDA/GDS driver: %s", describeGDSCode(code)), nil)
 	}
 	code = int(C.gds_activate_device(C.int(device)))
 	if code != 0 {
 		_ = C.gds_shutdown()
-		return nil, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, fmt.Sprintf("failed to activate CUDA primary context: code=%d", code), nil)
+		return nil, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, fmt.Sprintf("failed to activate CUDA primary context: %s", describeGDSCode(code)), nil)
 	}
 	l.refs = 1
 	l.device = device
@@ -725,13 +725,13 @@ func (l *gdsLoader) LoadFile(ctx context.Context, req app.GPULoadFileRequest) (a
 	))
 	if code != 0 {
 		if req.Strict {
-			return app.GPULoadFileResult{}, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, fmt.Sprintf("cuFile read failed: code=%d", code), nil)
+			return app.GPULoadFileResult{}, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, fmt.Sprintf("cuFile read failed: %s", describeGDSCode(code)), nil)
 		}
 		res, fallbackErr := hostReadFallback(req.Path, req.ChunkBytes)
 		if fallbackErr != nil {
 			return app.GPULoadFileResult{}, fallbackErr
 		}
-		res.Message = fmt.Sprintf("direct GDS read failed (code=%d), used host fallback", code)
+		res.Message = fmt.Sprintf("direct GDS read failed (%s), used host fallback", describeGDSCode(code))
 		return res, nil
 	}
 	if int64(total) != fi.Size() {
@@ -806,7 +806,7 @@ func (l *gdsLoader) LoadPersistent(ctx context.Context, req app.GPULoadFileReque
 		&direct,
 	))
 	if code != 0 {
-		return app.GPULoadFileResult{}, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, fmt.Sprintf("persistent cuFile load failed: code=%d", code), nil)
+		return app.GPULoadFileResult{}, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, fmt.Sprintf("persistent cuFile load failed: %s", describeGDSCode(code)), nil)
 	}
 	if int64(total) != fi.Size() {
 		_ = C.gds_free_persistent(C.int(req.Device), ptr)
@@ -888,7 +888,7 @@ func (l *gdsLoader) UnloadPersistent(ctx context.Context, req app.GPULoadFileReq
 	code := int(C.gds_free_persistent(C.int(req.Device), alloc.ptr))
 	if code != 0 {
 		alloc.refs = 1
-		return app.GPULoadFileResult{}, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, fmt.Sprintf("persistent GPU free failed: code=%d", code), nil)
+		return app.GPULoadFileResult{}, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, fmt.Sprintf("persistent GPU free failed: %s", describeGDSCode(code)), nil)
 	}
 	res := app.GPULoadFileResult{
 		Path:      req.Path,
@@ -969,4 +969,37 @@ func boolToInt(v bool) int {
 
 func devicePtrString(ptr C.CUdeviceptr) string {
 	return fmt.Sprintf("0x%x", uint64(ptr))
+}
+
+func describeGDSCode(code int) string {
+	switch {
+	case code >= 1000 && code < 2000:
+		return fmt.Sprintf("code=%d (CUDA driver error=%d)", code, code-1000)
+	case code >= 2000 && code < 3000:
+		return fmt.Sprintf("code=%d (cuFile error=%d)", code, code-2000)
+	case code >= 4000 && code < 5000:
+		return fmt.Sprintf("code=%d (cuFile read status=%d)", code, code-4000)
+	}
+	switch code {
+	case 3001:
+		return "code=3001 (failed to open shard path; O_DIRECT may be unsupported)"
+	case 3002:
+		return "code=3002 (failed to stat shard path)"
+	case 3003:
+		return "code=3003 (failed to read CLOCK_MONOTONIC start time)"
+	case 3004:
+		return "code=3004 (failed to read CLOCK_MONOTONIC end time)"
+	case 3005:
+		return "code=3005 (file size or read boundary is not 4KiB-aligned for direct path)"
+	case 3006:
+		return "code=3006 (file size must be > 0)"
+	case 3007:
+		return "code=3007 (failed to allocate host staging buffer)"
+	case 3008:
+		return "code=3008 (host pread failed in fallback path)"
+	case 3009:
+		return "code=3009 (invalid output pointer arguments)"
+	default:
+		return fmt.Sprintf("code=%d", code)
+	}
 }

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	storepkg "github.com/dims/oci2gdsd/internal/store"
 )
 
 type GPUProbeResult struct {
@@ -514,7 +516,7 @@ func (s *Service) GPUListPersistent(ctx context.Context, device int) ([]GPULoadF
 	return s.gpuLoader.ListPersistent(ctx, device)
 }
 
-func (s *Service) releaseLeaseOnlyLocked(rec *ModelRecord, leaseHolder string) (int, error) {
+func (s *Service) releaseLeaseOnlyLocked(rec *storepkg.ModelRecord, leaseHolder string) (int, error) {
 	if rec == nil {
 		return 0, NewAppError(ExitStateCorrupt, ReasonStateDBCorrupt, "nil model record", nil)
 	}
@@ -536,7 +538,7 @@ func (s *Service) releaseLeaseOnlyLocked(rec *ModelRecord, leaseHolder string) (
 	return remaining, nil
 }
 
-func hasLeaseHolder(leases []Lease, holder string) bool {
+func hasLeaseHolder(leases []storepkg.Lease, holder string) bool {
 	for _, l := range leases {
 		if l.Holder == holder {
 			return true

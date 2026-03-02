@@ -13,6 +13,7 @@ configure_nvidia_runtime
 create_nvkind_cluster
 install_gpu_operator
 verify_gpu_pod
+validate_local_gds_loader
 
 build_and_load_oci2gdsd_image
 preload_workload_image

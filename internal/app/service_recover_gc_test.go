@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	configpkg "github.com/dims/oci2gdsd/internal/config"
+	storepkg "github.com/dims/oci2gdsd/internal/store"
 	digest "github.com/opencontainers/go-digest"
 )
 
@@ -66,7 +68,7 @@ func TestRecoverQuickDoesNotHashShardDigest(t *testing.T) {
 	}
 
 	key := modelKey("demo", manifest)
-	record := &ModelRecord{
+	record := &storepkg.ModelRecord{
 		Key:            key,
 		ModelID:        "demo",
 		ManifestDigest: manifest,
@@ -116,7 +118,7 @@ func TestGCOrderingPrefersExplicitReleasableAtOverNil(t *testing.T) {
 	mustWriteReadyOnly(t, pathA)
 	mustWriteReadyOnly(t, pathB)
 
-	recA := &ModelRecord{
+	recA := &storepkg.ModelRecord{
 		Key:            modelKey("model-a", manifestA),
 		ModelID:        "model-a",
 		ManifestDigest: manifestA,
@@ -129,7 +131,7 @@ func TestGCOrderingPrefersExplicitReleasableAtOverNil(t *testing.T) {
 		UpdatedAt:      now,
 		LastAccessedAt: now,
 	}
-	recB := &ModelRecord{
+	recB := &storepkg.ModelRecord{
 		Key:            modelKey("model-b", manifestB),
 		ModelID:        "model-b",
 		ManifestDigest: manifestB,
@@ -171,7 +173,7 @@ func TestGCSkipsBusyModelLock(t *testing.T) {
 	manifest := "sha256:" + strings.Repeat("f", 64)
 	modelPath := filepath.Join(svc.cfg.ModelRoot, "model-lock", "sha256-lock")
 	mustWriteReadyOnly(t, modelPath)
-	rec := &ModelRecord{
+	rec := &storepkg.ModelRecord{
 		Key:            modelKey("model-lock", manifest),
 		ModelID:        "model-lock",
 		ManifestDigest: manifest,
@@ -260,7 +262,7 @@ func TestRecoverReplaysReadyWrittenJournal(t *testing.T) {
 	}
 
 	key := modelKey("demo", manifest)
-	rec := &ModelRecord{
+	rec := &storepkg.ModelRecord{
 		Key:            key,
 		ModelID:        "demo",
 		ManifestDigest: manifest,
@@ -314,7 +316,7 @@ func TestGCCollectsFailedRecordWithoutReadyMarker(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(modelPath, "partial.bin"), blob, 0o644); err != nil {
 		t.Fatalf("write partial file: %v", err)
 	}
-	rec := &ModelRecord{
+	rec := &storepkg.ModelRecord{
 		Key:            modelKey("failed-model", manifest),
 		ModelID:        "failed-model",
 		ManifestDigest: manifest,
@@ -346,7 +348,7 @@ func TestGCCollectsFailedRecordWithoutReadyMarker(t *testing.T) {
 func newStateOnlyService(t *testing.T) *Service {
 	t.Helper()
 	root := t.TempDir()
-	cfg := DefaultConfig()
+	cfg := configpkg.DefaultConfig()
 	cfg.Root = root
 	cfg.ModelRoot = filepath.Join(root, "models")
 	cfg.TmpRoot = filepath.Join(root, "tmp")
@@ -356,7 +358,7 @@ func newStateOnlyService(t *testing.T) *Service {
 	if err := cfg.EnsureDirectories(); err != nil {
 		t.Fatalf("ensure directories: %v", err)
 	}
-	store := NewStateStore(cfg.StateDB)
+	store := storepkg.NewStateStore(cfg.StateDB)
 	if err := store.Init(); err != nil {
 		t.Fatalf("state init: %v", err)
 	}

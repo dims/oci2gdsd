@@ -37,6 +37,9 @@ make nvkind-e2e
 # Skip qwen-hello example validation (enabled by default)
 VALIDATE_QWEN_HELLO=false make nvkind-e2e
 
+# Skip local host GDS preflight (`gpu probe` + `gpu load --mode benchmark`)
+VALIDATE_LOCAL_GDS=false make nvkind-e2e
+
 # Optional: pre-load workload image(s) into kind nodes (default false)
 PRELOAD_WORKLOAD_IMAGE=true make nvkind-e2e
 
@@ -45,6 +48,9 @@ PRELOAD_VLLM_RUNTIME_IMAGE=true make nvkind-e2e
 
 # Force namespace/cluster names
 CLUSTER_NAME=oci2gdsd-e2e E2E_NAMESPACE=oci2gdsd-e2e make nvkind-e2e
+
+# Override CUDA toolkit locations used for local GDS preflight builds
+CUDA_INCLUDE_DIR=/usr/local/cuda/include CUDA_LIB_DIR=/usr/local/cuda/lib64 make nvkind-e2e
 ```
 
 ## Cleanup

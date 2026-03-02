@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	storepkg "github.com/dims/oci2gdsd/internal/store"
 	digest "github.com/opencontainers/go-digest"
 )
 
@@ -154,7 +155,7 @@ func TestGPULoadPersistentLeaseLifecycle(t *testing.T) {
 	modelPath, shardSize := writeReadyModelForGPUTest(t, svc.cfg.ModelRoot, modelID, manifest)
 
 	now := time.Now().UTC()
-	rec := &ModelRecord{
+	rec := &storepkg.ModelRecord{
 		Key:            modelKey(modelID, manifest),
 		ModelID:        modelID,
 		ManifestDigest: manifest,
