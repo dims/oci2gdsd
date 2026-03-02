@@ -2,15 +2,7 @@
 
 ## Implemented
 
-- Standalone CLI surface:
-  - `ensure`
-  - `status`
-  - `list`
-  - `release`
-  - `gc`
-  - `verify`
-  - `profile lint`
-  - `profile inspect`
+- Standalone CLI behavior documented in [cli-reference.md](cli-reference.md).
 - Digest-pinned ref enforcement for `ensure`.
 - ORAS-based registry interactions:
   - manifest resolve/fetch
@@ -31,8 +23,10 @@
   - `TXN_READY_WRITTEN`
   - `TXN_COMMITTED`
 - `READY` read contract enforcement.
+- `gpu load` contract is explicit benchmark mode; persistent GPU residency/IPC is not yet implemented.
 - Lease-aware release and GC behavior.
-- Crash-recovery guardrails for stale temp paths and inconsistent READY entries.
+- Crash-recovery guardrails for stale temp paths and inconsistent READY entries
+  using lightweight READY/metadata/shard-size checks at startup.
 - Machine-oriented JSON outputs and stable exit code mapping.
 
 ## Not Yet Implemented

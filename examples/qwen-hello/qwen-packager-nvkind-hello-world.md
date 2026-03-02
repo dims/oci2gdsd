@@ -102,9 +102,11 @@ echo "${MODEL_REF}"
 ```bash
 docker build -f testharness/nvkind-e2e/Dockerfile.oci2gdsd -t oci2gdsd:hello .
 kind load docker-image oci2gdsd:hello --name "${CLUSTER_NAME}"
+docker pull nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1
+kind load docker-image nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1 --name "${CLUSTER_NAME}"
 ```
 
-## 5. Render and apply hello deployment
+## 5. Render and apply FastAPI + vLLM deployment
 
 ```bash
 export MODEL_ID="qwen3-0.6b"
@@ -112,6 +114,7 @@ export OCI2GDSD_IMAGE="oci2gdsd:hello"
 export OCI2GDSD_ROOT_PATH="/var/lib/oci2gdsd"
 export QWEN_HELLO_NAMESPACE="qwen-hello"
 export LEASE_HOLDER="qwen-hello"
+export VLLM_RUNTIME_IMAGE="nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1"
 export MODEL_ROOT_PATH="${OCI2GDSD_ROOT_PATH}/models/${MODEL_ID}/${MODEL_DIGEST//:/-}"
 
 cp examples/qwen-hello/qwen-nvkind-hello-deployment.yaml.tpl /tmp/qwen-nvkind-hello.yaml
@@ -122,16 +125,23 @@ gsed -i "s|__MODEL_DIGEST__|${MODEL_DIGEST}|g" /tmp/qwen-nvkind-hello.yaml
 gsed -i "s|__MODEL_ROOT_PATH__|${MODEL_ROOT_PATH}|g" /tmp/qwen-nvkind-hello.yaml
 gsed -i "s|__OCI2GDSD_IMAGE__|${OCI2GDSD_IMAGE}|g" /tmp/qwen-nvkind-hello.yaml
 gsed -i "s|__OCI2GDSD_ROOT_PATH__|${OCI2GDSD_ROOT_PATH}|g" /tmp/qwen-nvkind-hello.yaml
+gsed -i "s|__VLLM_RUNTIME_IMAGE__|${VLLM_RUNTIME_IMAGE}|g" /tmp/qwen-nvkind-hello.yaml
 gsed -i "s|__LEASE_HOLDER__|${LEASE_HOLDER}|g" /tmp/qwen-nvkind-hello.yaml
 
 kubectl --context "kind-${CLUSTER_NAME}" apply -f /tmp/qwen-nvkind-hello.yaml
 kubectl --context "kind-${CLUSTER_NAME}" -n "${QWEN_HELLO_NAMESPACE}" rollout status deploy/qwen-hello --timeout=1800s
-kubectl --context "kind-${CLUSTER_NAME}" -n "${QWEN_HELLO_NAMESPACE}" logs deploy/qwen-hello -c hello
+kubectl --context "kind-${CLUSTER_NAME}" -n "${QWEN_HELLO_NAMESPACE}" port-forward svc/qwen-hello 18080:8000
 ```
 
-Look for:
+In another terminal ask a question:
 
-`QWEN_NVKIND_HELLO_SUCCESS`
+```bash
+curl -sS -X POST http://127.0.0.1:18080/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"Explain in one sentence what GPU model preloading helps with."}' | jq .
+```
+
+You should get JSON with a non-empty `answer` field.
 
 ## 6. Cleanup
 

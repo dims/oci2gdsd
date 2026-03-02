@@ -102,6 +102,9 @@ func (f *ORASModelFetcher) Fetch(ctx context.Context, ref string) (*app.FetchedM
 		if name == "" {
 			name = fmt.Sprintf("shard-%04d", shard.Ordinal)
 		}
+		if err := app.ValidateShardName(name); err != nil {
+			return nil, app.NewAppError(app.ExitValidation, app.ReasonProfileLintFailed, fmt.Sprintf("invalid shard name %q from profile/manifest: %v", name, err), nil)
+		}
 		descriptor := desc
 		blobs = append(blobs, app.RemoteBlob{
 			Name:      name,

@@ -118,6 +118,8 @@ func LintProfile(profile *ModelProfile, manifestDigest string, layers []Manifest
 	for i, shard := range profile.Shards {
 		if strings.TrimSpace(shard.Name) == "" {
 			errs = append(errs, fmt.Sprintf("shards[%d].name is required", i))
+		} else if err := ValidateShardName(shard.Name); err != nil {
+			errs = append(errs, fmt.Sprintf("shards[%d].name is invalid: %v", i, err))
 		}
 		if _, err := digest.Parse(shard.Digest); err != nil {
 			errs = append(errs, fmt.Sprintf("shards[%d].digest is malformed", i))
@@ -141,7 +143,9 @@ func LintProfile(profile *ModelProfile, manifestDigest string, layers []Manifest
 	}
 
 	if len(layers) > 0 {
+		layerDigests := make(map[string]bool, len(layers))
 		for _, layer := range layers {
+			layerDigests[layer.Digest] = true
 			if !strings.Contains(layer.MediaType, "model.shard") {
 				warnings = append(warnings, fmt.Sprintf("layer %s has non-shard mediaType %s", layer.Digest, layer.MediaType))
 				continue
@@ -153,6 +157,11 @@ func LintProfile(profile *ModelProfile, manifestDigest string, layers []Manifest
 			}
 			if shard.Size != layer.Size {
 				errs = append(errs, fmt.Sprintf("size mismatch for shard %s: profile=%d manifest=%d", shard.Name, shard.Size, layer.Size))
+			}
+		}
+		for _, shard := range profile.Shards {
+			if !layerDigests[shard.Digest] {
+				errs = append(errs, fmt.Sprintf("profile shard %s (%s) missing in manifest layers", shard.Name, shard.Digest))
 			}
 		}
 	}

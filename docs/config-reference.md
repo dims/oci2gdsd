@@ -180,7 +180,11 @@ Byte sizes accepted by CLI/config parsing include:
 - raw integer bytes (`214748364800`)
 - suffix forms: `K`, `M`, `G`, `T`, `KB`, `MB`, `GB`, `TB`, `KiB`, `MiB`, `GiB`, `TiB`
 
+Current unit semantics:
+
+- decimal/SI: `K`, `M`, `G`, `T`, `KB`, `MB`, `GB`, `TB` map to `1000^n`
+- binary/IEC: `Ki`, `Mi`, `Gi`, `Ti`, `KiB`, `MiB`, `GiB`, `TiB` map to `1024^n`
+
 Used by:
 
 - `gc --min-free-bytes`
-

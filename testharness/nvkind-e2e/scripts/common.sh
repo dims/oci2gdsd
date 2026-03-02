@@ -28,7 +28,10 @@ VALIDATE_QWEN_HELLO="${VALIDATE_QWEN_HELLO:-true}"
 
 OCI2GDSD_IMAGE="${OCI2GDSD_IMAGE:-oci2gdsd:e2e}"
 PACKAGER_IMAGE="${PACKAGER_IMAGE:-oci2gdsd-qwen3-packager:local}"
-PYTORCH_IMAGE="${PYTORCH_IMAGE:-pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime}"
+VLLM_RUNTIME_IMAGE="${VLLM_RUNTIME_IMAGE:-nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1}"
+PRELOAD_VLLM_RUNTIME_IMAGE="${PRELOAD_VLLM_RUNTIME_IMAGE:-false}"
+PRELOAD_WORKLOAD_IMAGE="${PRELOAD_WORKLOAD_IMAGE:-false}"
+PYTORCH_IMAGE="${PYTORCH_IMAGE:-${VLLM_RUNTIME_IMAGE}}"
 
 OCI2GDSD_ROOT_PATH="${OCI2GDSD_ROOT_PATH:-/var/lib/oci2gdsd}"
 
@@ -335,6 +338,10 @@ build_and_load_oci2gdsd_image() {
 }
 
 preload_workload_image() {
+  if [[ "${PRELOAD_WORKLOAD_IMAGE}" != "true" ]]; then
+    log "skipping pre-load for ${PYTORCH_IMAGE}; cluster will pull image on demand"
+    return
+  fi
   local tries=0
   local max_tries=3
   until docker pull "${PYTORCH_IMAGE}"; do
@@ -346,6 +353,20 @@ preload_workload_image() {
     sleep 5
   done
   kind_load_image "${PYTORCH_IMAGE}"
+  if [[ "${PRELOAD_VLLM_RUNTIME_IMAGE}" == "true" ]]; then
+    tries=0
+    until docker pull "${VLLM_RUNTIME_IMAGE}"; do
+      tries=$((tries + 1))
+      if [[ "${tries}" -ge "${max_tries}" ]]; then
+        die "failed to pull workload image after ${max_tries} attempts: ${VLLM_RUNTIME_IMAGE}"
+      fi
+      warn "retrying workload image pull (${tries}/${max_tries}): ${VLLM_RUNTIME_IMAGE}"
+      sleep 5
+    done
+    kind_load_image "${VLLM_RUNTIME_IMAGE}"
+  else
+    log "skipping pre-load for ${VLLM_RUNTIME_IMAGE}; cluster will pull image on demand"
+  fi
 }
 
 kind_load_image() {
@@ -471,6 +492,7 @@ validate_qwen_hello_example() {
     "MODEL_ROOT_PATH=${model_root}" \
     "OCI2GDSD_IMAGE=${OCI2GDSD_IMAGE}" \
     "OCI2GDSD_ROOT_PATH=${OCI2GDSD_ROOT_PATH}" \
+    "VLLM_RUNTIME_IMAGE=${VLLM_RUNTIME_IMAGE}" \
     "LEASE_HOLDER=${LEASE_HOLDER}"
 
   kubectl --context "${KUBECTL_CONTEXT}" apply -f "${rendered}"
@@ -486,22 +508,59 @@ validate_qwen_hello_example() {
     return 1
   fi
 
+  local pf_pid_file="${WORK_DIR}/qwen-hello-port-forward.pid"
+  local pf_log="${WORK_DIR}/logs/qwen-hello-port-forward.log"
+  local local_port="${QWEN_HELLO_LOCAL_PORT:-18080}"
+  rm -f "${pf_pid_file}"
+  kubectl --context "${KUBECTL_CONTEXT}" -n "${QWEN_HELLO_NAMESPACE}" \
+    port-forward svc/qwen-hello "${local_port}:8000" >"${pf_log}" 2>&1 &
+  echo "$!" > "${pf_pid_file}"
+
   local start_ts timeout_secs now
   start_ts="$(date +%s)"
-  timeout_secs=180
+  timeout_secs=300
   while true; do
-    kubectl --context "${KUBECTL_CONTEXT}" -n "${QWEN_HELLO_NAMESPACE}" \
-      logs "pod/${pod_name}" -c hello > "${log_file}" 2>/dev/null || true
-    if grep -q 'QWEN_NVKIND_HELLO_SUCCESS' "${log_file}"; then
-      return 0
+    if curl -fsS "http://127.0.0.1:${local_port}/healthz" >/dev/null 2>&1; then
+      break
     fi
     now="$(date +%s)"
     if (( now - start_ts >= timeout_secs )); then
-      warn "qwen hello example did not report success marker within ${timeout_secs}s"
+      warn "qwen hello API did not become healthy within ${timeout_secs}s"
+      if [[ -s "${pf_log}" ]]; then
+        warn "port-forward log:"
+        cat "${pf_log}" >&2 || true
+      fi
+      if [[ -f "${pf_pid_file}" ]]; then
+        kill "$(cat "${pf_pid_file}")" 2>/dev/null || true
+      fi
       return 1
     fi
     sleep 3
   done
+
+  local prompt='Explain in one sentence what GPU model preloading helps with.'
+  local response
+  response="$(curl -fsS -X POST "http://127.0.0.1:${local_port}/chat" \
+    -H 'Content-Type: application/json' \
+    -d "$(jq -cn --arg prompt "${prompt}" '{prompt:$prompt}')" || true)"
+  local answer
+  answer="$(printf '%s' "${response}" | jq -r '.answer // empty' 2>/dev/null || true)"
+
+  kubectl --context "${KUBECTL_CONTEXT}" -n "${QWEN_HELLO_NAMESPACE}" \
+    logs "pod/${pod_name}" -c vllm-api > "${log_file}" 2>/dev/null || true
+  printf '\nQWEN_NVKIND_HELLO_CHAT_RESPONSE %s\n' "${response}" >> "${log_file}"
+
+  if [[ -f "${pf_pid_file}" ]]; then
+    kill "$(cat "${pf_pid_file}")" 2>/dev/null || true
+    rm -f "${pf_pid_file}"
+  fi
+
+  if [[ -z "${answer}" ]]; then
+    warn "qwen hello API returned empty answer; response=${response}"
+    return 1
+  fi
+  printf 'QWEN_NVKIND_HELLO_SUCCESS prompt=%s answer=%s\n' "${prompt}" "${answer}" >> "${log_file}"
+  return 0
 }
 
 cleanup_qwen_hello_example() {

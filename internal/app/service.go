@@ -160,7 +160,7 @@ func (s *Service) Recover() error {
 		if rec.Status != StateReady {
 			continue
 		}
-		ready, _, verifyErr := s.verifyPublishedPath(rec.Path)
+		ready, _, verifyErr := s.verifyPublishedPathQuick(rec.Path)
 		if verifyErr != nil || !ready {
 			rec.Status = StateFailed
 			rec.LastError = ReasonStateDBCorrupt
@@ -331,6 +331,10 @@ func (s *Service) Ensure(ctx context.Context, req EnsureRequest) (EnsureResult, 
 	var bytesDownloaded int64
 	buffer := make([]byte, s.cfg.Transfer.StreamBufferBytes)
 	for _, blob := range fetched.Blobs {
+		if err := ValidateShardName(blob.Name); err != nil {
+			_ = os.RemoveAll(txnPath)
+			return fail(ReasonProfileLintFailed, fmt.Sprintf("invalid shard name %q: %v", blob.Name, err), nil)
+		}
 		target := filepath.Join(shardsDir, blob.Name)
 		if err := s.downloadBlob(ctx, blob, target, buffer); err != nil {
 			appErr := AsAppError(err)
@@ -550,12 +554,9 @@ func (s *Service) Release(ctx context.Context, modelID, manifestDigest, leaseHol
 		return ReleaseResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "--lease-holder is required", nil)
 	}
 	key := modelKey(modelID, manifestDigest)
-	unlock, pending, err := s.locks.Acquire(ctx, key, true)
+	unlock, _, err := s.locks.Acquire(ctx, key, true)
 	if err != nil {
 		return ReleaseResult{}, err
-	}
-	if pending {
-		return ReleaseResult{}, NewAppError(ExitFilesystem, ReasonLeaseConflict, "release pending on active operation lock", nil)
 	}
 	defer unlock()
 
@@ -642,21 +643,25 @@ func (s *Service) GC(policy string, minFreeBytes int64, dryRun bool) (GCResult, 
 		candidates = append(candidates, candidate{rec: rec})
 	}
 	sort.Slice(candidates, func(i, j int) bool {
-		ttlI := time.Time{}
-		ttlJ := time.Time{}
-		if candidates[i].rec.ReleasableAt != nil {
-			ttlI = *candidates[i].rec.ReleasableAt
+		recI := candidates[i].rec
+		recJ := candidates[j].rec
+		nilI := recI.ReleasableAt == nil
+		nilJ := recJ.ReleasableAt == nil
+		if nilI != nilJ {
+			// Prefer explicit releasable timestamps over nil timestamps.
+			return !nilI
 		}
-		if candidates[j].rec.ReleasableAt != nil {
-			ttlJ = *candidates[j].rec.ReleasableAt
+		if !nilI && !nilJ {
+			ttlI := *recI.ReleasableAt
+			ttlJ := *recJ.ReleasableAt
+			if !ttlI.Equal(ttlJ) {
+				return ttlI.Before(ttlJ)
+			}
 		}
-		if !ttlI.Equal(ttlJ) {
-			return ttlI.Before(ttlJ)
+		if recI.UpdatedAt.Equal(recJ.UpdatedAt) {
+			return recI.Bytes > recJ.Bytes
 		}
-		if candidates[i].rec.UpdatedAt.Equal(candidates[j].rec.UpdatedAt) {
-			return candidates[i].rec.Bytes > candidates[j].rec.Bytes
-		}
-		return candidates[i].rec.UpdatedAt.Before(candidates[j].rec.UpdatedAt)
+		return recI.UpdatedAt.Before(recJ.UpdatedAt)
 	})
 
 	target := minFreeBytes
@@ -770,6 +775,9 @@ func (s *Service) verifyPublishedPath(path string) (bool, ReasonCode, error) {
 
 	seen := 0
 	for _, shard := range meta.Profile.Shards {
+		if err := ValidateShardName(shard.Name); err != nil {
+			return false, ReasonValidationFailed, fmt.Errorf("invalid shard name %q: %v", shard.Name, err)
+		}
 		sp := shardPath(path, shard.Name)
 		st, err := os.Stat(sp)
 		if err != nil {
@@ -802,6 +810,53 @@ func (s *Service) verifyPublishedPath(path string) (bool, ReasonCode, error) {
 		return false, ReasonStateDBCorrupt, fmt.Errorf("shard cardinality mismatch: expected %d got %d", seen, len(files))
 	}
 
+	return true, ReasonNone, nil
+}
+
+func (s *Service) verifyPublishedPathQuick(path string) (bool, ReasonCode, error) {
+	if strings.TrimSpace(path) == "" {
+		return false, ReasonValidationFailed, errors.New("path is empty")
+	}
+	if !fileExists(path) {
+		return false, ReasonFilesystemError, fmt.Errorf("path does not exist: %s", path)
+	}
+	if !fileExists(readyMarkerPath(path)) {
+		return false, ReasonStateDBCorrupt, errors.New("READY marker missing")
+	}
+	meta, err := loadLocalMetadata(path)
+	if err != nil {
+		return false, ReasonStateDBCorrupt, err
+	}
+	shardsDir := filepath.Join(path, "shards")
+	info, err := os.Stat(shardsDir)
+	if err != nil {
+		return false, ReasonFilesystemError, err
+	}
+	if !info.IsDir() {
+		return false, ReasonFilesystemError, errors.New("shards path is not a directory")
+	}
+	seen := 0
+	for _, shard := range meta.Profile.Shards {
+		if err := ValidateShardName(shard.Name); err != nil {
+			return false, ReasonValidationFailed, fmt.Errorf("invalid shard name %q: %v", shard.Name, err)
+		}
+		sp := shardPath(path, shard.Name)
+		st, err := os.Stat(sp)
+		if err != nil {
+			return false, ReasonFilesystemError, fmt.Errorf("missing shard %s", shard.Name)
+		}
+		if st.Size() != shard.Size {
+			return false, ReasonBlobSizeMismatch, fmt.Errorf("size mismatch for shard %s", shard.Name)
+		}
+		seen++
+	}
+	files, err := os.ReadDir(shardsDir)
+	if err != nil {
+		return false, ReasonFilesystemError, err
+	}
+	if len(files) != seen {
+		return false, ReasonStateDBCorrupt, fmt.Errorf("shard cardinality mismatch: expected %d got %d", seen, len(files))
+	}
 	return true, ReasonNone, nil
 }
 

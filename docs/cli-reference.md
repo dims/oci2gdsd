@@ -168,12 +168,18 @@ Flags:
 - `--chunk-bytes <size>` (default: `16MiB`)
 - `--max-shards <n>` (`0` means all)
 - `--strict` (default: `true`)
+- `--mode <benchmark|persistent>` (default: `benchmark`)
 - `--json`
 
 Path resolution:
 
 - Uses `--path` directly, or
 - resolves from local state using `--model-id` + `--digest`.
+
+Current mode semantics:
+
+- `benchmark`: reads shard files through the configured loader path and reports throughput/progress metadata.
+- `persistent`: currently rejected with policy error (persistent GPU allocations/IPC handles are not implemented yet).
 
 ## Output behavior
 
@@ -235,4 +241,3 @@ oci2gdsd verify --model-id demo --digest sha256:... --json
 oci2gdsd release --model-id demo --digest sha256:... --lease-holder session-a --json
 oci2gdsd gc --policy lru_no_lease --min-free-bytes 200G --json
 ```
-

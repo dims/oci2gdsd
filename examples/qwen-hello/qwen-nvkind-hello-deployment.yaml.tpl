@@ -96,42 +96,88 @@ spec:
           mountPath: /etc/oci2gdsd
           readOnly: true
       containers:
-      - name: hello
-        image: pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime
+      - name: vllm-api
+        image: __VLLM_RUNTIME_IMAGE__
         imagePullPolicy: IfNotPresent
         command: ["/bin/sh", "-ec"]
         args:
         - |
           python - <<'PY'
-          import json
           import os
+          import json
           from pathlib import Path
-          import torch
+          from fastapi import FastAPI, HTTPException
+          from pydantic import BaseModel
+          import uvicorn
+          from vllm import LLM, SamplingParams
 
           model_root = Path(os.environ["MODEL_ROOT_PATH"])
           if not (model_root / "READY").exists():
               raise RuntimeError("READY marker missing")
           meta = json.loads((model_root / "metadata" / "model.json").read_text(encoding="utf-8"))
-          shard_count = len(meta.get("profile", {}).get("shards", []))
-          if shard_count == 0:
-              raise RuntimeError("no shards discovered")
-          if not torch.cuda.is_available():
-              raise RuntimeError("cuda not available")
-          x = torch.randn((1024, 1024), device="cuda")
-          y = torch.randn((1024, 1024), device="cuda")
-          z = x @ y
-          torch.cuda.synchronize()
-          print("QWEN_NVKIND_HELLO_SUCCESS",
-                "model_id=", meta.get("modelId"),
-                "manifest=", meta.get("manifestDigest"),
-                "shards=", shard_count,
-                "gpu=", torch.cuda.get_device_name(0),
-                "mean=", float(z.mean().item()))
+          source = meta.get("profile", {}).get("source", {})
+          model_name = os.environ.get("VLLM_MODEL_NAME", "").strip() or source.get("repoId", "Qwen/Qwen3-0.6B")
+          sampling_params = SamplingParams(
+              max_tokens=int(os.environ.get("MAX_TOKENS", "256")),
+              temperature=float(os.environ.get("TEMPERATURE", "0.7")),
+          )
+
+          app = FastAPI(title="qwen-hello-vllm")
+          llm = LLM(model=model_name, trust_remote_code=True)
+
+          class ChatRequest(BaseModel):
+              prompt: str
+
+          @app.get("/healthz")
+          def healthz():
+              return {
+                  "status": "ok",
+                  "model_name": model_name,
+                  "model_id": meta.get("modelId"),
+                  "manifest_digest": meta.get("manifestDigest"),
+              }
+
+          @app.post("/chat")
+          def chat(req: ChatRequest):
+              prompt = (req.prompt or "").strip()
+              if not prompt:
+                  raise HTTPException(status_code=400, detail="prompt must be non-empty")
+              outputs = llm.generate([prompt], sampling_params)
+              text = outputs[0].outputs[0].text.strip()
+              return {
+                  "answer": text,
+                  "model_name": model_name,
+                  "model_id": meta.get("modelId"),
+                  "manifest_digest": meta.get("manifestDigest"),
+              }
+
+          uvicorn.run(app, host="0.0.0.0", port=8000)
           PY
-          sleep 3600
         env:
         - name: MODEL_ROOT_PATH
           value: "__MODEL_ROOT_PATH__"
+        - name: HF_HOME
+          value: "/tmp/hf-cache"
+        - name: XDG_CACHE_HOME
+          value: "/tmp/hf-cache"
+        startupProbe:
+          httpGet:
+            path: /healthz
+            port: 8000
+          periodSeconds: 10
+          failureThreshold: 120
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8000
+          periodSeconds: 10
+          failureThreshold: 6
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8000
+          periodSeconds: 20
+          failureThreshold: 6
         resources:
           limits:
             nvidia.com/gpu: "1"
@@ -140,4 +186,17 @@ spec:
         volumeMounts:
         - name: oci2gdsd-root
           mountPath: __OCI2GDSD_ROOT_PATH__
-          readOnly: true
+          readOnly: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qwen-hello
+  namespace: __QWEN_HELLO_NAMESPACE__
+spec:
+  selector:
+    app: qwen-hello
+  ports:
+  - name: http
+    port: 8000
+    targetPort: 8000

@@ -28,7 +28,7 @@ oci2gdsd ensure --ref <registry>/<repo>@sha256:<digest> --model-id <id> --wait -
 1. Build packager image:
 
 ```bash
-cd /Users/dsrinivas/go/src/github.com/dims/oci2gdsd/packaging/qwen3-oci-modelprofile-v1
+cd /path/to/oci2gdsd/packaging/qwen3-oci-modelprofile-v1
 docker build -t oci2gdsd-qwen3-packager:local .
 ```
 
@@ -55,6 +55,11 @@ cat ./work/output/manifest-descriptor.json
 ```
 
 Then use the descriptor digest in `oci2gdsd ensure`.
+
+For command semantics and config behavior, use:
+
+- [../../docs/cli-reference.md](../../docs/cli-reference.md)
+- [../../docs/config-reference.md](../../docs/config-reference.md)
 
 ## Notes
 

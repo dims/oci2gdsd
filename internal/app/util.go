@@ -39,6 +39,26 @@ func shardPath(path, name string) string {
 	return filepath.Join(path, "shards", name)
 }
 
+func ValidateShardName(name string) error {
+	n := strings.TrimSpace(name)
+	if n == "" {
+		return errors.New("shard name is empty")
+	}
+	if n == "." || n == ".." {
+		return fmt.Errorf("shard name %q is not allowed", name)
+	}
+	if filepath.IsAbs(n) {
+		return fmt.Errorf("shard name %q must not be absolute", name)
+	}
+	if filepath.Base(n) != n {
+		return fmt.Errorf("shard name %q must be a single path component", name)
+	}
+	if strings.ContainsAny(n, `/\`) {
+		return fmt.Errorf("shard name %q contains path separators", name)
+	}
+	return nil
+}
+
 func tmpTxnPath(tmpRoot, modelID, manifestDigest string) string {
 	token := shortToken(modelID + ":" + manifestDigest + ":" + time.Now().UTC().Format(time.RFC3339Nano))
 	return filepath.Join(tmpRoot, modelID, digestToPathComponent(manifestDigest), token)
@@ -83,18 +103,18 @@ func ParseByteSize(input string) (int64, error) {
 		{"GIB", 1024 * 1024 * 1024},
 		{"MIB", 1024 * 1024},
 		{"KIB", 1024},
-		{"TB", 1024 * 1024 * 1024 * 1024},
-		{"GB", 1024 * 1024 * 1024},
-		{"MB", 1024 * 1024},
-		{"KB", 1024},
+		{"TB", 1000 * 1000 * 1000 * 1000},
+		{"GB", 1000 * 1000 * 1000},
+		{"MB", 1000 * 1000},
+		{"KB", 1000},
 		{"TI", 1024 * 1024 * 1024 * 1024},
 		{"GI", 1024 * 1024 * 1024},
 		{"MI", 1024 * 1024},
 		{"KI", 1024},
-		{"T", 1024 * 1024 * 1024 * 1024},
-		{"G", 1024 * 1024 * 1024},
-		{"M", 1024 * 1024},
-		{"K", 1024},
+		{"T", 1000 * 1000 * 1000 * 1000},
+		{"G", 1000 * 1000 * 1000},
+		{"M", 1000 * 1000},
+		{"K", 1000},
 		{"B", 1},
 	}
 	for _, u := range units {

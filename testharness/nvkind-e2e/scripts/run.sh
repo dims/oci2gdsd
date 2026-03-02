@@ -75,7 +75,7 @@ if [[ "${VALIDATE_QWEN_HELLO}" == "true" ]]; then
   if ! validate_qwen_hello_example; then
     collect_debug
     kubectl --context "${KUBECTL_CONTEXT}" -n "${QWEN_HELLO_NAMESPACE}" logs deploy/qwen-hello -c preload-model || true
-    kubectl --context "${KUBECTL_CONTEXT}" -n "${QWEN_HELLO_NAMESPACE}" logs deploy/qwen-hello -c hello || true
+    kubectl --context "${KUBECTL_CONTEXT}" -n "${QWEN_HELLO_NAMESPACE}" logs deploy/qwen-hello -c vllm-api || true
     die "qwen hello example validation failed"
   fi
   cleanup_qwen_hello_example
