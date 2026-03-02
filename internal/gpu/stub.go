@@ -32,3 +32,19 @@ func (l *unsupportedGPULoader) Probe(_ context.Context, device int) (app.GPUProb
 func (l *unsupportedGPULoader) LoadFile(_ context.Context, req app.GPULoadFileRequest) (app.GPULoadFileResult, error) {
 	return app.GPULoadFileResult{}, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, "GPU direct loader unavailable in this build", nil)
 }
+
+func (l *unsupportedGPULoader) LoadPersistent(_ context.Context, req app.GPULoadFileRequest) (app.GPULoadFileResult, error) {
+	return app.GPULoadFileResult{}, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, "GPU direct loader unavailable in this build", nil)
+}
+
+func (l *unsupportedGPULoader) UnloadPersistent(_ context.Context, req app.GPULoadFileRequest) (app.GPULoadFileResult, error) {
+	return app.GPULoadFileResult{}, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, "GPU direct loader unavailable in this build", nil)
+}
+
+func (l *unsupportedGPULoader) ListPersistent(_ context.Context, _ int) ([]app.GPULoadFileResult, error) {
+	return nil, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, "GPU direct loader unavailable in this build", nil)
+}
+
+func (l *unsupportedGPULoader) BeginSession(_ context.Context, _ int) (func(), error) {
+	return func() {}, nil
+}

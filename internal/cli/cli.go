@@ -394,13 +394,17 @@ func runProfileInspect(ctx context.Context, svc *app.Service, args []string, glo
 
 func runGPU(ctx context.Context, svc *app.Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "gpu subcommand required: probe|load", nil), globalJSON, stderr)
+		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "gpu subcommand required: probe|load|unload|status", nil), globalJSON, stderr)
 	}
 	switch args[0] {
 	case "probe":
 		return runGPUProbe(ctx, svc, args[1:], globalJSON, stdout, stderr)
 	case "load":
 		return runGPULoad(ctx, svc, args[1:], globalJSON, stdout, stderr)
+	case "unload":
+		return runGPUUnload(ctx, svc, args[1:], globalJSON, stdout, stderr)
+	case "status":
+		return runGPUStatus(ctx, svc, args[1:], globalJSON, stdout, stderr)
 	default:
 		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, fmt.Sprintf("unknown gpu subcommand: %s", args[0]), nil), globalJSON, stderr)
 	}
@@ -438,18 +442,22 @@ func runGPULoad(ctx context.Context, svc *app.Service, args []string, globalJSON
 	var modelID string
 	var digest string
 	var path string
+	var leaseHolder string
 	var device int
 	var chunkBytes string
 	var maxShards int
 	var strict bool
+	var mode string
 	var commandJSON bool
 	fs.StringVar(&modelID, "model-id", "", "model id")
 	fs.StringVar(&digest, "digest", "", "manifest digest")
 	fs.StringVar(&path, "path", "", "local published model path")
+	fs.StringVar(&leaseHolder, "lease-holder", "", "lease holder (required for --mode persistent)")
 	fs.IntVar(&device, "device", 0, "GPU device index")
 	fs.StringVar(&chunkBytes, "chunk-bytes", "16MiB", "read chunk bytes")
 	fs.IntVar(&maxShards, "max-shards", 0, "maximum shards to load (0=all)")
 	fs.BoolVar(&strict, "strict", true, "fail if direct GDS read fails instead of fallback")
+	fs.StringVar(&mode, "mode", "benchmark", "gpu load mode: benchmark|persistent")
 	fs.BoolVar(&commandJSON, "json", globalJSON, "json output")
 	if err := fs.Parse(args); err != nil {
 		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid gpu load flags", err), commandJSON, stderr)
@@ -459,25 +467,94 @@ func runGPULoad(ctx context.Context, svc *app.Service, args []string, globalJSON
 		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid --chunk-bytes", err), commandJSON, stderr)
 	}
 	res, err := svc.GPULoad(ctx, app.GPULoadRequest{
-		ModelID:    modelID,
-		Digest:     digest,
-		Path:       path,
-		Device:     device,
-		ChunkBytes: chunk,
-		MaxShards:  maxShards,
-		Strict:     strict,
+		ModelID:     modelID,
+		Digest:      digest,
+		Path:        path,
+		LeaseHolder: leaseHolder,
+		Device:      device,
+		ChunkBytes:  chunk,
+		MaxShards:   maxShards,
+		Strict:      strict,
+		Mode:        mode,
 	})
 	if commandJSON {
 		_ = emitJSON(stdout, res)
 	} else {
-		fmt.Fprintf(stdout, "status=%s loader=%s device=%d bytes=%d files=%d reason=%s message=%s\n",
-			res.Status, res.Loader, res.Device, res.TotalBytes, len(res.Files), res.ReasonCode, res.Message)
+		fmt.Fprintf(stdout, "status=%s loader=%s mode=%s persistent=%t device=%d bytes=%d files=%d reason=%s message=%s\n",
+			res.Status, res.Loader, res.Mode, res.Persistent, res.Device, res.TotalBytes, len(res.Files), res.ReasonCode, res.Message)
 	}
 	if err != nil {
 		if commandJSON {
 			return app.AsAppError(err).ExitCode
 		}
 		return emitError(err, false, stderr)
+	}
+	return app.ExitSuccess
+}
+
+func runGPUUnload(ctx context.Context, svc *app.Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("gpu unload", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	var modelID string
+	var digest string
+	var path string
+	var leaseHolder string
+	var device int
+	var commandJSON bool
+	fs.StringVar(&modelID, "model-id", "", "model id")
+	fs.StringVar(&digest, "digest", "", "manifest digest")
+	fs.StringVar(&path, "path", "", "local published model path")
+	fs.StringVar(&leaseHolder, "lease-holder", "", "lease holder")
+	fs.IntVar(&device, "device", 0, "GPU device index")
+	fs.BoolVar(&commandJSON, "json", globalJSON, "json output")
+	if err := fs.Parse(args); err != nil {
+		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid gpu unload flags", err), commandJSON, stderr)
+	}
+	res, err := svc.GPUUnload(ctx, app.GPUUnloadRequest{
+		ModelID:     modelID,
+		Digest:      digest,
+		Path:        path,
+		LeaseHolder: leaseHolder,
+		Device:      device,
+	})
+	if commandJSON {
+		_ = emitJSON(stdout, res)
+	} else {
+		fmt.Fprintf(stdout, "status=%s loader=%s device=%d released_bytes=%d remaining_leases=%d reason=%s message=%s\n",
+			res.Status, res.Loader, res.Device, res.ReleasedBytes, res.RemainingLeases, res.ReasonCode, res.Message)
+	}
+	if err != nil {
+		if commandJSON {
+			return app.AsAppError(err).ExitCode
+		}
+		return emitError(err, false, stderr)
+	}
+	return app.ExitSuccess
+}
+
+func runGPUStatus(ctx context.Context, svc *app.Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("gpu status", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	var device int
+	var commandJSON bool
+	fs.IntVar(&device, "device", 0, "GPU device index")
+	fs.BoolVar(&commandJSON, "json", globalJSON, "json output")
+	if err := fs.Parse(args); err != nil {
+		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid gpu status flags", err), commandJSON, stderr)
+	}
+	res, err := svc.GPUListPersistent(ctx, device)
+	if commandJSON {
+		_ = emitJSON(stdout, res)
+	} else {
+		var total int64
+		for _, f := range res {
+			total += f.Bytes
+			fmt.Fprintf(stdout, "path=%s bytes=%d refs=%d ptr=%s direct=%t\n", f.Path, f.Bytes, f.RefCount, f.DevicePtr, f.Direct)
+		}
+		fmt.Fprintf(stdout, "device=%d persistent_files=%d total_bytes=%d\n", device, len(res), total)
+	}
+	if err != nil {
+		return emitError(err, commandJSON, stderr)
 	}
 	return app.ExitSuccess
 }
@@ -520,6 +597,8 @@ func printUsage(w io.Writer) {
 		"  profile inspect",
 		"  gpu probe",
 		"  gpu load",
+		"  gpu unload",
+		"  gpu status",
 		"global flags:",
 		"  --root <path>",
 		"  --target-root <path>",
