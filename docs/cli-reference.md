@@ -19,6 +19,7 @@ Top-level commands:
 - `gpu load`
 - `gpu unload`
 - `gpu status`
+- `serve`
 
 ## Global flags
 
@@ -182,6 +183,7 @@ Current mode semantics:
 
 - `benchmark`: reads shard files through the configured loader path and reports throughput/progress metadata.
 - `persistent`: rejected in standalone one-shot CLI mode with `POLICY_REJECTED`.
+  Use `serve` for long-lived process semantics.
 
 ## `gpu unload`
 
@@ -214,6 +216,27 @@ Notes:
 
 - In standalone one-shot CLI mode this will usually return an empty list because no
   cross-command process state is retained.
+
+## `serve`
+
+Runs a long-lived daemon process over a Unix socket and keeps in-process GPU persistent
+allocations alive across API calls.
+
+Flags:
+
+- `--unix-socket <path>` (default: `/tmp/oci2gdsd/daemon.sock`)
+- `--socket-perms <octal>` (default: `0600`)
+- `--remove-stale-socket` (default: `true`)
+- `--shutdown-timeout <duration>` (default: `5s`)
+- `--json`
+
+Current HTTP API surface:
+
+- `GET /healthz`
+- `POST /v1/gpu/load`
+- `POST /v1/gpu/export`
+- `POST /v1/gpu/unload`
+- `GET /v1/gpu/status?device=<index>`
 
 ## Output behavior
 

@@ -1,10 +1,13 @@
 # Qwen Packager + nvkind Hello World
 
 This example uses:
-- Docker Hub packager image: `docker.io/dims/oci2gdsd-qwen3-packager:latest`
+- Locally built packager image: `oci2gdsd-qwen3-packager:local`
 - `nvkind` for a local GPU Kubernetes cluster
 - `oci2gdsd` init container to preload model files before app start
-- vLLM runtime in offline mode using the OCI-preloaded local model directory
+- `oci2gdsd serve` sidecar for persistent GPU allocation lifecycle within the pod
+- PyTorch + Transformers runtime in offline mode using the OCI-preloaded local model directory
+- `torch.ops.oci2gds.read_into_tensor` + `torch.ops.oci2gds.load_profile` startup probe
+- daemon IPC handoff probe (`/v1/gpu/export` + PyTorch CUDA IPC import-copy)
 
 ## 1. Create an nvkind cluster
 
@@ -74,7 +77,13 @@ kubectl --context "kind-${CLUSTER_NAME}" -n oci-model-registry \
 
 Keep that terminal open.
 
-## 3. Package and push Qwen artifact with Docker Hub image
+## 3. Build local packager image
+
+```bash
+docker build -t oci2gdsd-qwen3-packager:local packaging/qwen3-oci-modelprofile-v1
+```
+
+## 4. Package and push Qwen artifact
 
 In a second terminal:
 
@@ -86,7 +95,7 @@ docker run --rm --network host \
   -e HF_TOKEN="${HF_TOKEN:-}" \
   -u "$(id -u):$(id -g)" \
   -v "${WORK_DIR}:/work" \
-  docker.io/dims/oci2gdsd-qwen3-packager:latest \
+  oci2gdsd-qwen3-packager:local \
   --hf-repo Qwen/Qwen3-0.6B \
   --hf-revision main \
   --model-id qwen3-0.6b \
@@ -98,7 +107,7 @@ export MODEL_REF="oci-model-registry.oci-model-registry.svc.cluster.local:5000/m
 echo "${MODEL_REF}"
 ```
 
-## 4. Build/load `oci2gdsd` image into cluster
+## 5. Build/load `oci2gdsd` image into cluster
 
 ```bash
 docker build -f testharness/nvkind-e2e/Dockerfile.oci2gdsd -t oci2gdsd:hello .
@@ -107,7 +116,7 @@ docker pull nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1
 kind load docker-image nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1 --name "${CLUSTER_NAME}"
 ```
 
-## 5. Render and apply FastAPI + vLLM deployment
+## 6. Render and apply FastAPI + PyTorch deployment
 
 ```bash
 export MODEL_ID="qwen3-0.6b"
@@ -115,8 +124,10 @@ export OCI2GDSD_IMAGE="oci2gdsd:hello"
 export OCI2GDSD_ROOT_PATH="/var/lib/oci2gdsd"
 export QWEN_HELLO_NAMESPACE="qwen-hello"
 export LEASE_HOLDER="qwen-hello"
-export VLLM_RUNTIME_IMAGE="nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1"
+export PYTORCH_RUNTIME_IMAGE="nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1"
 export MODEL_ROOT_PATH="${OCI2GDSD_ROOT_PATH}/models/${MODEL_ID}/${MODEL_DIGEST//:/-}"
+# Optional: force pure Python fallback probe backend (skip native extension build)
+# export OCI2GDS_TORCH_ENABLE_NATIVE="0"
 
 cp examples/qwen-hello/qwen-nvkind-hello-deployment.yaml.tpl /tmp/qwen-nvkind-hello.yaml
 gsed -i "s|__QWEN_HELLO_NAMESPACE__|${QWEN_HELLO_NAMESPACE}|g" /tmp/qwen-nvkind-hello.yaml
@@ -126,7 +137,7 @@ gsed -i "s|__MODEL_DIGEST__|${MODEL_DIGEST}|g" /tmp/qwen-nvkind-hello.yaml
 gsed -i "s|__MODEL_ROOT_PATH__|${MODEL_ROOT_PATH}|g" /tmp/qwen-nvkind-hello.yaml
 gsed -i "s|__OCI2GDSD_IMAGE__|${OCI2GDSD_IMAGE}|g" /tmp/qwen-nvkind-hello.yaml
 gsed -i "s|__OCI2GDSD_ROOT_PATH__|${OCI2GDSD_ROOT_PATH}|g" /tmp/qwen-nvkind-hello.yaml
-gsed -i "s|__VLLM_RUNTIME_IMAGE__|${VLLM_RUNTIME_IMAGE}|g" /tmp/qwen-nvkind-hello.yaml
+gsed -i "s|__PYTORCH_RUNTIME_IMAGE__|${PYTORCH_RUNTIME_IMAGE}|g" /tmp/qwen-nvkind-hello.yaml
 gsed -i "s|__LEASE_HOLDER__|${LEASE_HOLDER}|g" /tmp/qwen-nvkind-hello.yaml
 
 kubectl --context "kind-${CLUSTER_NAME}" apply -f /tmp/qwen-nvkind-hello.yaml
@@ -142,11 +153,24 @@ curl -sS -X POST http://127.0.0.1:18080/chat \
   -d '{"prompt":"Explain in one sentence what GPU model preloading helps with."}' | jq .
 ```
 
-You should get JSON with a non-empty `answer` field. `model_name` will be a
-local path (for example, `/tmp/oci2gdsd-local-model`), confirming vLLM loaded
-from the OCI-preloaded files instead of pulling from Hugging Face.
+Check health details (includes `oci2gds` probe metadata):
 
-## 6. Cleanup
+```bash
+curl -sS http://127.0.0.1:18080/healthz | jq .
+```
+
+You should get JSON with a non-empty `answer` field. `model_name` will be a
+local path (for example, `/tmp/oci2gdsd-local-model`), confirming PyTorch loaded
+from the OCI-preloaded files instead of pulling from Hugging Face.
+`/healthz` should include:
+
+- `oci2gds_profile.status` (`ok`/`skipped`) and backend details (`native-cufile` or `python-fallback`).
+- `oci2gds_ipc.status` (`ok`/`skipped`/`error`) for daemon-mediated IPC probe status.
+
+This example demonstrates local OCI preload + PyTorch offline load plus a daemon IPC handoff probe.
+It does not yet remap full transformer parameter ownership to daemon-exported VRAM pointers.
+
+## 7. Cleanup
 
 ```bash
 kubectl --context "kind-${CLUSTER_NAME}" delete namespace "${QWEN_HELLO_NAMESPACE}" --ignore-not-found

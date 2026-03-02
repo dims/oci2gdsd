@@ -6,11 +6,16 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/dims/oci2gdsd/internal/app"
 	configpkg "github.com/dims/oci2gdsd/internal/config"
+	"github.com/dims/oci2gdsd/internal/daemon"
 	"github.com/dims/oci2gdsd/internal/gpu"
 	"github.com/dims/oci2gdsd/internal/registry"
 )
@@ -88,6 +93,8 @@ func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 		return runProfile(ctx, svc, commandArgs, jsonOut, stdout, stderr)
 	case "gpu":
 		return runGPU(ctx, svc, commandArgs, jsonOut, stdout, stderr)
+	case "serve":
+		return runServe(ctx, svc, commandArgs, jsonOut, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown command: %s\n", command)
 		printUsage(stderr)
@@ -576,6 +583,62 @@ func runGPUStatus(ctx context.Context, svc *app.Service, args []string, globalJS
 	return app.ExitSuccess
 }
 
+func runServe(ctx context.Context, svc *app.Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	var socketPath string
+	var socketPerms string
+	var removeStale bool
+	var shutdownTimeout string
+	var commandJSON bool
+	fs.StringVar(&socketPath, "unix-socket", "/tmp/oci2gdsd/daemon.sock", "unix socket path for daemon API")
+	fs.StringVar(&socketPerms, "socket-perms", "0600", "octal permissions for unix socket")
+	fs.BoolVar(&removeStale, "remove-stale-socket", true, "remove existing socket path before bind")
+	fs.StringVar(&shutdownTimeout, "shutdown-timeout", "5s", "graceful shutdown timeout")
+	fs.BoolVar(&commandJSON, "json", globalJSON, "json output")
+	if err := fs.Parse(args); err != nil {
+		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid serve flags", err), commandJSON, stderr)
+	}
+
+	permValue, err := strconv.ParseUint(socketPerms, 8, 32)
+	if err != nil {
+		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid --socket-perms value", err), commandJSON, stderr)
+	}
+	timeout, err := time.ParseDuration(shutdownTimeout)
+	if err != nil {
+		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid --shutdown-timeout value", err), commandJSON, stderr)
+	}
+
+	sigCtx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+	if commandJSON {
+		_ = emitJSON(stdout, map[string]any{
+			"status":      "STARTING",
+			"unix_socket": socketPath,
+		})
+	} else {
+		fmt.Fprintf(stdout, "status=STARTING unix_socket=%s\n", socketPath)
+	}
+
+	if err := daemon.Serve(sigCtx, svc, daemon.ServerConfig{
+		UnixSocket:      socketPath,
+		SocketFileMode:  os.FileMode(permValue),
+		RemoveStaleSock: removeStale,
+		ShutdownTimeout: timeout,
+	}); err != nil {
+		return emitError(err, commandJSON, stderr)
+	}
+	if commandJSON {
+		_ = emitJSON(stdout, map[string]any{
+			"status":      "STOPPED",
+			"unix_socket": socketPath,
+		})
+	} else {
+		fmt.Fprintf(stdout, "status=STOPPED unix_socket=%s\n", socketPath)
+	}
+	return app.ExitSuccess
+}
+
 func emitJSON(w io.Writer, v any) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
@@ -616,6 +679,7 @@ func printUsage(w io.Writer) {
 		"  gpu load",
 		"  gpu unload",
 		"  gpu status",
+		"  serve",
 		"global flags:",
 		"  --root <path>",
 		"  --target-root <path>",

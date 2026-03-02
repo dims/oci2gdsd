@@ -25,6 +25,7 @@
   - `TXN_COMMITTED`
 - `READY` read contract enforcement.
 - Standalone CLI `gpu load` contract is explicit benchmark mode; `--mode persistent` is rejected in one-shot CLI mode.
+- `serve` command is implemented for long-running process integrations and exposes daemon GPU API endpoints (`/v1/gpu/load`, `/v1/gpu/export`, `/v1/gpu/unload`, `/v1/gpu/status`).
 - `gpu unload` and `gpu status` commands are implemented; they are primarily useful for embedded/long-running process integrations.
 - Lease-aware release and GC behavior.
 - Crash-recovery guardrails for stale temp paths and inconsistent READY entries

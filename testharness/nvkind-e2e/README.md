@@ -9,7 +9,8 @@ It is designed to run directly by an operator on a machine and does not require 
 - Local OCI registry in-cluster for repeatable artifact tests.
 - `oci2gdsd ensure/status/verify` in an init container.
 - PyTorch container reading preloaded model files and running CUDA compute.
-- Validation of `examples/qwen-hello` FastAPI + vLLM deployment by issuing a real `/chat` request against a vLLM instance that loads from OCI-preloaded local model files.
+- Validation of `examples/qwen-hello` FastAPI + PyTorch deployment by issuing a real `/chat` request and verifying `/healthz` `oci2gds_profile` status fields.
+- Optional strict gating on daemon IPC probe status (`REQUIRE_DAEMON_IPC_PROBE=true`).
 - `oci2gdsd release + gc + status` on the same node as workload pod.
 
 ## Run
@@ -26,7 +27,7 @@ make nvkind-e2e
 # Use a different model source
 HF_REPO=Qwen/Qwen3-0.6B HF_REVISION=main make nvkind-e2e
 
-# Override workload image (default uses the vLLM runtime image)
+# Override workload image (default uses the qwen-hello runtime image)
 PYTORCH_IMAGE=pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime make nvkind-e2e
 
 # Reuse an already pushed model artifact and skip package/push
@@ -43,8 +44,11 @@ VALIDATE_LOCAL_GDS=false make nvkind-e2e
 # Optional: pre-load workload image(s) into kind nodes (default false)
 PRELOAD_WORKLOAD_IMAGE=true make nvkind-e2e
 
-# Optional: pre-load the large vLLM runtime image into kind nodes (default false)
-PRELOAD_VLLM_RUNTIME_IMAGE=true make nvkind-e2e
+# Optional: pre-load the qwen-hello PyTorch runtime image into kind nodes (default false)
+PRELOAD_PYTORCH_RUNTIME_IMAGE=true make nvkind-e2e
+
+# Optional: require daemon IPC probe to report status=ok (default false)
+REQUIRE_DAEMON_IPC_PROBE=true make nvkind-e2e
 
 # Force namespace/cluster names
 CLUSTER_NAME=oci2gdsd-e2e E2E_NAMESPACE=oci2gdsd-e2e make nvkind-e2e

@@ -547,11 +547,48 @@ static int gds_free_persistent(int device, CUdeviceptr dptr) {
 	}
 	return rc;
 }
+
+static int gds_export_ipc_handle(int device, CUdeviceptr dptr, unsigned char* out_handle, int out_handle_len) {
+	CUresult cu;
+	CUcontext prev_ctx = NULL;
+	int rc = 0;
+	int ctx_pushed = 0;
+	CUipcMemHandle handle;
+
+	if (dptr == 0 || out_handle == NULL) {
+		return 3009;
+	}
+	if (out_handle_len < (int)sizeof(CUipcMemHandle)) {
+		return 3010;
+	}
+
+	rc = gds_activate_device(device);
+	if (rc != 0) {
+		return rc;
+	}
+	cu = cuCtxPushCurrent(g_primary_ctx);
+	if (cu != CUDA_SUCCESS) return 1000 + (int)cu;
+	ctx_pushed = 1;
+
+	cu = cuIpcGetMemHandle(&handle, dptr);
+	if (cu != CUDA_SUCCESS) {
+		rc = 1000 + (int)cu;
+		goto cleanup;
+	}
+	memcpy(out_handle, &handle, sizeof(CUipcMemHandle));
+
+cleanup:
+	if (ctx_pushed) {
+		(void)cuCtxPopCurrent(&prev_ctx);
+	}
+	return rc;
+}
 */
 import "C"
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
@@ -854,6 +891,49 @@ func (l *gdsLoader) LoadPersistent(ctx context.Context, req app.GPULoadFileReque
 	}, nil
 }
 
+func (l *gdsLoader) ExportPersistent(ctx context.Context, req app.GPULoadFileRequest) (app.GPULoadFileResult, error) {
+	select {
+	case <-ctx.Done():
+		return app.GPULoadFileResult{}, app.NewAppError(app.ExitRegistry, app.ReasonRegistryTimeout, "context canceled before persistent GPU export", ctx.Err())
+	default:
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.allocations == nil {
+		l.allocations = map[string]*persistentAllocation{}
+	}
+	alloc, ok := l.allocations[req.Path]
+	if !ok {
+		return app.GPULoadFileResult{}, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "persistent allocation not found for shard path", nil)
+	}
+	if !l.ready || l.device != req.Device {
+		return app.GPULoadFileResult{}, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, "persistent allocation exists on a different device/session state", nil)
+	}
+
+	handle := make([]byte, 64)
+	code := int(C.gds_export_ipc_handle(
+		C.int(req.Device),
+		alloc.ptr,
+		(*C.uchar)(unsafe.Pointer(&handle[0])),
+		C.int(len(handle)),
+	))
+	if code != 0 {
+		return app.GPULoadFileResult{}, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, fmt.Sprintf("failed exporting CUDA IPC handle: %s", describeGDSCode(code)), nil)
+	}
+
+	return app.GPULoadFileResult{
+		Path:      req.Path,
+		Bytes:     alloc.bytes,
+		Direct:    alloc.direct,
+		Loaded:    true,
+		RefCount:  alloc.refs,
+		DevicePtr: devicePtrString(alloc.ptr),
+		IPCHandle: base64.StdEncoding.EncodeToString(handle),
+		Message:   "exported CUDA IPC handle for persistent allocation",
+	}, nil
+}
+
 func (l *gdsLoader) UnloadPersistent(ctx context.Context, req app.GPULoadFileRequest) (app.GPULoadFileResult, error) {
 	select {
 	case <-ctx.Done():
@@ -999,6 +1079,8 @@ func describeGDSCode(code int) string {
 		return "code=3008 (host pread failed in fallback path)"
 	case 3009:
 		return "code=3009 (invalid output pointer arguments)"
+	case 3010:
+		return "code=3010 (output buffer too small for CUDA IPC handle)"
 	default:
 		return fmt.Sprintf("code=%d", code)
 	}

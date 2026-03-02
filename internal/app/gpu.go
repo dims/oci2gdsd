@@ -34,19 +34,20 @@ type GPULoadFileResult struct {
 	Loaded     bool   `json:"loaded"`
 	RefCount   int    `json:"ref_count,omitempty"`
 	DevicePtr  string `json:"device_ptr,omitempty"`
+	IPCHandle  string `json:"ipc_handle,omitempty"`
 	Message    string `json:"message,omitempty"`
 }
 
 type GPULoadRequest struct {
-	ModelID     string
-	Digest      string
-	Path        string
-	LeaseHolder string
-	Device      int
-	ChunkBytes  int64
-	MaxShards   int
-	Strict      bool
-	Mode        string
+	ModelID     string `json:"model_id"`
+	Digest      string `json:"digest"`
+	Path        string `json:"path"`
+	LeaseHolder string `json:"lease_holder"`
+	Device      int    `json:"device"`
+	ChunkBytes  int64  `json:"chunk_bytes"`
+	MaxShards   int    `json:"max_shards"`
+	Strict      bool   `json:"strict"`
+	Mode        string `json:"mode"`
 }
 
 type GPULoadResult struct {
@@ -67,11 +68,11 @@ type GPULoadResult struct {
 }
 
 type GPUUnloadRequest struct {
-	ModelID     string
-	Digest      string
-	Path        string
-	LeaseHolder string
-	Device      int
+	ModelID     string `json:"model_id"`
+	Digest      string `json:"digest"`
+	Path        string `json:"path"`
+	LeaseHolder string `json:"lease_holder"`
+	Device      int    `json:"device"`
 }
 
 type GPUUnloadResult struct {
@@ -90,11 +91,34 @@ type GPUUnloadResult struct {
 	Message         string              `json:"message,omitempty"`
 }
 
+type GPUExportRequest struct {
+	ModelID   string `json:"model_id"`
+	Digest    string `json:"digest"`
+	Path      string `json:"path"`
+	Device    int    `json:"device"`
+	MaxShards int    `json:"max_shards"`
+}
+
+type GPUExportResult struct {
+	Status         string              `json:"status"`
+	ModelID        string              `json:"model_id,omitempty"`
+	ManifestDigest string              `json:"manifest_digest,omitempty"`
+	Path           string              `json:"path"`
+	Device         int                 `json:"device"`
+	Loader         string              `json:"loader"`
+	Files          []GPULoadFileResult `json:"files"`
+	TotalBytes     int64               `json:"total_bytes"`
+	DurationMS     int64               `json:"duration_ms"`
+	ReasonCode     ReasonCode          `json:"reason_code"`
+	Message        string              `json:"message,omitempty"`
+}
+
 type GPULoader interface {
 	Name() string
 	Probe(ctx context.Context, device int) (GPUProbeResult, error)
 	LoadFile(ctx context.Context, req GPULoadFileRequest) (GPULoadFileResult, error)
 	LoadPersistent(ctx context.Context, req GPULoadFileRequest) (GPULoadFileResult, error)
+	ExportPersistent(ctx context.Context, req GPULoadFileRequest) (GPULoadFileResult, error)
 	UnloadPersistent(ctx context.Context, req GPULoadFileRequest) (GPULoadFileResult, error)
 	ListPersistent(ctx context.Context, device int) ([]GPULoadFileResult, error)
 }
@@ -520,6 +544,107 @@ func (s *Service) GPUListPersistent(ctx context.Context, device int) ([]GPULoadF
 		return nil, NewAppError(ExitValidation, ReasonValidationFailed, "--device must be >= 0", nil)
 	}
 	return s.gpuLoader.ListPersistent(ctx, device)
+}
+
+func (s *Service) GPUExport(ctx context.Context, req GPUExportRequest) (GPUExportResult, error) {
+	start := time.Now()
+	if req.Device < 0 {
+		return GPUExportResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "--device must be >= 0", nil)
+	}
+	if req.MaxShards <= 0 {
+		req.MaxShards = 0
+	}
+
+	modelPath := strings.TrimSpace(req.Path)
+	modelID := strings.TrimSpace(req.ModelID)
+	manifestDigest := strings.TrimSpace(req.Digest)
+	if modelPath == "" {
+		if modelID == "" || manifestDigest == "" {
+			return GPUExportResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "either --path or (--model-id and --digest) is required", nil)
+		}
+		if err := s.validateModelID(modelID); err != nil {
+			return GPUExportResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "invalid --model-id", err)
+		}
+		rec, ok, err := s.store.Get(modelKey(modelID, manifestDigest))
+		if err != nil {
+			return GPUExportResult{}, err
+		}
+		if !ok {
+			return GPUExportResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "model not found in local state", nil)
+		}
+		modelPath = rec.Path
+	}
+
+	valid, reason, err := s.verifyPublishedPath(modelPath)
+	if err != nil || !valid {
+		if reason == ReasonNone {
+			reason = ReasonStateDBCorrupt
+		}
+		return GPUExportResult{}, NewAppError(mapReasonToExitCode(reason), reason, "path failed READY verification before gpu export", err)
+	}
+
+	md, err := loadLocalMetadata(modelPath)
+	if err != nil {
+		return GPUExportResult{}, NewAppError(ExitStateCorrupt, ReasonStateDBCorrupt, "failed to load local model metadata", err)
+	}
+	if modelID == "" {
+		modelID = md.ModelID
+	}
+	if manifestDigest == "" {
+		manifestDigest = md.ManifestDigest
+	}
+
+	shards, err := gpuWeightShards(md.Profile)
+	if err != nil {
+		return GPUExportResult{}, err
+	}
+	files := make([]GPULoadFileResult, 0, len(shards))
+	var total int64
+	for i, shard := range shards {
+		if req.MaxShards > 0 && i >= req.MaxShards {
+			break
+		}
+		if err := ValidateShardName(shard.Name); err != nil {
+			return GPUExportResult{}, NewAppError(ExitValidation, ReasonValidationFailed, fmt.Sprintf("invalid shard name %q: %v", shard.Name, err), nil)
+		}
+		path := filepath.Join(modelPath, "shards", shard.Name)
+		res, err := s.gpuLoader.ExportPersistent(ctx, GPULoadFileRequest{
+			Path:   path,
+			Device: req.Device,
+		})
+		if err != nil {
+			appErr := AsAppError(err)
+			return GPUExportResult{
+				Status:         "FAILED",
+				ModelID:        modelID,
+				ManifestDigest: manifestDigest,
+				Path:           modelPath,
+				Device:         req.Device,
+				Loader:         s.gpuLoader.Name(),
+				Files:          files,
+				TotalBytes:     total,
+				DurationMS:     time.Since(start).Milliseconds(),
+				ReasonCode:     appErr.Reason,
+				Message:        fmt.Sprintf("failed exporting shard %s: %v", shard.Name, appErr.Error()),
+			}, appErr
+		}
+		files = append(files, res)
+		total += res.Bytes
+	}
+
+	return GPUExportResult{
+		Status:         "READY",
+		ModelID:        modelID,
+		ManifestDigest: manifestDigest,
+		Path:           modelPath,
+		Device:         req.Device,
+		Loader:         s.gpuLoader.Name(),
+		Files:          files,
+		TotalBytes:     total,
+		DurationMS:     time.Since(start).Milliseconds(),
+		ReasonCode:     ReasonNone,
+		Message:        "exported CUDA IPC handles for persistent allocations",
+	}, nil
 }
 
 func (s *Service) releaseLeaseOnlyLocked(rec *storepkg.ModelRecord, leaseHolder string) (int, error) {

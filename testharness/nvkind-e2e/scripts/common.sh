@@ -26,11 +26,13 @@ MODEL_REF_OVERRIDE="${MODEL_REF_OVERRIDE:-}"
 MODEL_DIGEST_OVERRIDE="${MODEL_DIGEST_OVERRIDE:-}"
 VALIDATE_QWEN_HELLO="${VALIDATE_QWEN_HELLO:-true}"
 VALIDATE_LOCAL_GDS="${VALIDATE_LOCAL_GDS:-true}"
+REQUIRE_DAEMON_IPC_PROBE="${REQUIRE_DAEMON_IPC_PROBE:-false}"
 
 OCI2GDSD_IMAGE="${OCI2GDSD_IMAGE:-oci2gdsd:e2e}"
 PACKAGER_IMAGE="${PACKAGER_IMAGE:-oci2gdsd-qwen3-packager:local}"
 VLLM_RUNTIME_IMAGE="${VLLM_RUNTIME_IMAGE:-nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1}"
-PRELOAD_VLLM_RUNTIME_IMAGE="${PRELOAD_VLLM_RUNTIME_IMAGE:-false}"
+PYTORCH_RUNTIME_IMAGE="${PYTORCH_RUNTIME_IMAGE:-${VLLM_RUNTIME_IMAGE}}"
+PRELOAD_PYTORCH_RUNTIME_IMAGE="${PRELOAD_PYTORCH_RUNTIME_IMAGE:-${PRELOAD_VLLM_RUNTIME_IMAGE:-false}}"
 PRELOAD_WORKLOAD_IMAGE="${PRELOAD_WORKLOAD_IMAGE:-false}"
 PYTORCH_IMAGE="${PYTORCH_IMAGE:-${VLLM_RUNTIME_IMAGE}}"
 
@@ -421,19 +423,19 @@ preload_workload_image() {
     sleep 5
   done
   kind_load_image "${PYTORCH_IMAGE}"
-  if [[ "${PRELOAD_VLLM_RUNTIME_IMAGE}" == "true" ]]; then
+  if [[ "${PRELOAD_PYTORCH_RUNTIME_IMAGE}" == "true" ]]; then
     tries=0
-    until docker pull "${VLLM_RUNTIME_IMAGE}"; do
+    until docker pull "${PYTORCH_RUNTIME_IMAGE}"; do
       tries=$((tries + 1))
       if [[ "${tries}" -ge "${max_tries}" ]]; then
-        die "failed to pull workload image after ${max_tries} attempts: ${VLLM_RUNTIME_IMAGE}"
+        die "failed to pull workload image after ${max_tries} attempts: ${PYTORCH_RUNTIME_IMAGE}"
       fi
-      warn "retrying workload image pull (${tries}/${max_tries}): ${VLLM_RUNTIME_IMAGE}"
+      warn "retrying workload image pull (${tries}/${max_tries}): ${PYTORCH_RUNTIME_IMAGE}"
       sleep 5
     done
-    kind_load_image "${VLLM_RUNTIME_IMAGE}"
+    kind_load_image "${PYTORCH_RUNTIME_IMAGE}"
   else
-    log "skipping pre-load for ${VLLM_RUNTIME_IMAGE}; cluster will pull image on demand"
+    log "skipping pre-load for ${PYTORCH_RUNTIME_IMAGE}; cluster will pull image on demand"
   fi
 }
 
@@ -560,7 +562,7 @@ validate_qwen_hello_example() {
     "MODEL_ROOT_PATH=${model_root}" \
     "OCI2GDSD_IMAGE=${OCI2GDSD_IMAGE}" \
     "OCI2GDSD_ROOT_PATH=${OCI2GDSD_ROOT_PATH}" \
-    "VLLM_RUNTIME_IMAGE=${VLLM_RUNTIME_IMAGE}" \
+    "PYTORCH_RUNTIME_IMAGE=${PYTORCH_RUNTIME_IMAGE}" \
     "LEASE_HOLDER=${LEASE_HOLDER}"
 
   kubectl --context "${KUBECTL_CONTEXT}" apply -f "${rendered}"
@@ -607,6 +609,20 @@ validate_qwen_hello_example() {
   done
 
   local prompt='Explain in one sentence what GPU model preloading helps with.'
+  local health_response
+  health_response="$(curl -fsS "http://127.0.0.1:${local_port}/healthz" || true)"
+  local health_status
+  health_status="$(printf '%s' "${health_response}" | jq -r '.status // empty' 2>/dev/null || true)"
+  local oci2gds_profile_status
+  oci2gds_profile_status="$(printf '%s' "${health_response}" | jq -r '.oci2gds_profile.status // empty' 2>/dev/null || true)"
+  local oci2gds_backend
+  oci2gds_backend="$(printf '%s' "${health_response}" | jq -r '.oci2gds_backend.backend // empty' 2>/dev/null || true)"
+  local oci2gds_mode_counts
+  oci2gds_mode_counts="$(printf '%s' "${health_response}" | jq -r '.oci2gds_profile.mode_counts // "{}"' 2>/dev/null || true)"
+  local oci2gds_ipc_status
+  oci2gds_ipc_status="$(printf '%s' "${health_response}" | jq -r '.oci2gds_ipc.status // empty' 2>/dev/null || true)"
+  local oci2gds_ipc_backend
+  oci2gds_ipc_backend="$(printf '%s' "${health_response}" | jq -r '.oci2gds_ipc.import_backend // empty' 2>/dev/null || true)"
   local response
   response="$(curl -fsS -X POST "http://127.0.0.1:${local_port}/chat" \
     -H 'Content-Type: application/json' \
@@ -615,7 +631,8 @@ validate_qwen_hello_example() {
   answer="$(printf '%s' "${response}" | jq -r '.answer // empty' 2>/dev/null || true)"
 
   kubectl --context "${KUBECTL_CONTEXT}" -n "${QWEN_HELLO_NAMESPACE}" \
-    logs "pod/${pod_name}" -c vllm-api > "${log_file}" 2>/dev/null || true
+    logs "pod/${pod_name}" -c pytorch-api > "${log_file}" 2>/dev/null || true
+  printf '\nQWEN_NVKIND_HELLO_HEALTH_RESPONSE %s\n' "${health_response}" >> "${log_file}"
   printf '\nQWEN_NVKIND_HELLO_CHAT_RESPONSE %s\n' "${response}" >> "${log_file}"
 
   if [[ -f "${pf_pid_file}" ]]; then
@@ -627,7 +644,20 @@ validate_qwen_hello_example() {
     warn "qwen hello API returned empty answer; response=${response}"
     return 1
   fi
-  printf 'QWEN_NVKIND_HELLO_SUCCESS prompt=%s answer=%s\n' "${prompt}" "${answer}" >> "${log_file}"
+  if [[ "${health_status}" != "ok" ]]; then
+    warn "qwen hello health status is not ok: ${health_status}"
+    return 1
+  fi
+  if [[ -z "${oci2gds_profile_status}" || "${oci2gds_profile_status}" == "error" ]]; then
+    warn "qwen hello oci2gds profile probe failed: status=${oci2gds_profile_status} backend=${oci2gds_backend} mode_counts=${oci2gds_mode_counts}"
+    return 1
+  fi
+  if [[ "${REQUIRE_DAEMON_IPC_PROBE}" == "true" && "${oci2gds_ipc_status}" != "ok" ]]; then
+    warn "qwen hello daemon ipc probe not ok: status=${oci2gds_ipc_status} backend=${oci2gds_ipc_backend}"
+    return 1
+  fi
+  printf 'QWEN_NVKIND_HELLO_SUCCESS prompt=%s answer=%s oci2gds_profile_status=%s oci2gds_backend=%s oci2gds_mode_counts=%s oci2gds_ipc_status=%s oci2gds_ipc_backend=%s\n' \
+    "${prompt}" "${answer}" "${oci2gds_profile_status}" "${oci2gds_backend}" "${oci2gds_mode_counts}" "${oci2gds_ipc_status}" "${oci2gds_ipc_backend}" >> "${log_file}"
   return 0
 }
 

@@ -81,6 +81,24 @@ func (l *fakePersistentLoader) LoadPersistent(_ context.Context, req GPULoadFile
 	}, nil
 }
 
+func (l *fakePersistentLoader) ExportPersistent(_ context.Context, req GPULoadFileRequest) (GPULoadFileResult, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	alloc, ok := l.files[req.Path]
+	if !ok {
+		return GPULoadFileResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "persistent allocation not found", nil)
+	}
+	return GPULoadFileResult{
+		Path:      req.Path,
+		Bytes:     alloc.bytes,
+		Direct:    true,
+		Loaded:    true,
+		RefCount:  alloc.refs,
+		DevicePtr: fmt.Sprintf("0x%x", len(req.Path)),
+		IPCHandle: "ZmFrZS1pcGMtaGFuZGxl",
+	}, nil
+}
+
 func (l *fakePersistentLoader) UnloadPersistent(_ context.Context, req GPULoadFileRequest) (GPULoadFileResult, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -265,6 +283,63 @@ func TestGPULoadPersistentLeaseLifecycle(t *testing.T) {
 	}
 	if !stored.Releasable || stored.ReleasableAt == nil {
 		t.Fatalf("expected model to become releasable after final unload")
+	}
+}
+
+func TestGPUExportReturnsPersistentIPCHandle(t *testing.T) {
+	svc := newStateOnlyService(t)
+	loader := newFakePersistentLoader()
+	svc.gpuLoader = loader
+
+	modelID := "demo"
+	manifest := "sha256:" + strings.Repeat("e", 64)
+	modelPath, _ := writeReadyModelForGPUTest(t, svc.cfg.ModelRoot, modelID, manifest)
+
+	now := time.Now().UTC()
+	rec := &storepkg.ModelRecord{
+		Key:            modelKey(modelID, manifest),
+		ModelID:        modelID,
+		ManifestDigest: manifest,
+		Status:         StateReady,
+		Path:           modelPath,
+		Bytes:          1,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		LastAccessedAt: now,
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatalf("put model record: %v", err)
+	}
+
+	_, err := svc.GPULoad(context.Background(), GPULoadRequest{
+		ModelID:     modelID,
+		Digest:      manifest,
+		LeaseHolder: "holder-export",
+		Device:      0,
+		ChunkBytes:  4 * 1024,
+		Mode:        "persistent",
+		Strict:      true,
+	})
+	if err != nil {
+		t.Fatalf("gpu persistent load: %v", err)
+	}
+
+	res, err := svc.GPUExport(context.Background(), GPUExportRequest{
+		ModelID: modelID,
+		Digest:  manifest,
+		Device:  0,
+	})
+	if err != nil {
+		t.Fatalf("gpu export: %v", err)
+	}
+	if res.Status != "READY" {
+		t.Fatalf("unexpected export status: %+v", res)
+	}
+	if len(res.Files) != 1 {
+		t.Fatalf("expected 1 exported shard, got %d", len(res.Files))
+	}
+	if strings.TrimSpace(res.Files[0].IPCHandle) == "" {
+		t.Fatalf("expected non-empty ipc handle: %+v", res.Files[0])
 	}
 }
 
