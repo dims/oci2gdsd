@@ -76,6 +76,8 @@ spec:
           name: oci2gdsd-config
       - name: oci2gdsd-run
         emptyDir: {}
+      - name: oci2gdsd-bin
+        emptyDir: {}
       initContainers:
       - name: preload-model
         image: __OCI2GDSD_IMAGE__
@@ -84,6 +86,8 @@ spec:
         args:
         - |
           set -eu
+          cp /usr/local/bin/oci2gdsd /oci2gdsd-bin/oci2gdsd
+          chmod 0755 /oci2gdsd-bin/oci2gdsd
           oci2gdsd --registry-config /etc/oci2gdsd/config.yaml --json ensure \
             --ref "__MODEL_REF__" \
             --model-id "__MODEL_ID__" \
@@ -99,33 +103,58 @@ spec:
         - name: oci2gdsd-config
           mountPath: /etc/oci2gdsd
           readOnly: true
+        - name: oci2gdsd-bin
+          mountPath: /oci2gdsd-bin
       containers:
-      - name: oci2gdsd-daemon
-        image: __OCI2GDSD_IMAGE__
-        imagePullPolicy: IfNotPresent
-        command: ["/bin/sh", "-ec"]
-        args:
-        - |
-          set -eu
-          oci2gdsd --registry-config /etc/oci2gdsd/config.yaml serve \
-            --unix-socket /run/oci2gdsd/daemon.sock \
-            --socket-perms 0660
-        securityContext:
-          runAsNonRoot: false
-        volumeMounts:
-        - name: oci2gdsd-root
-          mountPath: __OCI2GDSD_ROOT_PATH__
-        - name: oci2gdsd-config
-          mountPath: /etc/oci2gdsd
-          readOnly: true
-        - name: oci2gdsd-run
-          mountPath: /run/oci2gdsd
       - name: pytorch-api
         image: __PYTORCH_RUNTIME_IMAGE__
         imagePullPolicy: IfNotPresent
         command: ["/bin/sh", "-ec"]
         args:
         - |
+          set -eu
+          if [ ! -e /usr/local/cuda/lib64/libcufile.so ] && [ -e /usr/local/cuda/lib64/libcufile.so.0 ]; then
+            ln -sf /usr/local/cuda/lib64/libcufile.so.0 /usr/local/cuda/lib64/libcufile.so
+          fi
+          if [ ! -e /usr/lib/x86_64-linux-gnu/libcufile.so ] && [ -e /usr/local/cuda/lib64/libcufile.so ]; then
+            ln -sf /usr/local/cuda/lib64/libcufile.so /usr/lib/x86_64-linux-gnu/libcufile.so
+          fi
+          if [ ! -e /usr/local/cuda/lib64/libcuda.so.1 ] && [ -e /usr/local/cuda/compat/libcuda.so.1 ]; then
+            ln -sf /usr/local/cuda/compat/libcuda.so.1 /usr/local/cuda/lib64/libcuda.so.1
+          fi
+          python - <<'PY_DEPS'
+          import importlib.util
+          import subprocess
+          import sys
+
+          wanted = {
+              "fastapi": "fastapi",
+              "pydantic": "pydantic",
+              "uvicorn": "uvicorn",
+              "transformers": "transformers",
+              "safetensors": "safetensors",
+          }
+          missing = [pkg for pkg, mod in wanted.items() if importlib.util.find_spec(mod) is None]
+          if missing:
+              subprocess.check_call([
+                  sys.executable,
+                  "-m",
+                  "pip",
+                  "install",
+                  "--no-cache-dir",
+                  "--break-system-packages",
+                  *missing,
+              ])
+          PY_DEPS
+          /oci2gdsd-bin/oci2gdsd --registry-config /etc/oci2gdsd/config.yaml serve \
+            --unix-socket /run/oci2gdsd/daemon.sock \
+            --socket-perms 0660 &
+          daemon_pid="$!"
+          cleanup() {
+            kill "${daemon_pid}" 2>/dev/null || true
+            wait "${daemon_pid}" 2>/dev/null || true
+          }
+          trap cleanup EXIT INT TERM
           python - <<'PY'
           import json
           import os
@@ -1125,9 +1154,15 @@ spec:
         - name: oci2gdsd-root
           mountPath: __OCI2GDSD_ROOT_PATH__
           readOnly: false
+        - name: oci2gdsd-config
+          mountPath: /etc/oci2gdsd
+          readOnly: true
         - name: oci2gdsd-run
           mountPath: /run/oci2gdsd
           readOnly: false
+        - name: oci2gdsd-bin
+          mountPath: /oci2gdsd-bin
+          readOnly: true
 ---
 apiVersion: v1
 kind: Service

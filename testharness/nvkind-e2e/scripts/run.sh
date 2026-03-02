@@ -16,6 +16,7 @@ verify_gpu_pod
 validate_local_gds_loader
 
 build_and_load_oci2gdsd_image
+build_and_load_qwen_gds_runtime_image
 preload_workload_image
 if [[ -n "${MODEL_REF_OVERRIDE:-}" && -n "${MODEL_DIGEST_OVERRIDE:-}" ]]; then
   log "MODEL_REF_OVERRIDE and MODEL_DIGEST_OVERRIDE set; skipping local model packaging"

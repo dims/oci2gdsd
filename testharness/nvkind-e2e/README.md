@@ -27,7 +27,7 @@ make nvkind-e2e
 # Use a different model source
 HF_REPO=Qwen/Qwen3-0.6B HF_REVISION=main make nvkind-e2e
 
-# Override workload image (default uses the qwen-hello runtime image)
+# Override workload image (default: pytorch/pytorch:2.10.0-cuda12.8-cudnn9-runtime)
 PYTORCH_IMAGE=pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime make nvkind-e2e
 
 # Reuse an already pushed model artifact and skip package/push
@@ -47,11 +47,16 @@ PRELOAD_WORKLOAD_IMAGE=true make nvkind-e2e
 # Optional: pre-load the qwen-hello PyTorch runtime image into kind nodes (default false)
 PRELOAD_PYTORCH_RUNTIME_IMAGE=true make nvkind-e2e
 
-# Optional: require daemon IPC probe to report status=ok (default false)
+# Optional: require daemon IPC probe to report status=ok
+# (default: true when OCI2GDSD_ENABLE_GDS_IMAGE=true, otherwise false)
 REQUIRE_DAEMON_IPC_PROBE=true make nvkind-e2e
 
 # Build a GDS-capable oci2gdsd image for init/daemon containers
 OCI2GDSD_ENABLE_GDS_IMAGE=true REQUIRE_DAEMON_IPC_PROBE=true make nvkind-e2e
+
+# Build a dedicated qwen runtime image with oci2gdsd + libcufile and load it into kind
+# (default false; enable explicitly when needed)
+BUILD_QWEN_GDS_RUNTIME_IMAGE=true make nvkind-e2e
 
 # Or point to a custom Dockerfile for oci2gdsd image builds
 OCI2GDSD_DOCKERFILE=testharness/nvkind-e2e/Dockerfile.oci2gdsd.gds make nvkind-e2e

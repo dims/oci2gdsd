@@ -26,7 +26,7 @@ MODEL_REF_OVERRIDE="${MODEL_REF_OVERRIDE:-}"
 MODEL_DIGEST_OVERRIDE="${MODEL_DIGEST_OVERRIDE:-}"
 VALIDATE_QWEN_HELLO="${VALIDATE_QWEN_HELLO:-true}"
 VALIDATE_LOCAL_GDS="${VALIDATE_LOCAL_GDS:-true}"
-REQUIRE_DAEMON_IPC_PROBE="${REQUIRE_DAEMON_IPC_PROBE:-false}"
+REQUIRE_DAEMON_IPC_PROBE="${REQUIRE_DAEMON_IPC_PROBE:-}"
 
 OCI2GDSD_IMAGE="${OCI2GDSD_IMAGE:-oci2gdsd:e2e}"
 OCI2GDSD_ENABLE_GDS_IMAGE="${OCI2GDSD_ENABLE_GDS_IMAGE:-false}"
@@ -35,10 +35,17 @@ SKIP_OCI2GDSD_IMAGE_BUILD="${SKIP_OCI2GDSD_IMAGE_BUILD:-false}"
 SKIP_OCI2GDSD_IMAGE_LOAD="${SKIP_OCI2GDSD_IMAGE_LOAD:-false}"
 PACKAGER_IMAGE="${PACKAGER_IMAGE:-oci2gdsd-qwen3-packager:local}"
 VLLM_RUNTIME_IMAGE="${VLLM_RUNTIME_IMAGE:-nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1}"
-PYTORCH_RUNTIME_IMAGE="${PYTORCH_RUNTIME_IMAGE:-${VLLM_RUNTIME_IMAGE}}"
+PYTORCH_RUNTIME_IMAGE="${PYTORCH_RUNTIME_IMAGE:-pytorch/pytorch:2.10.0-cuda12.8-cudnn9-runtime}"
 PRELOAD_PYTORCH_RUNTIME_IMAGE="${PRELOAD_PYTORCH_RUNTIME_IMAGE:-${PRELOAD_VLLM_RUNTIME_IMAGE:-false}}"
 PRELOAD_WORKLOAD_IMAGE="${PRELOAD_WORKLOAD_IMAGE:-false}"
-PYTORCH_IMAGE="${PYTORCH_IMAGE:-${VLLM_RUNTIME_IMAGE}}"
+PYTORCH_IMAGE="${PYTORCH_IMAGE:-${PYTORCH_RUNTIME_IMAGE}}"
+QWEN_GDS_RUNTIME_IMAGE="${QWEN_GDS_RUNTIME_IMAGE:-oci2gdsd-qwen-runtime-gds:e2e}"
+BUILD_QWEN_GDS_RUNTIME_IMAGE="${BUILD_QWEN_GDS_RUNTIME_IMAGE:-false}"
+QWEN_GDS_RUNTIME_DOCKERFILE="${QWEN_GDS_RUNTIME_DOCKERFILE:-${REPO_ROOT}/examples/qwen-hello/Dockerfile.vllm-runtime-gds}"
+
+if [[ -z "${REQUIRE_DAEMON_IPC_PROBE}" ]]; then
+  REQUIRE_DAEMON_IPC_PROBE="${OCI2GDSD_ENABLE_GDS_IMAGE}"
+fi
 
 OCI2GDSD_ROOT_PATH="${OCI2GDSD_ROOT_PATH:-/var/lib/oci2gdsd}"
 
@@ -438,32 +445,47 @@ build_and_load_oci2gdsd_image() {
   fi
 }
 
+ensure_image_local_or_pull() {
+  local image="$1"
+  local max_tries="${2:-3}"
+  if docker image inspect "${image}" >/dev/null 2>&1; then
+    log "using local image ${image}"
+    return
+  fi
+  local tries=0
+  until docker pull "${image}"; do
+    tries=$((tries + 1))
+    if [[ "${tries}" -ge "${max_tries}" ]]; then
+      die "failed to pull image after ${max_tries} attempts: ${image}"
+    fi
+    warn "retrying image pull (${tries}/${max_tries}): ${image}"
+    sleep 5
+  done
+}
+
+build_and_load_qwen_gds_runtime_image() {
+  if [[ "${BUILD_QWEN_GDS_RUNTIME_IMAGE}" != "true" ]]; then
+    return
+  fi
+  [[ -f "${QWEN_GDS_RUNTIME_DOCKERFILE}" ]] || die "qwen gds runtime dockerfile not found: ${QWEN_GDS_RUNTIME_DOCKERFILE}"
+  log "building qwen gds runtime image ${QWEN_GDS_RUNTIME_IMAGE} using ${QWEN_GDS_RUNTIME_DOCKERFILE}"
+  docker build -f "${QWEN_GDS_RUNTIME_DOCKERFILE}" -t "${QWEN_GDS_RUNTIME_IMAGE}" "${REPO_ROOT}"
+  kind_load_image "${QWEN_GDS_RUNTIME_IMAGE}"
+  PYTORCH_RUNTIME_IMAGE="${QWEN_GDS_RUNTIME_IMAGE}"
+  export PYTORCH_RUNTIME_IMAGE
+  log "using qwen gds runtime image for qwen-hello: ${PYTORCH_RUNTIME_IMAGE}"
+}
+
 preload_workload_image() {
   if [[ "${PRELOAD_WORKLOAD_IMAGE}" != "true" ]]; then
     log "skipping pre-load for ${PYTORCH_IMAGE}; cluster will pull image on demand"
     return
   fi
-  local tries=0
   local max_tries=3
-  until docker pull "${PYTORCH_IMAGE}"; do
-    tries=$((tries + 1))
-    if [[ "${tries}" -ge "${max_tries}" ]]; then
-      die "failed to pull workload image after ${max_tries} attempts: ${PYTORCH_IMAGE}"
-    fi
-    warn "retrying workload image pull (${tries}/${max_tries}): ${PYTORCH_IMAGE}"
-    sleep 5
-  done
+  ensure_image_local_or_pull "${PYTORCH_IMAGE}" "${max_tries}"
   kind_load_image "${PYTORCH_IMAGE}"
   if [[ "${PRELOAD_PYTORCH_RUNTIME_IMAGE}" == "true" ]]; then
-    tries=0
-    until docker pull "${PYTORCH_RUNTIME_IMAGE}"; do
-      tries=$((tries + 1))
-      if [[ "${tries}" -ge "${max_tries}" ]]; then
-        die "failed to pull workload image after ${max_tries} attempts: ${PYTORCH_RUNTIME_IMAGE}"
-      fi
-      warn "retrying workload image pull (${tries}/${max_tries}): ${PYTORCH_RUNTIME_IMAGE}"
-      sleep 5
-    done
+    ensure_image_local_or_pull "${PYTORCH_RUNTIME_IMAGE}" "${max_tries}"
     kind_load_image "${PYTORCH_RUNTIME_IMAGE}"
   else
     log "skipping pre-load for ${PYTORCH_RUNTIME_IMAGE}; cluster will pull image on demand"

@@ -4,7 +4,7 @@
 
 1. Packaging `Qwen/Qwen3-0.6B` as an OCI artifact with `OCI-ModelProfile-v1`.
 2. Preloading model files with `oci2gdsd ensure` in an init container.
-3. Running an `oci2gdsd serve` sidecar to keep persistent GPU allocations alive for the pod lifetime.
+3. Running `oci2gdsd serve` inside the GPU application container, so daemon GPU-load/export paths can use the same allocated device.
 4. Running a FastAPI app that loads the model from local preloaded files using PyTorch + Transformers (offline mode).
 5. Exercising `torch.ops.oci2gds.read_into_tensor`, `torch.ops.oci2gds.load_profile`, and a daemon IPC handoff probe at startup.
 
@@ -12,7 +12,7 @@
 
 - Registry -> node-local OCI preload workflow.
 - Deterministic runtime startup from local files (no Hugging Face network fetch at app start).
-- Pod-local daemon API (`/v1/gpu/load`, `/v1/gpu/export`) for persistent allocation orchestration.
+- Pod-local daemon API (`/v1/gpu/load`, `/v1/gpu/export`) for persistent allocation orchestration (running in-process with the app container).
 - A runtime `oci2gds` probe path with:
   - optional native cuFile backend (JIT C++ extension build),
   - automatic Python fallback when native prerequisites are missing.
@@ -29,7 +29,8 @@ Model execution still uses framework-managed parameter loading from local files.
 - `oci-model-registry.yaml`: In-cluster Docker registry deployment/service.
 - `qwen-nvkind-hello-deployment.yaml.tpl`: Deployment template with:
   - `preload-model` init container (`oci2gdsd ensure`)
-  - `pytorch-api` container (FastAPI + PyTorch runtime)
+  - `pytorch-api` container (runs `oci2gdsd serve` + FastAPI + PyTorch runtime)
+- `Dockerfile.vllm-runtime-gds`: Optional qwen runtime image with `oci2gdsd` + `libcufile` for native probe experiments.
 - `qwen-packager-hello-world.md`: Local packager walkthrough.
 - `qwen-packager-nvkind-hello-world.md`: End-to-end nvkind walkthrough.
 
