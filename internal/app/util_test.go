@@ -1,6 +1,9 @@
 package app
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func TestParseByteSize(t *testing.T) {
 	tests := []struct {
@@ -56,5 +59,45 @@ func TestValidateShardName(t *testing.T) {
 		if err := ValidateShardName(name); err == nil {
 			t.Fatalf("expected invalid shard name %q", name)
 		}
+	}
+}
+
+func TestValidateModelID(t *testing.T) {
+	valid := []string{
+		"demo-model",
+		"qwen3-0.6b",
+		"model_01",
+	}
+	for _, id := range valid {
+		if err := ValidateModelID(id); err != nil {
+			t.Fatalf("expected valid model id %q, got error: %v", id, err)
+		}
+	}
+
+	invalid := []string{
+		"",
+		".",
+		"..",
+		"../escape",
+		"dir/file",
+		`dir\file`,
+		"/abs/path",
+	}
+	for _, id := range invalid {
+		if err := ValidateModelID(id); err == nil {
+			t.Fatalf("expected invalid model id %q", id)
+		}
+	}
+}
+
+func TestEnsurePathWithinRoot(t *testing.T) {
+	root := filepath.Join("/tmp", "oci2gdsd", "models")
+	okPath := filepath.Join(root, "demo", "sha256-abc")
+	if err := ensurePathWithinRoot(root, okPath); err != nil {
+		t.Fatalf("expected in-root path to pass, got %v", err)
+	}
+	outside := filepath.Join("/tmp", "oci2gdsd", "other")
+	if err := ensurePathWithinRoot(root, outside); err == nil {
+		t.Fatalf("expected out-of-root path to fail")
 	}
 }

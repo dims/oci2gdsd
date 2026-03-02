@@ -61,7 +61,12 @@ func (m *LockManager) Acquire(ctx context.Context, key string, wait bool) (unloc
 		select {
 		case <-ctx.Done():
 			_ = f.Close()
-			return nil, false, ctx.Err()
+			waitErr := ctx.Err()
+			message := "model lock wait canceled"
+			if errors.Is(waitErr, context.DeadlineExceeded) {
+				message = "timed out waiting for model lock"
+			}
+			return nil, false, NewAppError(ExitPolicy, ReasonLeaseConflict, message, waitErr)
 		case <-time.After(200 * time.Millisecond):
 		}
 	}

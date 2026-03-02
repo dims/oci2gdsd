@@ -161,6 +161,18 @@ func (s *Service) Recover() error {
 		return err
 	}
 	for _, rec := range records {
+		if rec.Path != "" {
+			if err := ensurePathWithinRoot(s.cfg.ModelRoot, rec.Path); err != nil {
+				rec.Status = StateFailed
+				rec.LastError = ReasonStateDBCorrupt
+				rec.LastErrorMessage = "recovery found model path outside configured model_root"
+				if putErr := s.store.Put(&rec); putErr != nil {
+					return putErr
+				}
+				_ = NewJournal(s.cfg.JournalDir, rec.ModelID, rec.ManifestDigest).Delete()
+				continue
+			}
+		}
 		journal := NewJournal(s.cfg.JournalDir, rec.ModelID, rec.ManifestDigest)
 		markers, markerErr := journal.Markers()
 		if markerErr != nil {
@@ -227,6 +239,9 @@ func (s *Service) Ensure(ctx context.Context, req EnsureRequest) (EnsureResult, 
 	if strings.TrimSpace(req.ModelID) == "" {
 		return EnsureResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "--model-id is required", nil)
 	}
+	if err := ValidateModelID(req.ModelID); err != nil {
+		return EnsureResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "invalid --model-id", err)
+	}
 	if req.StrictDirectPath {
 		// Standalone mode keeps this guard explicit to prevent silent downgrades.
 		if strings.HasPrefix(s.cfg.ModelRoot, "/dev/shm") || strings.Contains(s.cfg.ModelRoot, "tmpfs") {
@@ -261,6 +276,11 @@ func (s *Service) Ensure(ctx context.Context, req EnsureRequest) (EnsureResult, 
 	if err != nil {
 		return EnsureResult{}, err
 	}
+	if ok && existing.Path != "" {
+		if err := ensurePathWithinRoot(s.cfg.ModelRoot, existing.Path); err != nil {
+			return EnsureResult{}, NewAppError(ExitStateCorrupt, ReasonStateDBCorrupt, "existing model path escapes configured model_root", err)
+		}
+	}
 	if ok && existing.Status == StateReady {
 		if ready, _, verifyErr := s.verifyPublishedPath(existing.Path); verifyErr == nil && ready {
 			existing.AcquireLease(req.LeaseHolder)
@@ -282,12 +302,17 @@ func (s *Service) Ensure(ctx context.Context, req EnsureRequest) (EnsureResult, 
 		}
 	}
 
+	finalPath := modelRootPath(s.cfg.ModelRoot, req.ModelID, manifestDigest)
+	if err := ensurePathWithinRoot(s.cfg.ModelRoot, finalPath); err != nil {
+		return EnsureResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "computed model path escapes configured model_root", err)
+	}
+
 	record := &storepkg.ModelRecord{
 		Key:            key,
 		ModelID:        req.ModelID,
 		ManifestDigest: manifestDigest,
 		Status:         StateResolving,
-		Path:           modelRootPath(s.cfg.ModelRoot, req.ModelID, manifestDigest),
+		Path:           finalPath,
 		CreatedAt:      time.Now().UTC(),
 		UpdatedAt:      time.Now().UTC(),
 		LastAccessedAt: time.Now().UTC(),
@@ -370,6 +395,9 @@ func (s *Service) Ensure(ctx context.Context, req EnsureRequest) (EnsureResult, 
 	}
 
 	txnPath := tmpTxnPath(s.cfg.TmpRoot, req.ModelID, manifestDigest)
+	if err := ensurePathWithinRoot(s.cfg.TmpRoot, txnPath); err != nil {
+		return fail(ReasonValidationFailed, "computed transaction path escapes configured tmp_root", err)
+	}
 	stagingRoot := filepath.Join(txnPath, "publish")
 	metadataDir := filepath.Join(stagingRoot, "metadata")
 	shardsDir := filepath.Join(stagingRoot, "shards")
@@ -453,7 +481,7 @@ func (s *Service) Ensure(ctx context.Context, req EnsureRequest) (EnsureResult, 
 		return EnsureResult{}, err
 	}
 
-	finalPath := record.Path
+	finalPath = record.Path
 	if fileExists(finalPath) {
 		ok, reason, verifyErr := s.verifyPublishedPath(finalPath)
 		if verifyErr != nil || !ok {
@@ -545,6 +573,12 @@ func (s *Service) downloadBlob(ctx context.Context, blob RemoteBlob, dst string,
 }
 
 func (s *Service) Status(modelID, manifestDigest string) (StatusResult, error) {
+	if strings.TrimSpace(modelID) == "" || strings.TrimSpace(manifestDigest) == "" {
+		return StatusResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "--model-id and --digest are required", nil)
+	}
+	if err := ValidateModelID(modelID); err != nil {
+		return StatusResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "invalid --model-id", err)
+	}
 	key := modelKey(modelID, manifestDigest)
 	rec, ok, err := s.store.Get(key)
 	if err != nil {
@@ -603,6 +637,9 @@ func (s *Service) Release(ctx context.Context, modelID, manifestDigest, leaseHol
 	if strings.TrimSpace(modelID) == "" || strings.TrimSpace(manifestDigest) == "" {
 		return ReleaseResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "--model-id and --digest are required", nil)
 	}
+	if err := ValidateModelID(modelID); err != nil {
+		return ReleaseResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "invalid --model-id", err)
+	}
 	if strings.TrimSpace(leaseHolder) == "" {
 		return ReleaseResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "--lease-holder is required", nil)
 	}
@@ -625,6 +662,11 @@ func (s *Service) Release(ctx context.Context, modelID, manifestDigest, leaseHol
 			RemainingLeases: 0,
 			ReasonCode:      ReasonNone,
 		}, nil
+	}
+	if rec.Path != "" {
+		if err := ensurePathWithinRoot(s.cfg.ModelRoot, rec.Path); err != nil {
+			return ReleaseResult{}, NewAppError(ExitStateCorrupt, ReasonStateDBCorrupt, "refusing release cleanup for path outside configured model_root", err)
+		}
 	}
 	rec.Status = StateReleasing
 	remaining := rec.ReleaseLease(leaseHolder)
@@ -686,6 +728,9 @@ func (s *Service) GC(policy string, minFreeBytes int64, dryRun bool) (GCResult, 
 		}
 		if rec.Path == "" {
 			continue
+		}
+		if err := ensurePathWithinRoot(s.cfg.ModelRoot, rec.Path); err != nil {
+			return GCResult{}, NewAppError(ExitStateCorrupt, ReasonStateDBCorrupt, "gc found model path outside configured model_root", err)
 		}
 		if rec.Status != StateReady && rec.Status != StateReleased && rec.Status != StateFailed {
 			continue
@@ -751,6 +796,10 @@ func (s *Service) GC(policy string, minFreeBytes int64, dryRun bool) (GCResult, 
 			unlock()
 			continue
 		}
+		if err := ensurePathWithinRoot(s.cfg.ModelRoot, rec.Path); err != nil {
+			unlock()
+			return result, NewAppError(ExitStateCorrupt, ReasonStateDBCorrupt, "gc refused path outside configured model_root", err)
+		}
 		if len(rec.Leases) > 0 || rec.Path == "" || (rec.Status != StateReady && rec.Status != StateReleased && rec.Status != StateFailed) || (rec.Status != StateFailed && !fileExists(readyMarkerPath(rec.Path))) {
 			unlock()
 			continue
@@ -804,6 +853,9 @@ func (s *Service) Verify(path string, modelID string, manifestDigest string) (Ve
 	if strings.TrimSpace(path) == "" {
 		if modelID == "" || manifestDigest == "" {
 			return VerifyResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "either --path or (--model-id and --digest) are required", nil)
+		}
+		if err := ValidateModelID(modelID); err != nil {
+			return VerifyResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "invalid --model-id", err)
 		}
 		key := modelKey(modelID, manifestDigest)
 		rec, ok, err := s.store.Get(key)

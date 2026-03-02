@@ -60,6 +60,56 @@ func ValidateShardName(name string) error {
 	return nil
 }
 
+func ValidateModelID(modelID string) error {
+	id := strings.TrimSpace(modelID)
+	if id == "" {
+		return errors.New("model id is empty")
+	}
+	if id == "." || id == ".." {
+		return fmt.Errorf("model id %q is not allowed", modelID)
+	}
+	if filepath.IsAbs(id) {
+		return fmt.Errorf("model id %q must not be absolute", modelID)
+	}
+	if filepath.Base(id) != id {
+		return fmt.Errorf("model id %q must be a single path component", modelID)
+	}
+	if strings.ContainsAny(id, `/\`) {
+		return fmt.Errorf("model id %q contains path separators", modelID)
+	}
+	return nil
+}
+
+func ensurePathWithinRoot(root, path string) error {
+	r := strings.TrimSpace(root)
+	p := strings.TrimSpace(path)
+	if r == "" {
+		return errors.New("root path is empty")
+	}
+	if p == "" {
+		return errors.New("target path is empty")
+	}
+	absRoot, err := filepath.Abs(filepath.Clean(r))
+	if err != nil {
+		return fmt.Errorf("failed to resolve root path: %w", err)
+	}
+	absPath, err := filepath.Abs(filepath.Clean(p))
+	if err != nil {
+		return fmt.Errorf("failed to resolve target path: %w", err)
+	}
+	rel, err := filepath.Rel(absRoot, absPath)
+	if err != nil {
+		return fmt.Errorf("failed to compare root and target paths: %w", err)
+	}
+	if rel == "." {
+		return nil
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return fmt.Errorf("target path %q escapes configured root %q", absPath, absRoot)
+	}
+	return nil
+}
+
 func tmpTxnPath(tmpRoot, modelID, manifestDigest string) string {
 	token := shortToken(modelID + ":" + manifestDigest + ":" + time.Now().UTC().Format(time.RFC3339Nano))
 	return filepath.Join(tmpRoot, modelID, digestToPathComponent(manifestDigest), token)

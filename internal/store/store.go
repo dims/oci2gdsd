@@ -78,7 +78,26 @@ func (s *StateStore) Init() error {
 	return lockFile.Close()
 }
 
-func (s *StateStore) WithLockedDB(fn func(db *stateDB) error) error {
+func (s *StateStore) withLockedRead(fn func(db *stateDB) error) error {
+	lockFile, err := os.OpenFile(s.lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return apperr.NewAppError(apperr.ExitFilesystem, apperr.ReasonFilesystemError, "failed to open state lock", err)
+	}
+	defer lockFile.Close()
+
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_SH); err != nil {
+		return apperr.NewAppError(apperr.ExitFilesystem, apperr.ReasonFilesystemError, "failed to lock state db", err)
+	}
+	defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+
+	db, err := s.load()
+	if err != nil {
+		return err
+	}
+	return fn(db)
+}
+
+func (s *StateStore) withLockedWrite(fn func(db *stateDB) error) error {
 	lockFile, err := os.OpenFile(s.lockPath, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return apperr.NewAppError(apperr.ExitFilesystem, apperr.ReasonFilesystemError, "failed to open state lock", err)
@@ -101,6 +120,10 @@ func (s *StateStore) WithLockedDB(fn func(db *stateDB) error) error {
 		return err
 	}
 	return nil
+}
+
+func (s *StateStore) WithLockedDB(fn func(db *stateDB) error) error {
+	return s.withLockedWrite(fn)
 }
 
 func (s *StateStore) load() (*stateDB, error) {
@@ -139,7 +162,7 @@ func (s *StateStore) save(db *stateDB) error {
 
 func (s *StateStore) Get(key string) (*ModelRecord, bool, error) {
 	var out *ModelRecord
-	err := s.WithLockedDB(func(db *stateDB) error {
+	err := s.withLockedRead(func(db *stateDB) error {
 		rec, ok := db.Models[key]
 		if !ok {
 			return nil
@@ -162,7 +185,7 @@ func (s *StateStore) Put(rec *ModelRecord) error {
 	if rec == nil {
 		return errors.New("nil model record")
 	}
-	return s.WithLockedDB(func(db *stateDB) error {
+	return s.withLockedWrite(func(db *stateDB) error {
 		now := time.Now().UTC()
 		if rec.CreatedAt.IsZero() {
 			rec.CreatedAt = now
@@ -179,7 +202,7 @@ func (s *StateStore) Put(rec *ModelRecord) error {
 }
 
 func (s *StateStore) Delete(key string) error {
-	return s.WithLockedDB(func(db *stateDB) error {
+	return s.withLockedWrite(func(db *stateDB) error {
 		delete(db.Models, key)
 		return nil
 	})
@@ -187,7 +210,7 @@ func (s *StateStore) Delete(key string) error {
 
 func (s *StateStore) List() ([]ModelRecord, error) {
 	records := make([]ModelRecord, 0)
-	err := s.WithLockedDB(func(db *stateDB) error {
+	err := s.withLockedRead(func(db *stateDB) error {
 		for _, rec := range db.Models {
 			cp := *rec
 			cp.Leases = append([]Lease(nil), rec.Leases...)
@@ -208,7 +231,7 @@ func (s *StateStore) List() ([]ModelRecord, error) {
 }
 
 func (s *StateStore) UpsertWithLock(key string, fn func(rec *ModelRecord) error) error {
-	return s.WithLockedDB(func(db *stateDB) error {
+	return s.withLockedWrite(func(db *stateDB) error {
 		rec, ok := db.Models[key]
 		if !ok {
 			return fmt.Errorf("record %s not found", key)

@@ -1,8 +1,14 @@
 package app
 
 import (
+	"context"
 	"math"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+
+	storepkg "github.com/dims/oci2gdsd/internal/store"
 )
 
 func TestSumShardSizesOverflow(t *testing.T) {
@@ -21,5 +27,75 @@ func TestSumShardSizesRejectsNegative(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("expected negative size error")
+	}
+}
+
+func TestEnsureRejectsInvalidModelID(t *testing.T) {
+	manifest := "sha256:" + strings.Repeat("a", 64)
+	ref := "registry.example.com/models/demo@" + manifest
+	fetcher := &fakeEnsureFetcher{
+		fetchFn: func(_ string) (*FetchedModel, error) {
+			t.Fatalf("fetcher must not be called for invalid model id")
+			return nil, nil
+		},
+	}
+	svc := newEnsureTestService(t, fetcher)
+
+	_, err := svc.Ensure(context.Background(), EnsureRequest{
+		Ref:         ref,
+		ModelID:     "../escape",
+		LeaseHolder: "holder-a",
+		Wait:        true,
+	})
+	if err == nil {
+		t.Fatalf("expected invalid model-id failure")
+	}
+	appErr := AsAppError(err)
+	if appErr.Reason != ReasonValidationFailed {
+		t.Fatalf("expected reason %s, got %s", ReasonValidationFailed, appErr.Reason)
+	}
+	if fetcher.CallCount() != 0 {
+		t.Fatalf("expected fetcher to not be called, got %d calls", fetcher.CallCount())
+	}
+}
+
+func TestReleaseRejectsInvalidModelID(t *testing.T) {
+	svc := newStateOnlyService(t)
+	_, err := svc.Release(context.Background(), "../escape", "sha256:"+strings.Repeat("b", 64), "holder-a", false)
+	if err == nil {
+		t.Fatalf("expected invalid model-id failure")
+	}
+	appErr := AsAppError(err)
+	if appErr.Reason != ReasonValidationFailed {
+		t.Fatalf("expected reason %s, got %s", ReasonValidationFailed, appErr.Reason)
+	}
+}
+
+func TestGCRejectsRecordPathOutsideModelRoot(t *testing.T) {
+	svc := newStateOnlyService(t)
+	manifest := "sha256:" + strings.Repeat("c", 64)
+	outside := filepath.Join(t.TempDir(), "outside", "model")
+	rec := &storepkg.ModelRecord{
+		Key:            modelKey("demo", manifest),
+		ModelID:        "demo",
+		ManifestDigest: manifest,
+		Status:         StateReady,
+		Path:           outside,
+		Bytes:          1024,
+		CreatedAt:      time.Now().UTC(),
+		UpdatedAt:      time.Now().UTC(),
+		LastAccessedAt: time.Now().UTC(),
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatalf("put record: %v", err)
+	}
+
+	_, err := svc.GC("lru_no_lease", math.MaxInt64/4, false)
+	if err == nil {
+		t.Fatalf("expected gc failure for out-of-root path")
+	}
+	appErr := AsAppError(err)
+	if appErr.Reason != ReasonStateDBCorrupt {
+		t.Fatalf("expected reason %s, got %s", ReasonStateDBCorrupt, appErr.Reason)
 	}
 }
