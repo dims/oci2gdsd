@@ -6,6 +6,7 @@ help:
 	@echo "  build               Build oci2gdsd CLI"
 	@echo "  test                Run Go tests"
 	@echo "  nvkind-e2e          Run nvkind Kubernetes GPU e2e harness"
+	@echo "  nvkind-e2e-qwen-quick  Fast qwen-hello redeploy/probe loop"
 	@echo "  nvkind-e2e-clean    Delete nvkind cluster and local harness artifacts"
 
 .PHONY: build
@@ -19,6 +20,10 @@ test:
 .PHONY: nvkind-e2e
 nvkind-e2e:
 	./testharness/nvkind-e2e/scripts/run.sh
+
+.PHONY: nvkind-e2e-qwen-quick
+nvkind-e2e-qwen-quick:
+	./testharness/nvkind-e2e/scripts/quick-qwen.sh
 
 .PHONY: nvkind-e2e-clean
 nvkind-e2e-clean:

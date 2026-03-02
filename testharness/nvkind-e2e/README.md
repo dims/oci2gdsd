@@ -21,6 +21,29 @@ From repo root:
 make nvkind-e2e
 ```
 
+## Quick iteration loop
+
+After one full `make nvkind-e2e` run has already created the cluster and packaged/pushed the model, use:
+
+```bash
+make nvkind-e2e-qwen-quick
+```
+
+This script only:
+
+- re-renders and reapplies `examples/qwen-hello/qwen-nvkind-hello-deployment.yaml.tpl`
+- waits for rollout
+- probes `/healthz` and `/chat`
+- writes logs to `testharness/nvkind-e2e/work/results/qwen-hello.log`
+
+If you want to override the model identity explicitly:
+
+```bash
+MODEL_REF_OVERRIDE=oci-model-registry.oci2gdsd-registry.svc.cluster.local:5000/models/qwen3-0.6b@sha256:... \
+MODEL_DIGEST_OVERRIDE=sha256:... \
+make nvkind-e2e-qwen-quick
+```
+
 ## Common overrides
 
 ```bash
