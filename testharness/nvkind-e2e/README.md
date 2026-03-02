@@ -56,6 +56,11 @@ OCI2GDSD_ENABLE_GDS_IMAGE=true REQUIRE_DAEMON_IPC_PROBE=true make nvkind-e2e
 # Or point to a custom Dockerfile for oci2gdsd image builds
 OCI2GDSD_DOCKERFILE=testharness/nvkind-e2e/Dockerfile.oci2gdsd.gds make nvkind-e2e
 
+# Use a prebuilt oci2gdsd image and skip local build/load into kind
+# (useful for large CUDA/GDS images pushed to a registry)
+SKIP_OCI2GDSD_IMAGE_BUILD=true SKIP_OCI2GDSD_IMAGE_LOAD=true \
+OCI2GDSD_IMAGE=<registry>/<repo>:<tag> make nvkind-e2e
+
 # Force namespace/cluster names
 CLUSTER_NAME=oci2gdsd-e2e E2E_NAMESPACE=oci2gdsd-e2e make nvkind-e2e
 

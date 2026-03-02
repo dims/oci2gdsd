@@ -31,6 +31,8 @@ REQUIRE_DAEMON_IPC_PROBE="${REQUIRE_DAEMON_IPC_PROBE:-false}"
 OCI2GDSD_IMAGE="${OCI2GDSD_IMAGE:-oci2gdsd:e2e}"
 OCI2GDSD_ENABLE_GDS_IMAGE="${OCI2GDSD_ENABLE_GDS_IMAGE:-false}"
 OCI2GDSD_DOCKERFILE="${OCI2GDSD_DOCKERFILE:-}"
+SKIP_OCI2GDSD_IMAGE_BUILD="${SKIP_OCI2GDSD_IMAGE_BUILD:-false}"
+SKIP_OCI2GDSD_IMAGE_LOAD="${SKIP_OCI2GDSD_IMAGE_LOAD:-false}"
 PACKAGER_IMAGE="${PACKAGER_IMAGE:-oci2gdsd-qwen3-packager:local}"
 VLLM_RUNTIME_IMAGE="${VLLM_RUNTIME_IMAGE:-nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1}"
 PYTORCH_RUNTIME_IMAGE="${PYTORCH_RUNTIME_IMAGE:-${VLLM_RUNTIME_IMAGE}}"
@@ -422,10 +424,18 @@ build_and_load_oci2gdsd_image() {
       dockerfile="${HARNESS_DIR}/Dockerfile.oci2gdsd"
     fi
   fi
-  [[ -f "${dockerfile}" ]] || die "oci2gdsd dockerfile not found: ${dockerfile}"
-  log "building oci2gdsd image ${OCI2GDSD_IMAGE} using ${dockerfile}"
-  docker build -f "${dockerfile}" -t "${OCI2GDSD_IMAGE}" "${REPO_ROOT}"
-  kind_load_image "${OCI2GDSD_IMAGE}"
+  if [[ "${SKIP_OCI2GDSD_IMAGE_BUILD}" != "true" ]]; then
+    [[ -f "${dockerfile}" ]] || die "oci2gdsd dockerfile not found: ${dockerfile}"
+    log "building oci2gdsd image ${OCI2GDSD_IMAGE} using ${dockerfile}"
+    docker build -f "${dockerfile}" -t "${OCI2GDSD_IMAGE}" "${REPO_ROOT}"
+  else
+    log "skipping oci2gdsd image build for ${OCI2GDSD_IMAGE}"
+  fi
+  if [[ "${SKIP_OCI2GDSD_IMAGE_LOAD}" != "true" ]]; then
+    kind_load_image "${OCI2GDSD_IMAGE}"
+  else
+    log "skipping kind image load for ${OCI2GDSD_IMAGE}"
+  fi
 }
 
 preload_workload_image() {
