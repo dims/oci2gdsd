@@ -5,7 +5,8 @@ PAYLOAD_DIR=""
 OCI_REF=""
 ARTIFACT_TYPE="application/vnd.acme.model.v1"
 CONFIG_MEDIA_TYPE="application/vnd.acme.model.config.v1+json"
-SHARD_MEDIA_TYPE="application/vnd.acme.model.shard.v1+safetensors"
+WEIGHT_MEDIA_TYPE="application/vnd.acme.model.shard.v1+safetensors"
+RUNTIME_FILE_MEDIA_TYPE="application/vnd.acme.model.file.v1"
 OUT_DIR=""
 PLAIN_HTTP="false"
 
@@ -16,7 +17,8 @@ usage: $0 --payload-dir <dir> --oci-ref <registry/repo:tag> [--out-dir <dir>] [-
 Pushes the payload as an OCI artifact with:
   artifactType=${ARTIFACT_TYPE}
   config mediaType=${CONFIG_MEDIA_TYPE}
-  shard mediaType=${SHARD_MEDIA_TYPE}
+  weight mediaType=${WEIGHT_MEDIA_TYPE}
+  runtime file mediaType=${RUNTIME_FILE_MEDIA_TYPE}
 EOF
 }
 
@@ -72,17 +74,21 @@ if [[ ! -f "${CONFIG_PATH}" ]]; then
   exit 1
 fi
 
-mapfile -t SHARDS < <(find "${PAYLOAD_DIR}/shards" -maxdepth 1 -type f -name '*.safetensors' | sort)
+mapfile -t SHARDS < <(find "${PAYLOAD_DIR}/shards" -maxdepth 1 -type f | sort)
 if [[ "${#SHARDS[@]}" -eq 0 ]]; then
-  echo "no shard files found in ${PAYLOAD_DIR}/shards" >&2
+  echo "no artifact files found in ${PAYLOAD_DIR}/shards" >&2
   exit 1
 fi
 
 declare -a PUSH_ARGS
 for shard in "${SHARDS[@]}"; do
   base="$(basename "${shard}")"
-  PUSH_ARGS+=("${shard}:${SHARD_MEDIA_TYPE}")
-  echo "including shard ${base}"
+  media_type="${RUNTIME_FILE_MEDIA_TYPE}"
+  if [[ "${base}" == *.safetensors ]]; then
+    media_type="${WEIGHT_MEDIA_TYPE}"
+  fi
+  PUSH_ARGS+=("${shard}:${media_type}")
+  echo "including artifact ${base} (${media_type})"
 done
 
 declare -a ORAS_COMMON_ARGS

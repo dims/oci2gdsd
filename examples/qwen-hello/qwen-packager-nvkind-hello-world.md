@@ -3,7 +3,8 @@
 This example uses:
 - Docker Hub packager image: `docker.io/dims/oci2gdsd-qwen3-packager:latest`
 - `nvkind` for a local GPU Kubernetes cluster
-- `oci2gdsd` init container to preload model shards before app start
+- `oci2gdsd` init container to preload model files before app start
+- vLLM runtime in offline mode using the OCI-preloaded local model directory
 
 ## 1. Create an nvkind cluster
 
@@ -141,7 +142,9 @@ curl -sS -X POST http://127.0.0.1:18080/chat \
   -d '{"prompt":"Explain in one sentence what GPU model preloading helps with."}' | jq .
 ```
 
-You should get JSON with a non-empty `answer` field.
+You should get JSON with a non-empty `answer` field. `model_name` will be a
+local path (for example, `/tmp/oci2gdsd-local-model`), confirming vLLM loaded
+from the OCI-preloaded files instead of pulling from Hugging Face.
 
 ## 6. Cleanup
 

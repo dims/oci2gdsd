@@ -5,8 +5,10 @@ Hugging Face into an OCI artifact that matches `oci2gdsd` expectations:
 
 - `artifactType`: `application/vnd.acme.model.v1`
 - config media type: `application/vnd.acme.model.config.v1+json`
-- one layer per safetensors shard
-- deterministic shard naming (`model-00001-of-000NN.safetensors`)
+- one layer per payload file under `shards/`:
+  - model weight shards (`*.safetensors`)
+  - runtime model files (`config.json`, tokenizer files, and related metadata)
+- original Hugging Face shard filenames are preserved for index compatibility
 
 The resulting artifact is digest-pinnable and consumable by:
 
@@ -68,4 +70,5 @@ For command semantics and config behavior, use:
   (`resolved-manifest-digest`) to avoid impossible self-referential digest loops.
   The actual manifest digest remains the runtime immutable key.
 - This workflow intentionally ignores legacy `.bin` checkpoints and uses
-  safetensors shards as the primary payload.
+  safetensors shards as the primary payload, with required runtime metadata
+  included so engines can load from the OCI-preloaded local directory.

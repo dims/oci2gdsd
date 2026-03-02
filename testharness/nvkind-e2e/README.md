@@ -9,7 +9,7 @@ It is designed to run directly by an operator on a machine and does not require 
 - Local OCI registry in-cluster for repeatable artifact tests.
 - `oci2gdsd ensure/status/verify` in an init container.
 - PyTorch container reading preloaded model files and running CUDA compute.
-- Validation of `examples/qwen-hello` FastAPI + vLLM deployment by issuing a real `/chat` request.
+- Validation of `examples/qwen-hello` FastAPI + vLLM deployment by issuing a real `/chat` request against a vLLM instance that loads from OCI-preloaded local model files.
 - `oci2gdsd release + gc + status` on the same node as workload pod.
 
 ## Run

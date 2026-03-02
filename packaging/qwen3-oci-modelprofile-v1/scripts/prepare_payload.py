@@ -40,6 +40,34 @@ def find_safetensor_shards(source_dir: Path) -> List[Path]:
     return shards
 
 
+def find_runtime_files(source_dir: Path) -> List[Path]:
+    patterns = [
+        "config.json",
+        "generation_config.json",
+        "tokenizer.json",
+        "tokenizer.model",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "vocab.json",
+        "merges.txt",
+        "*.tiktoken",
+        "*.safetensors.index.json",
+        "README.md",
+    ]
+    files: List[Path] = []
+    seen = set()
+    for pattern in patterns:
+        for src in sorted(source_dir.glob(pattern), key=lambda p: p.name):
+            if not src.is_file():
+                continue
+            key = src.name
+            if key in seen:
+                continue
+            files.append(src)
+            seen.add(key)
+    return files
+
+
 def copy_metadata(source_dir: Path, metadata_dir: Path) -> None:
     metadata_dir.mkdir(parents=True, exist_ok=True)
     patterns = [
@@ -102,8 +130,10 @@ def main() -> int:
     shard_entries: List[Dict] = []
     total = len(shards)
     for idx, src in enumerate(shards, start=1):
-        normalized_name = f"model-{idx:05d}-of-{total:05d}.safetensors"
+        normalized_name = src.name
         dst = shards_dir / normalized_name
+        if dst.exists():
+            raise RuntimeError(f"duplicate shard filename in source snapshot: {normalized_name}")
         shutil.copy2(src, dst)
         digest = sha256_file(dst)
         size = dst.stat().st_size
@@ -114,8 +144,29 @@ def main() -> int:
                 "digest": digest,
                 "size": size,
                 "ordinal": idx,
+                "kind": "weight",
             }
         )
+
+    ordinal = total + 1
+    for src in find_runtime_files(source_dir):
+        if (shards_dir / src.name).exists():
+            continue
+        dst = shards_dir / src.name
+        shutil.copy2(src, dst)
+        digest = sha256_file(dst)
+        size = dst.stat().st_size
+        shard_entries.append(
+            {
+                "name": src.name,
+                "sourceName": src.name,
+                "digest": digest,
+                "size": size,
+                "ordinal": ordinal,
+                "kind": "runtime",
+            }
+        )
+        ordinal += 1
 
     copy_metadata(source_dir, metadata_dir)
     model_config = build_model_config(args, shard_entries)
@@ -128,7 +179,9 @@ def main() -> int:
         "modelRevision": args.model_revision,
         "sourceDir": str(source_dir),
         "payloadDir": str(payload_dir),
-        "shardCount": total,
+        "shardCount": len(shard_entries),
+        "weightShardCount": total,
+        "runtimeFileCount": len(shard_entries) - total,
         "totalBytes": sum(int(s["size"]) for s in shard_entries),
     }
     with (payload_dir / "payload-manifest.json").open("w", encoding="utf-8") as f:

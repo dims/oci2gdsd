@@ -105,6 +105,7 @@ spec:
           python - <<'PY'
           import os
           import json
+          import shutil
           from pathlib import Path
           from fastapi import FastAPI, HTTPException
           from pydantic import BaseModel
@@ -115,8 +116,55 @@ spec:
           if not (model_root / "READY").exists():
               raise RuntimeError("READY marker missing")
           meta = json.loads((model_root / "metadata" / "model.json").read_text(encoding="utf-8"))
-          source = meta.get("profile", {}).get("source", {})
-          model_name = os.environ.get("VLLM_MODEL_NAME", "").strip() or source.get("repoId", "Qwen/Qwen3-0.6B")
+          profile = meta.get("profile", {})
+          source = profile.get("source", {})
+          shard_entries = sorted(
+              profile.get("shards", []),
+              key=lambda s: int(s.get("ordinal", 0)),
+          )
+          if not shard_entries:
+              raise RuntimeError("profile.shards is empty; cannot build local runtime model directory")
+
+          runtime_dir = Path(os.environ.get("VLLM_LOCAL_MODEL_DIR", "/tmp/oci2gdsd-local-model"))
+          if runtime_dir.exists():
+              shutil.rmtree(runtime_dir)
+          runtime_dir.mkdir(parents=True, exist_ok=True)
+
+          weights_found = 0
+          for shard in shard_entries:
+              name = str(shard.get("name", "")).strip()
+              if not name:
+                  raise RuntimeError("profile shard name is empty")
+              src = model_root / "shards" / name
+              if not src.exists():
+                  raise RuntimeError(f"expected shard file missing: {src}")
+              dst = runtime_dir / name
+              os.symlink(src, dst)
+              if name.endswith(".safetensors"):
+                  weights_found += 1
+
+          metadata_dir = model_root / "metadata"
+          if metadata_dir.is_dir():
+              for src in sorted(metadata_dir.iterdir(), key=lambda p: p.name):
+                  if not src.is_file() or src.name == "model.json":
+                      continue
+                  dst = runtime_dir / src.name
+                  if not dst.exists():
+                      os.symlink(src, dst)
+
+          if not (runtime_dir / "config.json").exists():
+              raise RuntimeError(f"config.json missing in local runtime dir: {runtime_dir}")
+          tokenizer_candidates = [
+              "tokenizer.json",
+              "tokenizer.model",
+              "vocab.json",
+          ]
+          if not any((runtime_dir / name).exists() for name in tokenizer_candidates):
+              raise RuntimeError(f"tokenizer artifacts missing in local runtime dir: {runtime_dir}")
+          if weights_found == 0:
+              raise RuntimeError(f"no .safetensors files found in local runtime dir: {runtime_dir}")
+
+          model_name = str(runtime_dir)
           sampling_params = SamplingParams(
               max_tokens=int(os.environ.get("MAX_TOKENS", "256")),
               temperature=float(os.environ.get("TEMPERATURE", "0.7")),
@@ -133,6 +181,7 @@ spec:
               return {
                   "status": "ok",
                   "model_name": model_name,
+                  "source_repo": source.get("repoId", ""),
                   "model_id": meta.get("modelId"),
                   "manifest_digest": meta.get("manifestDigest"),
               }
@@ -147,6 +196,7 @@ spec:
               return {
                   "answer": text,
                   "model_name": model_name,
+                  "source_repo": source.get("repoId", ""),
                   "model_id": meta.get("modelId"),
                   "manifest_digest": meta.get("manifestDigest"),
               }
@@ -160,6 +210,10 @@ spec:
           value: "/tmp/hf-cache"
         - name: XDG_CACHE_HOME
           value: "/tmp/hf-cache"
+        - name: HF_HUB_OFFLINE
+          value: "1"
+        - name: TRANSFORMERS_OFFLINE
+          value: "1"
         startupProbe:
           httpGet:
             path: /healthz

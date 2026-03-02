@@ -73,6 +73,7 @@ SNAPSHOT_DIR="${WORK_DIR}/snapshot"
 PAYLOAD_DIR="${WORK_DIR}/payload"
 OUTPUT_DIR="${WORK_DIR}/output"
 
+rm -rf "${SNAPSHOT_DIR}" "${PAYLOAD_DIR}" "${OUTPUT_DIR}"
 mkdir -p "${SNAPSHOT_DIR}" "${PAYLOAD_DIR}" "${OUTPUT_DIR}"
 
 python3 "${SCRIPT_DIR}/fetch_hf_snapshot.py" \
