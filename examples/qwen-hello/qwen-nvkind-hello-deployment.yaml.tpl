@@ -326,6 +326,8 @@ spec:
                   (void)cuFileHandleDeregister(cfh);
                   ::close(fd);
                   throw std::runtime_error("cuFileBufRegister failed");
+                } else {
+                  fallback_reason = "buf_register_failed";
                 }
               }
             }
@@ -548,6 +550,11 @@ spec:
               cuda_include = os.environ.get("CUDA_INCLUDE_DIR", "").strip()
               if cuda_include:
                   include_paths.append(cuda_include)
+              ldflags = []
+              cuda_lib = os.environ.get("CUDA_LIB_DIR", "").strip()
+              if cuda_lib:
+                  ldflags.append(f"-L{cuda_lib}")
+              ldflags.extend(["-lcuda", "-lcufile"])
               verbose = os.environ.get("OCI2GDS_TORCH_NATIVE_VERBOSE", "0").strip() == "1"
               name = f"oci2gds_torch_native_{os.getpid()}"
               try:
@@ -556,7 +563,7 @@ spec:
                       cpp_sources=[OCI2GDS_NATIVE_CPP],
                       functions=None,
                       extra_cflags=["-O3", "-std=c++17"],
-                      extra_ldflags=["-lcuda", "-lcufile"],
+                      extra_ldflags=ldflags,
                       extra_include_paths=include_paths,
                       with_cuda=False,
                       build_directory=str(build_dir),
@@ -581,6 +588,11 @@ spec:
               cuda_include = os.environ.get("CUDA_INCLUDE_DIR", "").strip()
               if cuda_include:
                   include_paths.append(cuda_include)
+              ldflags = []
+              cuda_lib = os.environ.get("CUDA_LIB_DIR", "").strip()
+              if cuda_lib:
+                  ldflags.append(f"-L{cuda_lib}")
+              ldflags.append("-lcuda")
               verbose = os.environ.get("OCI2GDS_TORCH_NATIVE_VERBOSE", "0").strip() == "1"
               name = f"oci2gds_torch_ipc_native_{os.getpid()}"
               try:
@@ -589,7 +601,7 @@ spec:
                       cpp_sources=[OCI2GDS_IPC_NATIVE_CPP],
                       functions=None,
                       extra_cflags=["-O3", "-std=c++17"],
-                      extra_ldflags=["-lcuda"],
+                      extra_ldflags=ldflags,
                       extra_include_paths=include_paths,
                       with_cuda=False,
                       build_directory=str(build_dir),
@@ -680,8 +692,10 @@ spec:
                           "shards_sampled": "0",
                           "bytes_sampled": "0",
                           "mode_counts": "{}",
+                          "reason_counts": "{}",
                       }
                   mode_counts = {}
+                  reason_counts = {}
                   shards_sampled = 0
                   bytes_sampled = 0
                   target = torch.device(f"cuda:{int(device)}")
@@ -708,6 +722,9 @@ spec:
                           )
                           mode = out.get("mode", "unknown")
                           mode_counts[mode] = mode_counts.get(mode, 0) + 1
+                          reason = out.get("reason", "")
+                          if reason:
+                              reason_counts[reason] = reason_counts.get(reason, 0) + 1
                           shards_sampled += 1
                           try:
                               bytes_sampled += int(out.get("bytes", "0"))
@@ -724,6 +741,7 @@ spec:
                       "shards_sampled": str(shards_sampled),
                       "bytes_sampled": str(bytes_sampled),
                       "mode_counts": json.dumps(mode_counts, sort_keys=True),
+                      "reason_counts": json.dumps(reason_counts, sort_keys=True),
                   }
 
               impl_lib.impl("read_into_tensor", _read_into_tensor)
@@ -1004,6 +1022,7 @@ spec:
                   "shards_sampled": "0",
                   "bytes_sampled": "0",
                   "mode_counts": "{}",
+                  "reason_counts": "{}",
               }
           print("OCI2GDS_PROFILE_PROBE " + json.dumps(oci2gds_profile, sort_keys=True), flush=True)
 
@@ -1111,6 +1130,10 @@ spec:
           value: "1"
         - name: OCI2GDS_TORCH_NATIVE_VERBOSE
           value: "0"
+        - name: CUDA_INCLUDE_DIR
+          value: "/usr/local/cuda/include"
+        - name: CUDA_LIB_DIR
+          value: "/usr/local/cuda/lib64"
         - name: OCI2GDS_CHUNK_BYTES
           value: "4194304"
         - name: OCI2GDS_SAMPLE_BYTES_PER_SHARD
