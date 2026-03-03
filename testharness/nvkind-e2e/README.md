@@ -21,14 +21,19 @@ For host-only strict direct-GDS validation (without Kubernetes), see [`testharne
 From repo root:
 
 ```bash
+make nvkind-e2e-prereq
 make nvkind-e2e
 ```
+
+`make nvkind-e2e-prereq` validates cluster/runtime/image prerequisites and auto-installs host packages by default (`INSTALL_MISSING_PREREQS=true`).
+Set `INSTALL_MISSING_PREREQS=false` to run checks only.
 
 ## Quick iteration loop
 
 After one full `make nvkind-e2e` run has already created the cluster and packaged/pushed the model, use:
 
 ```bash
+make nvkind-e2e-prereq
 make nvkind-e2e-qwen-quick
 ```
 
@@ -77,7 +82,7 @@ make nvkind-e2e-qwen-quick
 # Use a different model source
 HF_REPO=Qwen/Qwen3-0.6B HF_REVISION=main make nvkind-e2e
 
-# Override workload image (default: pytorch/pytorch:2.10.0-cuda12.8-cudnn9-runtime)
+# Override workload image (default: nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1)
 PYTORCH_IMAGE=pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime make nvkind-e2e
 
 # Reuse an already pushed model artifact and skip package/push
@@ -106,6 +111,7 @@ REQUIRE_DAEMON_IPC_PROBE=true make nvkind-e2e
 # - OCI2GDS_STRICT=true
 # - OCI2GDS_PROBE_STRICT=true
 # - OCI2GDS_FORCE_NO_COMPAT=true
+# - privileged container securityContext for GPU/GDS workload containers
 # You can still set them explicitly:
 REQUIRE_DIRECT_GDS=true OCI2GDS_STRICT=true OCI2GDS_PROBE_STRICT=true OCI2GDS_FORCE_NO_COMPAT=true make nvkind-e2e-qwen-quick
 

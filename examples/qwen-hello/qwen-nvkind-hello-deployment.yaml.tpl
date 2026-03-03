@@ -90,6 +90,10 @@ spec:
       - name: preload-model
         image: __OCI2GDSD_IMAGE__
         imagePullPolicy: IfNotPresent
+        securityContext:
+          runAsUser: 0
+          runAsGroup: 0
+          privileged: true
         command: ["/bin/sh", "-ec"]
         args:
         - |
@@ -120,6 +124,7 @@ spec:
         securityContext:
           runAsUser: 0
           runAsGroup: 0
+          privileged: true
         command: ["/bin/sh", "-ec"]
         args:
         - |

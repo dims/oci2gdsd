@@ -8,8 +8,12 @@ It does not require Kubernetes.
 From repo root:
 
 ```bash
+make host-e2e-prereq
 make host-e2e-qwen-quick
 ```
+
+`make host-e2e-prereq` auto-installs host prerequisites by default on Ubuntu/Debian (`INSTALL_MISSING_PREREQS=true`).
+Set `INSTALL_MISSING_PREREQS=false` to run checks only.
 
 Defaults:
 
@@ -21,7 +25,11 @@ Defaults:
 - `REQUIRE_DIRECT_GDS=true`
 - `OCI2GDS_FORCE_NO_COMPAT=true` (default fail-fast: sets `CUFILE_ENV_PATH_JSON` with compat-mode disabled for the probe process)
 - `OCI2GDS_VALIDATE_SAMPLE_BYTES=true` (compares first 4KiB GPU-loaded bytes with host bytes per sampled shard)
-- `REQUIRE_NVFS_STATS_DELTA=true` (default fail-fast hard gate on `/proc/driver/nvidia-fs/stats` `Ops` counter deltas)
+- `REQUIRE_NVFS_STATS_DELTA=false` (default relaxed because some direct-path environments still report zero `Ops` counters)
+
+Assumptions:
+
+- Probe container runs with `--privileged` by default in this harness.
 
 ## Useful overrides
 
@@ -35,8 +43,8 @@ OCI2GDSD_ROOT_PATH=/var/lib/oci2gdsd make host-e2e-qwen-quick
 # Allow fallback mode (no direct-path enforcement)
 OCI2GDS_STRICT=false REQUIRE_DIRECT_GDS=false make host-e2e-qwen-quick
 
-# Relax default fail-fast gates (only if you explicitly want a non-strict run)
-OCI2GDS_FORCE_NO_COMPAT=false REQUIRE_NVFS_STATS_DELTA=false make host-e2e-qwen-quick
+# Tighten nvfs counter requirement explicitly (optional)
+REQUIRE_NVFS_STATS_DELTA=true make host-e2e-qwen-quick
 ```
 
 ## Output

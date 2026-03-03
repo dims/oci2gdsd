@@ -18,7 +18,10 @@ OCI2GDS_STRICT="${OCI2GDS_STRICT:-true}"
 REQUIRE_DIRECT_GDS="${REQUIRE_DIRECT_GDS:-true}"
 OCI2GDS_FORCE_NO_COMPAT="${OCI2GDS_FORCE_NO_COMPAT:-true}"
 OCI2GDS_VALIDATE_SAMPLE_BYTES="${OCI2GDS_VALIDATE_SAMPLE_BYTES:-true}"
-REQUIRE_NVFS_STATS_DELTA="${REQUIRE_NVFS_STATS_DELTA:-true}"
+# FIXME: Defaulted to false because some valid direct-path environments still
+# report zero nvfs Ops counters; re-enable true-by-default after counter
+# reliability is proven across supported providers/kernel/runtime combos.
+REQUIRE_NVFS_STATS_DELTA="${REQUIRE_NVFS_STATS_DELTA:-false}"
 
 _ts() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
@@ -148,7 +151,7 @@ run_host_probe() {
   [[ -f "${probe_script}" ]] || die "missing probe script: ${probe_script}"
 
   log "running host probe image=${PYTORCH_RUNTIME_IMAGE}"
-  maybe_sudo docker run --rm --gpus all --user 0:0 -i \
+  maybe_sudo docker run --rm --privileged --gpus all --user 0:0 -i \
     -e MODEL_ROOT_PATH="${MODEL_ROOT_PATH}" \
     -e MODEL_ID="${MODEL_ID}" \
     -e MODEL_DIGEST="${MODEL_DIGEST}" \
