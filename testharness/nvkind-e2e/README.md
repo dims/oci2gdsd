@@ -36,6 +36,30 @@ This script only:
 - probes `/healthz` and `/chat`
 - writes logs to `testharness/nvkind-e2e/work/results/qwen-hello.log`
 
+It supports both cluster modes:
+
+- `CLUSTER_MODE=kind` (default)
+- `CLUSTER_MODE=k3s` (host-native k3s on Brev/Ubuntu)
+
+For host-native k3s quick iteration:
+
+```bash
+CLUSTER_MODE=k3s \
+REGISTRY_NAMESPACE=oci-model-registry \
+MODEL_REF_OVERRIDE=oci-model-registry.oci-model-registry.svc.cluster.local:5000/models/qwen3-0.6b@sha256:... \
+MODEL_DIGEST_OVERRIDE=sha256:... \
+make nvkind-e2e-qwen-quick
+```
+
+When `CLUSTER_MODE=k3s`, the quick script enforces NVIDIA runtime compatibility by setting:
+
+- `accept-nvidia-visible-devices-envvar-when-unprivileged=true`
+
+and restarting `k3s` only when a change is required.
+
+When `REQUIRE_DIRECT_GDS=true`, quick iterate also runs `gdscheck -p` preflight.
+If `gdscheck` reports `NVMe : Unsupported`, true direct path is not available on that host and the run fails fast.
+
 If you want to override the model identity explicitly:
 
 ```bash
@@ -73,6 +97,11 @@ PRELOAD_PYTORCH_RUNTIME_IMAGE=true make nvkind-e2e
 # Optional: require daemon IPC probe to report status=ok
 # (default: true when OCI2GDSD_ENABLE_GDS_IMAGE=true, otherwise false)
 REQUIRE_DAEMON_IPC_PROBE=true make nvkind-e2e
+
+# Optional: require direct GDS reads in qwen-hello profile probe
+# Runs host preflight (`gdscheck -p`) and fails if NVMe direct support is unavailable,
+# then fails if mode_counts.direct is 0.
+REQUIRE_DIRECT_GDS=true make nvkind-e2e-qwen-quick
 
 # Build a GDS-capable oci2gdsd image for init/daemon containers
 OCI2GDSD_ENABLE_GDS_IMAGE=true REQUIRE_DAEMON_IPC_PROBE=true make nvkind-e2e

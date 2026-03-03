@@ -21,24 +21,40 @@ resolve_model_identity() {
 }
 
 log "starting qwen-hello quick iterate run"
-ensure_cmd kubectl
+if [[ "${CLUSTER_MODE}" == "k3s" ]]; then
+  ensure_cmd k3s
+else
+  ensure_cmd kubectl
+fi
 ensure_cmd jq
 ensure_cmd curl
 ensure_cmd gsed
 
-if ! kubectl --context "${KUBECTL_CONTEXT}" get nodes >/dev/null 2>&1; then
-  die "cluster context ${KUBECTL_CONTEXT} is not reachable; run make nvkind-e2e first"
+if [[ "${CLUSTER_MODE}" == "k3s" ]]; then
+  ensure_k3s_nvidia_runtime_prereqs
+fi
+
+if ! kube get nodes >/dev/null 2>&1; then
+  die "cluster ${CLUSTER_MODE} is not reachable ($(cluster_hint)); run setup first"
 fi
 
 resolve_model_identity
 log "model_ref=${MODEL_REF}"
 log "model_digest=${MODEL_DIGEST}"
 log "pytorch_runtime_image=${PYTORCH_RUNTIME_IMAGE}"
+log "cluster_mode=${CLUSTER_MODE} ($(cluster_hint))"
+log "require_direct_gds=${REQUIRE_DIRECT_GDS}"
+
+if [[ "${REQUIRE_DIRECT_GDS}" == "true" ]]; then
+  if ! check_direct_gds_platform_support; then
+    die "direct GDS requested but platform preflight failed"
+  fi
+fi
 
 if ! validate_qwen_hello_example; then
   collect_debug
-  kubectl --context "${KUBECTL_CONTEXT}" -n "${QWEN_HELLO_NAMESPACE}" logs deploy/qwen-hello -c preload-model || true
-  kubectl --context "${KUBECTL_CONTEXT}" -n "${QWEN_HELLO_NAMESPACE}" logs deploy/qwen-hello -c pytorch-api || true
+  kube -n "${QWEN_HELLO_NAMESPACE}" logs deploy/qwen-hello -c preload-model || true
+  kube -n "${QWEN_HELLO_NAMESPACE}" logs deploy/qwen-hello -c pytorch-api || true
   die "qwen-hello quick iterate validation failed"
 fi
 

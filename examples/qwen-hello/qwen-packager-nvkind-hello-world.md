@@ -184,3 +184,21 @@ kubectl --context "kind-${CLUSTER_NAME}" delete namespace "${QWEN_HELLO_NAMESPAC
 kubectl --context "kind-${CLUSTER_NAME}" delete namespace oci-model-registry --ignore-not-found
 kind delete cluster --name "${CLUSTER_NAME}"
 ```
+
+## Option B (Host-native k3s quick loop)
+
+If you are using host-native `k3s` instead of `kind/nvkind`, use the harness quick loop:
+
+```bash
+CLUSTER_MODE=k3s \
+REGISTRY_NAMESPACE=oci-model-registry \
+MODEL_REF_OVERRIDE=oci-model-registry.oci-model-registry.svc.cluster.local:5000/models/qwen3-0.6b@sha256:... \
+MODEL_DIGEST_OVERRIDE=sha256:... \
+make nvkind-e2e-qwen-quick
+```
+
+To strictly gate on observed direct GDS mode from `/healthz` probe metadata:
+
+```bash
+CLUSTER_MODE=k3s REQUIRE_DIRECT_GDS=true make nvkind-e2e-qwen-quick
+```

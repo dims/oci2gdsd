@@ -24,6 +24,16 @@
 This example now includes a daemon-mediated IPC probe, but still does not remap the full transformer weight graph to daemon-owned VRAM pointers.
 Model execution still uses framework-managed parameter loading from local files.
 
+## k3s Runtime Note
+
+For host-native `k3s` clusters, the pod should run with `runtimeClassName: nvidia` so the NVIDIA container runtime injects CUDA driver libraries and devices correctly.
+
+If CUDA appears unavailable in pods (`torch.cuda.is_available() == False` while `/dev/nvidia*` exists), verify:
+
+- `/etc/nvidia-container-runtime/config.toml` has `accept-nvidia-visible-devices-envvar-when-unprivileged=true`
+- `k3s` is restarted after that change
+- no manual hostPath mounts are forcing `libcuda.so.1` into the container (these can conflict with NVIDIA runtime hooks)
+
 ## Files
 
 - `oci-model-registry.yaml`: In-cluster Docker registry deployment/service.

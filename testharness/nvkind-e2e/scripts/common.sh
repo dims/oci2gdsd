@@ -9,7 +9,9 @@ LOG_DIR="${WORK_DIR}/logs"
 mkdir -p "${WORK_DIR}" "${LOG_DIR}"
 
 CLUSTER_NAME="${CLUSTER_NAME:-oci2gdsd-e2e}"
-KUBECTL_CONTEXT="kind-${CLUSTER_NAME}"
+CLUSTER_MODE="${CLUSTER_MODE:-kind}"
+K3S_USE_SUDO="${K3S_USE_SUDO:-true}"
+KUBECTL_CONTEXT="${KUBECTL_CONTEXT:-kind-${CLUSTER_NAME}}"
 E2E_NAMESPACE="${E2E_NAMESPACE:-oci2gdsd-e2e}"
 QWEN_HELLO_NAMESPACE="${QWEN_HELLO_NAMESPACE:-qwen-hello}"
 REGISTRY_NAMESPACE="${REGISTRY_NAMESPACE:-oci2gdsd-registry}"
@@ -27,6 +29,7 @@ MODEL_DIGEST_OVERRIDE="${MODEL_DIGEST_OVERRIDE:-}"
 VALIDATE_QWEN_HELLO="${VALIDATE_QWEN_HELLO:-true}"
 VALIDATE_LOCAL_GDS="${VALIDATE_LOCAL_GDS:-true}"
 REQUIRE_DAEMON_IPC_PROBE="${REQUIRE_DAEMON_IPC_PROBE:-}"
+REQUIRE_DIRECT_GDS="${REQUIRE_DIRECT_GDS:-false}"
 
 OCI2GDSD_IMAGE="${OCI2GDSD_IMAGE:-oci2gdsd:e2e}"
 OCI2GDSD_ENABLE_GDS_IMAGE="${OCI2GDSD_ENABLE_GDS_IMAGE:-false}"
@@ -87,6 +90,58 @@ maybe_sudo() {
     sudo "$@"
   fi
 }
+
+resolve_cluster_mode() {
+  case "${CLUSTER_MODE}" in
+    kind|k3s)
+      ;;
+    auto)
+      if command -v k3s >/dev/null 2>&1; then
+        if [[ "$(id -u)" -eq 0 ]]; then
+          if k3s kubectl get nodes >/dev/null 2>&1; then
+            CLUSTER_MODE="k3s"
+          else
+            CLUSTER_MODE="kind"
+          fi
+        elif sudo -n true >/dev/null 2>&1 && sudo -n k3s kubectl get nodes >/dev/null 2>&1; then
+          CLUSTER_MODE="k3s"
+        else
+          CLUSTER_MODE="kind"
+        fi
+      else
+        CLUSTER_MODE="kind"
+      fi
+      ;;
+    *)
+      die "unsupported CLUSTER_MODE=${CLUSTER_MODE} (expected kind|k3s|auto)"
+      ;;
+  esac
+}
+
+kube() {
+  if [[ "${CLUSTER_MODE}" == "k3s" ]]; then
+    if [[ "${K3S_USE_SUDO}" == "true" && "$(id -u)" -ne 0 ]]; then
+      sudo k3s kubectl "$@"
+    else
+      k3s kubectl "$@"
+    fi
+  else
+    kubectl --context "${KUBECTL_CONTEXT}" "$@"
+  fi
+}
+
+cluster_hint() {
+  if [[ "${CLUSTER_MODE}" == "k3s" ]]; then
+    echo "k3s"
+  else
+    echo "kind context ${KUBECTL_CONTEXT}"
+  fi
+}
+
+resolve_cluster_mode
+if [[ "${CLUSTER_MODE}" == "k3s" && "${REGISTRY_NAMESPACE}" == "oci2gdsd-registry" ]]; then
+  REGISTRY_NAMESPACE="oci-model-registry"
+fi
 
 strip_go_prefix() {
   local version="$1"
@@ -287,6 +342,69 @@ configure_nvidia_runtime() {
   maybe_sudo nvidia-ctk config --set accept-nvidia-visible-devices-as-volume-mounts=true --in-place
   maybe_sudo nvidia-ctk config --set accept-nvidia-visible-devices-envvar-when-unprivileged=false --in-place
   maybe_sudo systemctl restart docker
+}
+
+ensure_k3s_nvidia_runtime_prereqs() {
+  if [[ "${CLUSTER_MODE}" != "k3s" ]]; then
+    return
+  fi
+  ensure_cmd k3s
+  ensure_cmd nvidia-ctk
+
+  local cfg="/etc/nvidia-container-runtime/config.toml"
+  local changed=0
+  if maybe_sudo test -f "${cfg}" && \
+    maybe_sudo grep -Eq '^[[:space:]]*accept-nvidia-visible-devices-envvar-when-unprivileged[[:space:]]*=[[:space:]]*false' "${cfg}"; then
+    log "enabling unprivileged NVIDIA_VISIBLE_DEVICES injection for k3s pods"
+    maybe_sudo nvidia-ctk config --set accept-nvidia-visible-devices-envvar-when-unprivileged=true --in-place
+    changed=1
+  fi
+
+  if (( changed == 1 )); then
+    log "restarting k3s to apply NVIDIA runtime config"
+    maybe_sudo systemctl restart k3s
+  fi
+
+  local tries=0
+  local max_tries=60
+  until kube get nodes >/dev/null 2>&1; do
+    tries=$((tries + 1))
+    if [[ "${tries}" -ge "${max_tries}" ]]; then
+      die "k3s API did not become queryable after ${max_tries} attempts"
+    fi
+    sleep 3
+  done
+}
+
+gdscheck_binary() {
+  if command -v gdscheck >/dev/null 2>&1; then
+    command -v gdscheck
+    return 0
+  fi
+  if [[ -x /usr/local/cuda/gds/tools/gdscheck ]]; then
+    echo "/usr/local/cuda/gds/tools/gdscheck"
+    return 0
+  fi
+  return 1
+}
+
+check_direct_gds_platform_support() {
+  local gdscheck
+  if ! gdscheck="$(gdscheck_binary)"; then
+    warn "gdscheck not found; cannot verify direct GDS platform support"
+    return 1
+  fi
+  mkdir -p "${WORK_DIR}/results"
+  local report="${WORK_DIR}/results/gdscheck.txt"
+  if ! maybe_sudo "${gdscheck}" -p >"${report}" 2>&1; then
+    warn "gdscheck failed; see ${report}"
+    return 1
+  fi
+  if ! grep -Eq 'NVMe[[:space:]]*:[[:space:]]*Supported' "${report}"; then
+    warn "gdscheck reports NVMe unsupported for GDS direct path; see ${report}"
+    return 1
+  fi
+  return 0
 }
 
 create_nvkind_cluster() {
@@ -618,13 +736,18 @@ validate_qwen_hello_example() {
     "PYTORCH_RUNTIME_IMAGE=${PYTORCH_RUNTIME_IMAGE}" \
     "LEASE_HOLDER=${LEASE_HOLDER}"
 
-  kubectl --context "${KUBECTL_CONTEXT}" apply -f "${rendered}"
-  kubectl --context "${KUBECTL_CONTEXT}" -n "${QWEN_HELLO_NAMESPACE}" \
+  if [[ "${CLUSTER_MODE}" == "k3s" ]] && ! grep -q 'runtimeClassName: nvidia' "${rendered}"; then
+    gsed -i 's|restartPolicy: Always|restartPolicy: Always\
+      runtimeClassName: nvidia|' "${rendered}"
+  fi
+
+  kube apply -f "${rendered}"
+  kube -n "${QWEN_HELLO_NAMESPACE}" \
     rollout status deploy/qwen-hello --timeout=1800s
   local log_file="${WORK_DIR}/results/qwen-hello.log"
   : > "${log_file}"
   local pod_name
-  pod_name="$(kubectl --context "${KUBECTL_CONTEXT}" -n "${QWEN_HELLO_NAMESPACE}" \
+  pod_name="$(kube -n "${QWEN_HELLO_NAMESPACE}" \
     get pod -l app=qwen-hello -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
   if [[ -z "${pod_name}" ]]; then
     warn "failed to resolve qwen-hello pod name"
@@ -635,7 +758,7 @@ validate_qwen_hello_example() {
   local pf_log="${WORK_DIR}/logs/qwen-hello-port-forward.log"
   local local_port="${QWEN_HELLO_LOCAL_PORT:-18080}"
   rm -f "${pf_pid_file}"
-  kubectl --context "${KUBECTL_CONTEXT}" -n "${QWEN_HELLO_NAMESPACE}" \
+  kube -n "${QWEN_HELLO_NAMESPACE}" \
     port-forward svc/qwen-hello "${local_port}:8000" >"${pf_log}" 2>&1 &
   echo "$!" > "${pf_pid_file}"
 
@@ -672,6 +795,8 @@ validate_qwen_hello_example() {
   oci2gds_backend="$(printf '%s' "${health_response}" | jq -r '.oci2gds_backend.backend // empty' 2>/dev/null || true)"
   local oci2gds_mode_counts
   oci2gds_mode_counts="$(printf '%s' "${health_response}" | jq -r '.oci2gds_profile.mode_counts // "{}"' 2>/dev/null || true)"
+  local oci2gds_direct_count
+  oci2gds_direct_count="$(printf '%s' "${health_response}" | jq -r '.oci2gds_profile.mode_counts // "{}" | (try fromjson catch {}) | .direct // 0' 2>/dev/null || true)"
   local oci2gds_ipc_status
   oci2gds_ipc_status="$(printf '%s' "${health_response}" | jq -r '.oci2gds_ipc.status // empty' 2>/dev/null || true)"
   local oci2gds_ipc_backend
@@ -683,7 +808,7 @@ validate_qwen_hello_example() {
   local answer
   answer="$(printf '%s' "${response}" | jq -r '.answer // empty' 2>/dev/null || true)"
 
-  kubectl --context "${KUBECTL_CONTEXT}" -n "${QWEN_HELLO_NAMESPACE}" \
+  kube -n "${QWEN_HELLO_NAMESPACE}" \
     logs "pod/${pod_name}" -c pytorch-api > "${log_file}" 2>/dev/null || true
   printf '\nQWEN_NVKIND_HELLO_HEALTH_RESPONSE %s\n' "${health_response}" >> "${log_file}"
   printf '\nQWEN_NVKIND_HELLO_CHAT_RESPONSE %s\n' "${response}" >> "${log_file}"
@@ -705,6 +830,12 @@ validate_qwen_hello_example() {
     warn "qwen hello oci2gds profile probe failed: status=${oci2gds_profile_status} backend=${oci2gds_backend} mode_counts=${oci2gds_mode_counts}"
     return 1
   fi
+  if [[ "${REQUIRE_DIRECT_GDS}" == "true" ]]; then
+    if [[ -z "${oci2gds_direct_count}" || "${oci2gds_direct_count}" == "0" ]]; then
+      warn "qwen hello direct GDS requirement failed: direct_count=${oci2gds_direct_count} mode_counts=${oci2gds_mode_counts}"
+      return 1
+    fi
+  fi
   if [[ "${REQUIRE_DAEMON_IPC_PROBE}" == "true" && "${oci2gds_ipc_status}" != "ok" ]]; then
     warn "qwen hello daemon ipc probe not ok: status=${oci2gds_ipc_status} backend=${oci2gds_ipc_backend}"
     return 1
@@ -715,15 +846,15 @@ validate_qwen_hello_example() {
 }
 
 cleanup_qwen_hello_example() {
-  kubectl --context "${KUBECTL_CONTEXT}" delete namespace "${QWEN_HELLO_NAMESPACE}" --ignore-not-found >/dev/null || true
+  kube delete namespace "${QWEN_HELLO_NAMESPACE}" --ignore-not-found >/dev/null || true
 }
 
 collect_debug() {
   warn "collecting debug artifacts"
-  kubectl --context "${KUBECTL_CONTEXT}" get nodes -o wide || true
-  kubectl --context "${KUBECTL_CONTEXT}" get pods -A || true
-  kubectl --context "${KUBECTL_CONTEXT}" -n gpu-operator get pods -o wide || true
-  kubectl --context "${KUBECTL_CONTEXT}" -n "${E2E_NAMESPACE}" get pods -o wide || true
-  kubectl --context "${KUBECTL_CONTEXT}" -n "${E2E_NAMESPACE}" get jobs || true
-  kubectl --context "${KUBECTL_CONTEXT}" -n "${QWEN_HELLO_NAMESPACE}" get pods -o wide || true
+  kube get nodes -o wide || true
+  kube get pods -A || true
+  kube -n gpu-operator get pods -o wide || true
+  kube -n "${E2E_NAMESPACE}" get pods -o wide || true
+  kube -n "${E2E_NAMESPACE}" get jobs || true
+  kube -n "${QWEN_HELLO_NAMESPACE}" get pods -o wide || true
 }
