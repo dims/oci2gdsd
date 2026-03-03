@@ -82,6 +82,10 @@ spec:
         hostPath:
           path: /run/udev
           type: Directory
+      - name: host-dev
+        hostPath:
+          path: /dev
+          type: Directory
       initContainers:
       - name: preload-model
         image: __OCI2GDSD_IMAGE__
@@ -129,6 +133,12 @@ spec:
           if [ ! -e /usr/local/cuda/lib64/libcuda.so.1 ] && [ -e /usr/local/cuda/compat/libcuda.so.1 ]; then
             ln -sf /usr/local/cuda/compat/libcuda.so.1 /usr/local/cuda/lib64/libcuda.so.1
           fi
+          if [ -d /host-dev ]; then
+            for nvfs in /host-dev/nvidia-fs*; do
+              [ -c "${nvfs}" ] || continue
+              ln -sf "${nvfs}" "/dev/$(basename "${nvfs}")"
+            done
+          fi
           python - <<'PY_DEPS'
           import importlib.util
           import subprocess
@@ -153,13 +163,19 @@ spec:
                   *missing,
               ])
           PY_DEPS
-          /oci2gdsd-bin/oci2gdsd --registry-config /etc/oci2gdsd/config.yaml serve \
-            --unix-socket /run/oci2gdsd/daemon.sock \
-            --socket-perms 0660 &
-          daemon_pid="$!"
+          daemon_pid=""
+          daemon_enable="$(printf '%s' "${OCI2GDS_DAEMON_ENABLE:-1}" | tr '[:upper:]' '[:lower:]')"
+          if [ "${daemon_enable}" != "0" ] && [ "${daemon_enable}" != "false" ] && [ "${daemon_enable}" != "no" ]; then
+            /oci2gdsd-bin/oci2gdsd --registry-config /etc/oci2gdsd/config.yaml serve \
+              --unix-socket /run/oci2gdsd/daemon.sock \
+              --socket-perms 0660 &
+            daemon_pid="$!"
+          fi
           cleanup() {
-            kill "${daemon_pid}" 2>/dev/null || true
-            wait "${daemon_pid}" 2>/dev/null || true
+            if [ -n "${daemon_pid}" ]; then
+              kill "${daemon_pid}" 2>/dev/null || true
+              wait "${daemon_pid}" 2>/dev/null || true
+            fi
           }
           trap cleanup EXIT INT TERM
           python - <<'PY'
@@ -320,7 +336,10 @@ spec:
               if (ferr.err != CU_FILE_SUCCESS) {
                 if (strict) {
                   ::close(fd);
-                  throw std::runtime_error("cuFileHandleRegister failed");
+                  std::ostringstream os;
+                  os << "cuFileHandleRegister failed err=" << static_cast<int>(ferr.err)
+                     << " cu_err=" << static_cast<int>(ferr.cu_err);
+                  throw std::runtime_error(os.str());
                 }
                 direct_target = 0;
                 fallback_reason = "handle_register_failed";
@@ -426,8 +445,17 @@ spec:
             return out;
           }
 
+          static py::dict init_native() {
+            ensure_gds_ready();
+            py::dict out;
+            out["backend"] = "native-cufile";
+            out["status"] = "ok";
+            return out;
+          }
+
           PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
             m.def("read_into_tensor_native", &read_into_tensor_native, "Read file bytes into CUDA tensor via cuFile when possible");
+            m.def("init_native", &init_native, "Initialize cuFile driver before tensor allocations");
           }
           """
 
@@ -576,6 +604,8 @@ spec:
                       build_directory=str(build_dir),
                       verbose=verbose,
                   )
+                  if hasattr(module, "init_native"):
+                      module.init_native()
                   return module, ""
               except Exception as exc:
                   return None, f"native build/load failed: {exc}"
@@ -718,15 +748,26 @@ spec:
                           read_len = int(min(file_size, max(int(sample_bytes), 0)))
                           if read_len <= 0:
                               continue
+                          if bool(strict):
+                              read_len_aligned = (read_len // 4096) * 4096
+                              if read_len_aligned <= 0:
+                                  reason_counts["strict_skip_unaligned"] = reason_counts.get("strict_skip_unaligned", 0) + 1
+                                  continue
+                              read_len = int(read_len_aligned)
                           scratch = torch.empty(read_len, dtype=torch.uint8, device=target)
-                          out = torch.ops.oci2gds.read_into_tensor(
-                              str(shard_path),
-                              scratch,
-                              0,
-                              read_len,
-                              bool(strict),
-                              int(chunk_bytes),
-                          )
+                          try:
+                              out = torch.ops.oci2gds.read_into_tensor(
+                                  str(shard_path),
+                                  scratch,
+                                  0,
+                                  read_len,
+                                  bool(strict),
+                                  int(chunk_bytes),
+                              )
+                          except Exception as exc:
+                              raise RuntimeError(
+                                  f"read_into_tensor failed path={shard_path} size={file_size} read_len={read_len}: {exc}"
+                              ) from exc
                           mode = out.get("mode", "unknown")
                           mode_counts[mode] = mode_counts.get(mode, 0) + 1
                           reason = out.get("reason", "")
@@ -1122,9 +1163,9 @@ spec:
         - name: OCI2GDS_DAEMON_SOCKET
           value: "/run/oci2gdsd/daemon.sock"
         - name: OCI2GDS_DAEMON_ENABLE
-          value: "1"
+          value: "__OCI2GDS_DAEMON_ENABLE__"
         - name: OCI2GDS_DAEMON_PROBE_SHARDS
-          value: "1"
+          value: "__OCI2GDS_DAEMON_PROBE_SHARDS__"
         - name: MAX_NEW_TOKENS
           value: "128"
         - name: TEMPERATURE
@@ -1195,6 +1236,9 @@ spec:
           readOnly: true
         - name: run-udev
           mountPath: /run/udev
+          readOnly: true
+        - name: host-dev
+          mountPath: /host-dev
           readOnly: true
 ---
 apiVersion: v1

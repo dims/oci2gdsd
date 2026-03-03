@@ -32,6 +32,8 @@ VALIDATE_QWEN_HELLO="${VALIDATE_QWEN_HELLO:-true}"
 VALIDATE_LOCAL_GDS="${VALIDATE_LOCAL_GDS:-true}"
 REQUIRE_DAEMON_IPC_PROBE="${REQUIRE_DAEMON_IPC_PROBE:-}"
 REQUIRE_DIRECT_GDS="${REQUIRE_DIRECT_GDS:-false}"
+OCI2GDS_DAEMON_ENABLE="${OCI2GDS_DAEMON_ENABLE:-1}"
+OCI2GDS_DAEMON_PROBE_SHARDS="${OCI2GDS_DAEMON_PROBE_SHARDS:-1}"
 
 OCI2GDSD_IMAGE="${OCI2GDSD_IMAGE:-oci2gdsd:e2e}"
 OCI2GDSD_ENABLE_GDS_IMAGE="${OCI2GDSD_ENABLE_GDS_IMAGE:-false}"
@@ -425,11 +427,18 @@ check_direct_gds_platform_support() {
     return 1
   fi
   mkdir -p "${WORK_DIR}/results"
+  maybe_sudo chown -R "$(id -u):$(id -g)" "${WORK_DIR}/results" >/dev/null 2>&1 || true
   local report="${WORK_DIR}/results/gdscheck.txt"
-  if ! maybe_sudo "${gdscheck}" -p >"${report}" 2>&1; then
+  local tmp_report
+  tmp_report="$(mktemp)"
+  if ! maybe_sudo "${gdscheck}" -p >"${tmp_report}" 2>&1; then
+    cat "${tmp_report}" >"${report}" 2>/dev/null || true
+    rm -f "${tmp_report}"
     warn "gdscheck failed; see ${report}"
     return 1
   fi
+  cat "${tmp_report}" >"${report}"
+  rm -f "${tmp_report}"
   if ! grep -Eq 'NVMe[[:space:]]*:[[:space:]]*Supported' "${report}"; then
     warn "gdscheck reports NVMe unsupported for GDS direct path; see ${report}"
     return 1
@@ -768,6 +777,8 @@ validate_qwen_hello_example() {
     "OCI2GDSD_ROOT_PATH=${OCI2GDSD_ROOT_PATH}" \
     "OCI2GDS_STRICT=${OCI2GDS_STRICT}" \
     "OCI2GDS_PROBE_STRICT=${OCI2GDS_PROBE_STRICT}" \
+    "OCI2GDS_DAEMON_ENABLE=${OCI2GDS_DAEMON_ENABLE}" \
+    "OCI2GDS_DAEMON_PROBE_SHARDS=${OCI2GDS_DAEMON_PROBE_SHARDS}" \
     "PYTORCH_RUNTIME_IMAGE=${PYTORCH_RUNTIME_IMAGE}" \
     "LEASE_HOLDER=${LEASE_HOLDER}"
 

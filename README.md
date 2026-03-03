@@ -80,6 +80,7 @@ oci2gdsd gc --policy lru_no_lease --min-free-bytes 200G --json
 - Config reference: [docs/config-reference.md](docs/config-reference.md)
 - Security hardening checklist: [docs/security-hardening-checklist.md](docs/security-hardening-checklist.md)
 - Direct GDS recreate runbook: [docs/direct-gds-recreate-runbook.md](docs/direct-gds-recreate-runbook.md)
+- Host direct-GDS quick e2e: [testharness/host-e2e/README.md](testharness/host-e2e/README.md)
 
 ## Reproducible Qwen3 OCI Packaging
 

@@ -4,6 +4,7 @@ This harness provisions a local `nvkind` Kubernetes cluster (works on Brev GPU i
 It is designed to run directly by an operator on a machine and does not require GitHub Actions.
 
 For host/provider qualification and strict direct-GDS recreate steps, see [`docs/direct-gds-recreate-runbook.md`](../../docs/direct-gds-recreate-runbook.md).
+For host-only strict direct-GDS validation (without Kubernetes), see [`testharness/host-e2e/README.md`](../host-e2e/README.md).
 
 ## What it validates
 
