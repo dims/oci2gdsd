@@ -103,6 +103,18 @@ REQUIRE_DAEMON_IPC_PROBE=true make nvkind-e2e
 # then fails if mode_counts.direct is 0.
 REQUIRE_DIRECT_GDS=true make nvkind-e2e-qwen-quick
 
+# qwen-hello profile selection:
+# - `default`: generic settings
+# - `host-direct`: hostPath-backed root (NVMe-friendly) + strict probes
+# For k3s, default profile is `host-direct`.
+QWEN_HELLO_PROFILE=host-direct make nvkind-e2e-qwen-quick
+
+# Override root path used by init/app pod hostPath (defaults to /mnt/nvme/oci2gdsd in host-direct).
+OCI2GDSD_ROOT_PATH=/mnt/nvme/oci2gdsd make nvkind-e2e-qwen-quick
+
+# Override strict probe behavior (host-direct defaults these to true unless explicitly set).
+OCI2GDS_STRICT=true OCI2GDS_PROBE_STRICT=true make nvkind-e2e-qwen-quick
+
 # Build a GDS-capable oci2gdsd image for init/daemon containers
 OCI2GDSD_ENABLE_GDS_IMAGE=true REQUIRE_DAEMON_IPC_PROBE=true make nvkind-e2e
 

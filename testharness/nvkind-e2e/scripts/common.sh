@@ -14,6 +14,8 @@ K3S_USE_SUDO="${K3S_USE_SUDO:-true}"
 KUBECTL_CONTEXT="${KUBECTL_CONTEXT:-kind-${CLUSTER_NAME}}"
 E2E_NAMESPACE="${E2E_NAMESPACE:-oci2gdsd-e2e}"
 QWEN_HELLO_NAMESPACE="${QWEN_HELLO_NAMESPACE:-qwen-hello}"
+QWEN_HELLO_PROFILE="${QWEN_HELLO_PROFILE:-}"
+QWEN_HELLO_TEMPLATE="${QWEN_HELLO_TEMPLATE:-}"
 REGISTRY_NAMESPACE="${REGISTRY_NAMESPACE:-oci2gdsd-registry}"
 REGISTRY_SERVICE="${REGISTRY_SERVICE:-oci-model-registry}"
 LOCAL_REGISTRY_PORT="${LOCAL_REGISTRY_PORT:-5002}"
@@ -50,7 +52,14 @@ if [[ -z "${REQUIRE_DAEMON_IPC_PROBE}" ]]; then
   REQUIRE_DAEMON_IPC_PROBE="${OCI2GDSD_ENABLE_GDS_IMAGE}"
 fi
 
+# Track whether these were explicitly set by caller; host-direct profile
+# only overrides when the caller did not provide values.
+OCI2GDSD_ROOT_PATH_SET="${OCI2GDSD_ROOT_PATH+x}"
+OCI2GDS_STRICT_SET="${OCI2GDS_STRICT+x}"
+OCI2GDS_PROBE_STRICT_SET="${OCI2GDS_PROBE_STRICT+x}"
 OCI2GDSD_ROOT_PATH="${OCI2GDSD_ROOT_PATH:-/var/lib/oci2gdsd}"
+OCI2GDS_STRICT="${OCI2GDS_STRICT:-false}"
+OCI2GDS_PROBE_STRICT="${OCI2GDS_PROBE_STRICT:-false}"
 
 KIND_VERSION="${KIND_VERSION:-0.31.0}"
 KUBECTL_VERSION="${KUBECTL_VERSION:-1.32.0}"
@@ -141,6 +150,27 @@ cluster_hint() {
 resolve_cluster_mode
 if [[ "${CLUSTER_MODE}" == "k3s" && "${REGISTRY_NAMESPACE}" == "oci2gdsd-registry" ]]; then
   REGISTRY_NAMESPACE="oci-model-registry"
+fi
+if [[ -z "${QWEN_HELLO_PROFILE}" ]]; then
+  if [[ "${CLUSTER_MODE}" == "k3s" ]]; then
+    QWEN_HELLO_PROFILE="host-direct"
+  else
+    QWEN_HELLO_PROFILE="default"
+  fi
+fi
+if [[ "${QWEN_HELLO_PROFILE}" == "host-direct" ]]; then
+  if [[ -z "${OCI2GDSD_ROOT_PATH_SET}" ]]; then
+    OCI2GDSD_ROOT_PATH="/mnt/nvme/oci2gdsd"
+  fi
+  if [[ -z "${OCI2GDS_STRICT_SET}" ]]; then
+    OCI2GDS_STRICT="true"
+  fi
+  if [[ -z "${OCI2GDS_PROBE_STRICT_SET}" ]]; then
+    OCI2GDS_PROBE_STRICT="true"
+  fi
+fi
+if [[ -z "${QWEN_HELLO_TEMPLATE}" ]]; then
+  QWEN_HELLO_TEMPLATE="${REPO_ROOT}/examples/qwen-hello/qwen-nvkind-hello-deployment.yaml.tpl"
 fi
 
 strip_go_prefix() {
@@ -717,10 +747,13 @@ package_model_to_registry() {
 }
 
 validate_qwen_hello_example() {
-  local template="${REPO_ROOT}/examples/qwen-hello/qwen-nvkind-hello-deployment.yaml.tpl"
+  local template="${QWEN_HELLO_TEMPLATE}"
   if [[ ! -f "${template}" ]]; then
     warn "missing example template: ${template}"
     return 1
+  fi
+  if [[ "${QWEN_HELLO_PROFILE}" == "host-direct" && "${CLUSTER_MODE}" == "k3s" ]]; then
+    maybe_sudo mkdir -p "${OCI2GDSD_ROOT_PATH}" || true
   fi
   mkdir -p "${WORK_DIR}/rendered" "${WORK_DIR}/results"
   local rendered="${WORK_DIR}/rendered/qwen-hello.yaml"
@@ -733,6 +766,8 @@ validate_qwen_hello_example() {
     "MODEL_ROOT_PATH=${model_root}" \
     "OCI2GDSD_IMAGE=${OCI2GDSD_IMAGE}" \
     "OCI2GDSD_ROOT_PATH=${OCI2GDSD_ROOT_PATH}" \
+    "OCI2GDS_STRICT=${OCI2GDS_STRICT}" \
+    "OCI2GDS_PROBE_STRICT=${OCI2GDS_PROBE_STRICT}" \
     "PYTORCH_RUNTIME_IMAGE=${PYTORCH_RUNTIME_IMAGE}" \
     "LEASE_HOLDER=${LEASE_HOLDER}"
 

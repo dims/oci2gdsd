@@ -27,6 +27,7 @@ Model execution still uses framework-managed parameter loading from local files.
 ## k3s Runtime Note
 
 For host-native `k3s` clusters, the pod should run with `runtimeClassName: nvidia` so the NVIDIA container runtime injects CUDA driver libraries and devices correctly.
+The e2e harness `host-direct` profile (default for `k3s`) uses hostPath root `/mnt/nvme/oci2gdsd` and enables strict oci2gds probe flags to test direct-path behavior.
 
 If CUDA appears unavailable in pods (`torch.cuda.is_available() == False` while `/dev/nvidia*` exists), verify:
 

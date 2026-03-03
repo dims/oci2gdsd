@@ -43,6 +43,9 @@ log "model_ref=${MODEL_REF}"
 log "model_digest=${MODEL_DIGEST}"
 log "pytorch_runtime_image=${PYTORCH_RUNTIME_IMAGE}"
 log "cluster_mode=${CLUSTER_MODE} ($(cluster_hint))"
+log "qwen_hello_profile=${QWEN_HELLO_PROFILE}"
+log "oci2gdsd_root_path=${OCI2GDSD_ROOT_PATH}"
+log "oci2gds_strict=${OCI2GDS_STRICT} oci2gds_probe_strict=${OCI2GDS_PROBE_STRICT}"
 log "require_direct_gds=${REQUIRE_DIRECT_GDS}"
 
 if [[ "${REQUIRE_DIRECT_GDS}" == "true" ]]; then

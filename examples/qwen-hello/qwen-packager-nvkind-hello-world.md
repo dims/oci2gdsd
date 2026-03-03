@@ -128,10 +128,14 @@ kind load docker-image oci2gdsd:hello --name "${CLUSTER_NAME}"
 ```bash
 export MODEL_ID="qwen3-0.6b"
 export OCI2GDSD_IMAGE="oci2gdsd:hello"
+# For kind/nvkind keep /var/lib/oci2gdsd.
+# For host-native k3s direct-path experiments prefer /mnt/nvme/oci2gdsd.
 export OCI2GDSD_ROOT_PATH="/var/lib/oci2gdsd"
 export QWEN_HELLO_NAMESPACE="qwen-hello"
 export LEASE_HOLDER="qwen-hello"
 export PYTORCH_RUNTIME_IMAGE="nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1"
+export OCI2GDS_STRICT="false"
+export OCI2GDS_PROBE_STRICT="false"
 export MODEL_ROOT_PATH="${OCI2GDSD_ROOT_PATH}/models/${MODEL_ID}/${MODEL_DIGEST//:/-}"
 # Optional: force pure Python fallback probe backend (skip native extension build)
 # export OCI2GDS_TORCH_ENABLE_NATIVE="0"
@@ -144,6 +148,8 @@ gsed -i "s|__MODEL_DIGEST__|${MODEL_DIGEST}|g" /tmp/qwen-nvkind-hello.yaml
 gsed -i "s|__MODEL_ROOT_PATH__|${MODEL_ROOT_PATH}|g" /tmp/qwen-nvkind-hello.yaml
 gsed -i "s|__OCI2GDSD_IMAGE__|${OCI2GDSD_IMAGE}|g" /tmp/qwen-nvkind-hello.yaml
 gsed -i "s|__OCI2GDSD_ROOT_PATH__|${OCI2GDSD_ROOT_PATH}|g" /tmp/qwen-nvkind-hello.yaml
+gsed -i "s|__OCI2GDS_STRICT__|${OCI2GDS_STRICT}|g" /tmp/qwen-nvkind-hello.yaml
+gsed -i "s|__OCI2GDS_PROBE_STRICT__|${OCI2GDS_PROBE_STRICT}|g" /tmp/qwen-nvkind-hello.yaml
 gsed -i "s|__PYTORCH_RUNTIME_IMAGE__|${PYTORCH_RUNTIME_IMAGE}|g" /tmp/qwen-nvkind-hello.yaml
 gsed -i "s|__LEASE_HOLDER__|${LEASE_HOLDER}|g" /tmp/qwen-nvkind-hello.yaml
 
@@ -194,11 +200,12 @@ CLUSTER_MODE=k3s \
 REGISTRY_NAMESPACE=oci-model-registry \
 MODEL_REF_OVERRIDE=oci-model-registry.oci-model-registry.svc.cluster.local:5000/models/qwen3-0.6b@sha256:... \
 MODEL_DIGEST_OVERRIDE=sha256:... \
+QWEN_HELLO_PROFILE=host-direct \
 make nvkind-e2e-qwen-quick
 ```
 
 To strictly gate on observed direct GDS mode from `/healthz` probe metadata:
 
 ```bash
-CLUSTER_MODE=k3s REQUIRE_DIRECT_GDS=true make nvkind-e2e-qwen-quick
+CLUSTER_MODE=k3s QWEN_HELLO_PROFILE=host-direct REQUIRE_DIRECT_GDS=true make nvkind-e2e-qwen-quick
 ```

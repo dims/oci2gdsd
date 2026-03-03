@@ -78,6 +78,10 @@ spec:
         emptyDir: {}
       - name: oci2gdsd-bin
         emptyDir: {}
+      - name: run-udev
+        hostPath:
+          path: /run/udev
+          type: Directory
       initContainers:
       - name: preload-model
         image: __OCI2GDSD_IMAGE__
@@ -109,6 +113,9 @@ spec:
       - name: pytorch-api
         image: __PYTORCH_RUNTIME_IMAGE__
         imagePullPolicy: IfNotPresent
+        securityContext:
+          runAsUser: 0
+          runAsGroup: 0
         command: ["/bin/sh", "-ec"]
         args:
         - |
@@ -1139,9 +1146,9 @@ spec:
         - name: OCI2GDS_SAMPLE_BYTES_PER_SHARD
           value: "8388608"
         - name: OCI2GDS_STRICT
-          value: "false"
+          value: "__OCI2GDS_STRICT__"
         - name: OCI2GDS_PROBE_STRICT
-          value: "false"
+          value: "__OCI2GDS_PROBE_STRICT__"
         - name: HF_HOME
           value: "/tmp/hf-cache"
         - name: XDG_CACHE_HOME
@@ -1185,6 +1192,9 @@ spec:
           readOnly: false
         - name: oci2gdsd-bin
           mountPath: /oci2gdsd-bin
+          readOnly: true
+        - name: run-udev
+          mountPath: /run/udev
           readOnly: true
 ---
 apiVersion: v1
