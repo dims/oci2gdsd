@@ -3,6 +3,8 @@
 This harness provisions a local `nvkind` Kubernetes cluster (works on Brev GPU instances), preloads an OCI model with `oci2gdsd` in an init container, runs a GPU-backed PyTorch smoke workload, and validates model lifecycle transitions (`READY` -> `RELEASED`).
 It is designed to run directly by an operator on a machine and does not require GitHub Actions.
 
+For host/provider qualification and strict direct-GDS recreate steps, see [`docs/direct-gds-recreate-runbook.md`](../../docs/direct-gds-recreate-runbook.md).
+
 ## What it validates
 
 - GPU-enabled Kubernetes with NVIDIA GPU Operator.

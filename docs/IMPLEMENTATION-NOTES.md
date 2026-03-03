@@ -44,3 +44,7 @@
 - Byte-size parsing
 - Profile lint valid/invalid cases
 - Verify contract (READY + metadata + shard digest/size)
+
+## Operational Runbooks
+
+- Direct GDS recreate runbook: [direct-gds-recreate-runbook.md](direct-gds-recreate-runbook.md)
