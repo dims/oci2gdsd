@@ -31,6 +31,10 @@ Pass condition:
 
 1. `gdscheck -p` includes `NVMe : Supported`.
 2. NVMe device is visible in guest (`/dev/nvme*`).
+3. Free space gates for harness are satisfied (default):
+   - Docker data-root: at least `100 GiB` free (`MIN_FREE_GB_DOCKER`)
+   - k3s root (`/var/lib/rancher/k3s`): at least `50 GiB` free (`MIN_FREE_GB_K3S`)
+   - `OCI2GDSD_ROOT_PATH`: at least `20 GiB` free (`MIN_FREE_GB_OCI2GDS_ROOT`)
 
 Fast fail condition:
 
@@ -63,6 +67,22 @@ Mount NVMe with sane options for strict checks:
 ```bash
 sudo mkdir -p /mnt/nvme
 sudo mount -t ext4 -o rw,noatime,data=ordered /dev/nvme0n1p1 /mnt/nvme
+```
+
+Move Docker data-root to the larger mount before heavy pulls:
+
+```bash
+sudo mkdir -p /mnt/nvme/docker
+sudo tee /etc/docker/daemon.json >/dev/null <<'JSON'
+{
+  "data-root": "/mnt/nvme/docker",
+  "default-runtime": "nvidia",
+  "features": { "cdi": true },
+  "runtimes": { "nvidia": { "path": "nvidia-container-runtime", "args": [] } }
+}
+JSON
+sudo systemctl restart docker
+docker info --format '{{.DockerRootDir}}'
 ```
 
 Strict gdsio probe:

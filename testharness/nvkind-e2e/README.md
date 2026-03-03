@@ -28,6 +28,14 @@ make nvkind-e2e
 `make nvkind-e2e-prereq` validates cluster/runtime/image prerequisites and auto-installs host packages by default (`INSTALL_MISSING_PREREQS=true`).
 Set `INSTALL_MISSING_PREREQS=false` to run checks only.
 
+Default storage gates enforced by prereq:
+
+- `MIN_FREE_GB_DOCKER=100` on Docker `data-root`
+- `MIN_FREE_GB_K3S=50` on `/var/lib/rancher/k3s` when `CLUSTER_MODE=k3s`
+- `MIN_FREE_GB_OCI2GDS_ROOT=20` on `OCI2GDSD_ROOT_PATH`
+
+If any gate fails, prereq aborts with remediation steps (attach/mount larger disk and move Docker `data-root`).
+
 ## Quick iteration loop
 
 After one full `make nvkind-e2e` run has already created the cluster and packaged/pushed the model, use:
@@ -147,6 +155,9 @@ CLUSTER_NAME=oci2gdsd-e2e E2E_NAMESPACE=oci2gdsd-e2e make nvkind-e2e
 
 # Override CUDA toolkit locations used for local GDS preflight builds
 CUDA_INCLUDE_DIR=/usr/local/cuda/include CUDA_LIB_DIR=/usr/local/cuda/lib64 make nvkind-e2e
+
+# Override storage gates (GiB) if needed
+MIN_FREE_GB_DOCKER=150 MIN_FREE_GB_K3S=80 MIN_FREE_GB_OCI2GDS_ROOT=40 make nvkind-e2e-prereq
 ```
 
 ## Cleanup

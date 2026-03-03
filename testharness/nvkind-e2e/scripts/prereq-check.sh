@@ -69,6 +69,9 @@ else
   fi
 fi
 
+ensure_docker_access
+check_storage_prereqs
+
 if [[ "${CLUSTER_MODE}" == "k3s" ]]; then
   ensure_k3s_nvidia_runtime_prereqs
 fi

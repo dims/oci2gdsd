@@ -34,6 +34,9 @@ REQUIRE_DAEMON_IPC_PROBE="${REQUIRE_DAEMON_IPC_PROBE:-}"
 REQUIRE_DIRECT_GDS="${REQUIRE_DIRECT_GDS:-true}"
 OCI2GDS_DAEMON_ENABLE="${OCI2GDS_DAEMON_ENABLE:-1}"
 OCI2GDS_DAEMON_PROBE_SHARDS="${OCI2GDS_DAEMON_PROBE_SHARDS:-1}"
+MIN_FREE_GB_DOCKER="${MIN_FREE_GB_DOCKER:-100}"
+MIN_FREE_GB_K3S="${MIN_FREE_GB_K3S:-50}"
+MIN_FREE_GB_OCI2GDS_ROOT="${MIN_FREE_GB_OCI2GDS_ROOT:-20}"
 
 OCI2GDSD_IMAGE="${OCI2GDSD_IMAGE:-oci2gdsd:e2e}"
 OCI2GDSD_ENABLE_GDS_IMAGE="${OCI2GDSD_ENABLE_GDS_IMAGE:-false}"
@@ -101,6 +104,97 @@ maybe_sudo() {
     "$@"
   else
     sudo "$@"
+  fi
+}
+
+is_uint() {
+  [[ "${1}" =~ ^[0-9]+$ ]]
+}
+
+nearest_existing_path() {
+  local p="$1"
+  while [[ ! -e "${p}" ]]; do
+    local parent
+    parent="$(dirname "${p}")"
+    if [[ "${parent}" == "${p}" ]]; then
+      break
+    fi
+    p="${parent}"
+  done
+  echo "${p}"
+}
+
+path_available_kb() {
+  local p="$1"
+  local existing
+  existing="$(nearest_existing_path "${p}")"
+  df -Pk "${existing}" | awk 'NR==2 {print $4}'
+}
+
+path_mountpoint() {
+  local p="$1"
+  local existing
+  existing="$(nearest_existing_path "${p}")"
+  df -Pk "${existing}" | awk 'NR==2 {print $6}'
+}
+
+emit_storage_remediation() {
+  cat >&2 <<'EOF'
+Storage remediation options:
+1. Attach/mount a larger data disk (prefer local NVMe), for example at /mnt/nvme.
+2. Move Docker data-root to that disk:
+   sudo mkdir -p /mnt/nvme/docker
+   sudo tee /etc/docker/daemon.json >/dev/null <<JSON
+   {
+     "data-root": "/mnt/nvme/docker",
+     "default-runtime": "nvidia",
+     "features": { "cdi": true },
+     "runtimes": { "nvidia": { "path": "nvidia-container-runtime", "args": [] } }
+   }
+JSON
+   sudo systemctl restart docker
+3. For k3s, keep /var/lib/rancher/k3s and OCI2GDSD_ROOT_PATH on high-capacity mounts.
+4. As a temporary fallback only, prune local artifacts:
+   docker system prune -af --volumes
+EOF
+}
+
+check_path_free_gb() {
+  local label="$1"
+  local path="$2"
+  local min_gb="$3"
+  local avail_kb required_kb avail_gb mountpoint
+
+  is_uint "${min_gb}" || die "${label} minimum free space is not numeric: ${min_gb}"
+  avail_kb="$(path_available_kb "${path}")"
+  required_kb=$((min_gb * 1024 * 1024))
+  avail_gb=$((avail_kb / 1024 / 1024))
+  mountpoint="$(path_mountpoint "${path}")"
+
+  log "${label}: path=${path} mount=${mountpoint} available=${avail_gb}GiB required=${min_gb}GiB"
+  if (( avail_kb < required_kb )); then
+    emit_storage_remediation
+    die "${label} has insufficient free space: ${avail_gb}GiB available < ${min_gb}GiB required (path=${path}, mount=${mountpoint})"
+  fi
+}
+
+check_storage_prereqs() {
+  mkdir -p "${WORK_DIR}/results"
+  local report="${WORK_DIR}/results/storage-prereq.txt"
+  {
+    echo "# storage preflight $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    df -h
+  } > "${report}" 2>&1 || true
+
+  local docker_root
+  docker_root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)"
+  [[ -n "${docker_root}" ]] || die "failed to detect DockerRootDir from docker info"
+
+  check_path_free_gb "docker data-root" "${docker_root}" "${MIN_FREE_GB_DOCKER}"
+  check_path_free_gb "oci2gdsd root path" "${OCI2GDSD_ROOT_PATH}" "${MIN_FREE_GB_OCI2GDS_ROOT}"
+
+  if [[ "${CLUSTER_MODE}" == "k3s" ]]; then
+    check_path_free_gb "k3s data root" "/var/lib/rancher/k3s" "${MIN_FREE_GB_K3S}"
   fi
 }
 

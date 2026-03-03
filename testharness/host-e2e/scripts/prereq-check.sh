@@ -11,6 +11,9 @@ PYTORCH_RUNTIME_IMAGE="${PYTORCH_RUNTIME_IMAGE:-nvcr.io/nvidia/ai-dynamo/vllm-ru
 REQUIRE_DIRECT_GDS="${REQUIRE_DIRECT_GDS:-true}"
 REQUIRE_NVFS_STATS_DELTA="${REQUIRE_NVFS_STATS_DELTA:-false}"
 INSTALL_MISSING_PREREQS="${INSTALL_MISSING_PREREQS:-true}"
+OCI2GDSD_ROOT_PATH="${OCI2GDSD_ROOT_PATH:-/mnt/nvme/oci2gdsd}"
+MIN_FREE_GB_DOCKER="${MIN_FREE_GB_DOCKER:-80}"
+MIN_FREE_GB_MODEL_ROOT="${MIN_FREE_GB_MODEL_ROOT:-20}"
 
 APT_UPDATED=0
 
@@ -44,6 +47,87 @@ is_true() {
     1|true|yes|on) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+is_uint() {
+  [[ "${1}" =~ ^[0-9]+$ ]]
+}
+
+nearest_existing_path() {
+  local p="$1"
+  while [[ ! -e "${p}" ]]; do
+    local parent
+    parent="$(dirname "${p}")"
+    if [[ "${parent}" == "${p}" ]]; then
+      break
+    fi
+    p="${parent}"
+  done
+  echo "${p}"
+}
+
+path_available_kb() {
+  local p="$1"
+  local existing
+  existing="$(nearest_existing_path "${p}")"
+  df -Pk "${existing}" | awk 'NR==2 {print $4}'
+}
+
+path_mountpoint() {
+  local p="$1"
+  local existing
+  existing="$(nearest_existing_path "${p}")"
+  df -Pk "${existing}" | awk 'NR==2 {print $6}'
+}
+
+emit_storage_remediation() {
+  cat >&2 <<'EOF'
+Storage remediation options:
+1. Attach/mount a larger data disk (prefer local NVMe), for example at /mnt/nvme.
+2. Move Docker data-root to that disk:
+   sudo mkdir -p /mnt/nvme/docker
+   sudo tee /etc/docker/daemon.json >/dev/null <<JSON
+   {
+     "data-root": "/mnt/nvme/docker",
+     "default-runtime": "nvidia",
+     "features": { "cdi": true },
+     "runtimes": { "nvidia": { "path": "nvidia-container-runtime", "args": [] } }
+   }
+JSON
+   sudo systemctl restart docker
+3. Place OCI2GDSD_ROOT_PATH on the larger disk, e.g.:
+   OCI2GDSD_ROOT_PATH=/mnt/nvme/oci2gdsd
+4. As a temporary fallback only, prune local artifacts:
+   docker system prune -af --volumes
+EOF
+}
+
+check_path_free_gb() {
+  local label="$1"
+  local path="$2"
+  local min_gb="$3"
+  local avail_kb required_kb avail_gb mountpoint
+
+  is_uint "${min_gb}" || die "${label} minimum free space is not numeric: ${min_gb}"
+  avail_kb="$(path_available_kb "${path}")"
+  required_kb=$((min_gb * 1024 * 1024))
+  avail_gb=$((avail_kb / 1024 / 1024))
+  mountpoint="$(path_mountpoint "${path}")"
+
+  log "${label}: path=${path} mount=${mountpoint} available=${avail_gb}GiB required=${min_gb}GiB"
+  if (( avail_kb < required_kb )); then
+    emit_storage_remediation
+    die "${label} has insufficient free space: ${avail_gb}GiB available < ${min_gb}GiB required (path=${path}, mount=${mountpoint})"
+  fi
+}
+
+check_storage_prereqs() {
+  local docker_root
+  docker_root="$(maybe_sudo docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)"
+  [[ -n "${docker_root}" ]] || die "failed to detect DockerRootDir from docker info"
+
+  check_path_free_gb "docker data-root" "${docker_root}" "${MIN_FREE_GB_DOCKER}"
+  check_path_free_gb "oci2gdsd root path" "${OCI2GDSD_ROOT_PATH}" "${MIN_FREE_GB_MODEL_ROOT}"
 }
 
 ensure_apt_available() {
@@ -144,6 +228,8 @@ command -v nvidia-smi >/dev/null 2>&1 || die "nvidia-smi not found; GPU runtime 
 if ! maybe_sudo docker info >/dev/null 2>&1; then
   die "docker daemon is not reachable"
 fi
+
+check_storage_prereqs
 
 if is_true "${REQUIRE_DIRECT_GDS}"; then
   gdscheck="$(gdscheck_binary || true)"

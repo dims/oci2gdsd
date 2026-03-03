@@ -26,6 +26,8 @@ Defaults:
 - `OCI2GDS_FORCE_NO_COMPAT=true` (default fail-fast: sets `CUFILE_ENV_PATH_JSON` with compat-mode disabled for the probe process)
 - `OCI2GDS_VALIDATE_SAMPLE_BYTES=true` (compares first 4KiB GPU-loaded bytes with host bytes per sampled shard)
 - `REQUIRE_NVFS_STATS_DELTA=false` (default relaxed because some direct-path environments still report zero `Ops` counters)
+- `MIN_FREE_GB_DOCKER=80` (fails fast when Docker data-root free space is below 80 GiB)
+- `MIN_FREE_GB_MODEL_ROOT=20` (fails fast when `OCI2GDSD_ROOT_PATH` free space is below 20 GiB)
 
 Assumptions:
 
@@ -45,6 +47,9 @@ OCI2GDS_STRICT=false REQUIRE_DIRECT_GDS=false make host-e2e-qwen-quick
 
 # Tighten nvfs counter requirement explicitly (optional)
 REQUIRE_NVFS_STATS_DELTA=true make host-e2e-qwen-quick
+
+# Override storage gates (GiB) if your model/image footprint differs
+MIN_FREE_GB_DOCKER=120 MIN_FREE_GB_MODEL_ROOT=40 make host-e2e-prereq
 ```
 
 ## Output
@@ -76,3 +81,20 @@ REQUIRE_NVFS_STATS_DELTA=true make host-e2e-qwen-quick
 
 If strict no-compat init fails (for example `cuFileDriverOpen failed` under `OCI2GDS_FORCE_NO_COMPAT=true`), the harness now fails fast with an explicit error.
 That is intentional under fail-fast defaults; only use `OCI2GDS_FORCE_NO_COMPAT=false` temporarily for debugging.
+
+## Storage remediation
+
+When `host-e2e-prereq` fails with an insufficient-space error, use a larger mounted disk (prefer NVMe) and move Docker storage there:
+
+```bash
+sudo mkdir -p /mnt/nvme/docker
+sudo tee /etc/docker/daemon.json >/dev/null <<'JSON'
+{
+  "data-root": "/mnt/nvme/docker",
+  "default-runtime": "nvidia",
+  "features": { "cdi": true },
+  "runtimes": { "nvidia": { "path": "nvidia-container-runtime", "args": [] } }
+}
+JSON
+sudo systemctl restart docker
+```
