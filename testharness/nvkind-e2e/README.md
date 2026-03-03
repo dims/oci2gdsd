@@ -101,10 +101,13 @@ PRELOAD_PYTORCH_RUNTIME_IMAGE=true make nvkind-e2e
 # (default: true when OCI2GDSD_ENABLE_GDS_IMAGE=true, otherwise false)
 REQUIRE_DAEMON_IPC_PROBE=true make nvkind-e2e
 
-# Optional: require direct GDS reads in qwen-hello profile probe
-# Runs host preflight (`gdscheck -p`) and fails if NVMe direct support is unavailable,
-# then fails if mode_counts.direct is 0.
-REQUIRE_DIRECT_GDS=true make nvkind-e2e-qwen-quick
+# Default behavior is fail-fast GDS mode:
+# - REQUIRE_DIRECT_GDS=true
+# - OCI2GDS_STRICT=true
+# - OCI2GDS_PROBE_STRICT=true
+# - OCI2GDS_FORCE_NO_COMPAT=true
+# You can still set them explicitly:
+REQUIRE_DIRECT_GDS=true OCI2GDS_STRICT=true OCI2GDS_PROBE_STRICT=true OCI2GDS_FORCE_NO_COMPAT=true make nvkind-e2e-qwen-quick
 
 # qwen-hello profile selection:
 # - `default`: generic settings
@@ -115,8 +118,8 @@ QWEN_HELLO_PROFILE=host-direct make nvkind-e2e-qwen-quick
 # Override root path used by init/app pod hostPath (defaults to /mnt/nvme/oci2gdsd in host-direct).
 OCI2GDSD_ROOT_PATH=/mnt/nvme/oci2gdsd make nvkind-e2e-qwen-quick
 
-# Override strict probe behavior (host-direct defaults these to true unless explicitly set).
-OCI2GDS_STRICT=true OCI2GDS_PROBE_STRICT=true make nvkind-e2e-qwen-quick
+# Explicit opt-out (debug only): relax strict/direct enforcement.
+REQUIRE_DIRECT_GDS=false OCI2GDS_STRICT=false OCI2GDS_PROBE_STRICT=false OCI2GDS_FORCE_NO_COMPAT=false make nvkind-e2e-qwen-quick
 
 # Build a GDS-capable oci2gdsd image for init/daemon containers
 OCI2GDSD_ENABLE_GDS_IMAGE=true REQUIRE_DAEMON_IPC_PROBE=true make nvkind-e2e

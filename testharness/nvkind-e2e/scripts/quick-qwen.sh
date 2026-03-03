@@ -46,6 +46,7 @@ log "cluster_mode=${CLUSTER_MODE} ($(cluster_hint))"
 log "qwen_hello_profile=${QWEN_HELLO_PROFILE}"
 log "oci2gdsd_root_path=${OCI2GDSD_ROOT_PATH}"
 log "oci2gds_strict=${OCI2GDS_STRICT} oci2gds_probe_strict=${OCI2GDS_PROBE_STRICT}"
+log "oci2gds_force_no_compat=${OCI2GDS_FORCE_NO_COMPAT}"
 log "require_direct_gds=${REQUIRE_DIRECT_GDS}"
 
 if [[ "${REQUIRE_DIRECT_GDS}" == "true" ]]; then

@@ -112,10 +112,34 @@ func (h *handler) handleGPULoad(w http.ResponseWriter, r *http.Request) {
 		writeMethodNotAllowed(w)
 		return
 	}
-	var req app.GPULoadRequest
-	if err := decodeJSONBody(r, &req); err != nil {
+	var wireReq struct {
+		ModelID     string `json:"model_id"`
+		Digest      string `json:"digest"`
+		Path        string `json:"path"`
+		LeaseHolder string `json:"lease_holder"`
+		Device      int    `json:"device"`
+		ChunkBytes  int64  `json:"chunk_bytes"`
+		MaxShards   int    `json:"max_shards"`
+		Strict      *bool  `json:"strict"`
+		Mode        string `json:"mode"`
+	}
+	if err := decodeJSONBody(r, &wireReq); err != nil {
 		writeAppError(w, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid gpu load request body", err))
 		return
+	}
+	req := app.GPULoadRequest{
+		ModelID:     wireReq.ModelID,
+		Digest:      wireReq.Digest,
+		Path:        wireReq.Path,
+		LeaseHolder: wireReq.LeaseHolder,
+		Device:      wireReq.Device,
+		ChunkBytes:  wireReq.ChunkBytes,
+		MaxShards:   wireReq.MaxShards,
+		Mode:        wireReq.Mode,
+		Strict:      true,
+	}
+	if wireReq.Strict != nil {
+		req.Strict = *wireReq.Strict
 	}
 	if strings.TrimSpace(req.Mode) == "" {
 		req.Mode = "persistent"

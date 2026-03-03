@@ -565,6 +565,24 @@ spec:
           _NATIVE_ERROR = ""
           _IPC_NATIVE_MODULE = None
           _IPC_NATIVE_ERROR = ""
+          _CUFILE_ENV_PATH = ""
+
+          def _force_no_compat():
+              raw = os.environ.get("OCI2GDS_FORCE_NO_COMPAT", "true").strip().lower()
+              return raw in {"1", "true", "yes", "on"}
+
+          def _configure_cufile_env():
+              if not _force_no_compat():
+                  return ""
+              cfg_path = Path("/tmp/cufile-qwen-hello.json")
+              cfg = {
+                  "logging": {"level": "ERROR"},
+                  "profile": {"cufile_stats": 3},
+                  "properties": {"allow_compat_mode": False},
+              }
+              cfg_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+              os.environ["CUFILE_ENV_PATH_JSON"] = str(cfg_path)
+              return str(cfg_path)
 
           def _native_enabled():
               flag = os.environ.get("OCI2GDS_TORCH_ENABLE_NATIVE", "1").strip().lower()
@@ -608,6 +626,11 @@ spec:
                       module.init_native()
                   return module, ""
               except Exception as exc:
+                  if _force_no_compat():
+                      return None, (
+                          f"native build/load failed with OCI2GDS_FORCE_NO_COMPAT=true "
+                          f"(CUFILE_ENV_PATH_JSON={os.environ.get('CUFILE_ENV_PATH_JSON', '')}): {exc}"
+                      )
                   return None, f"native build/load failed: {exc}"
 
           def _load_ipc_native_module():
@@ -709,6 +732,10 @@ spec:
                           fallback = _fallback_read_into_tensor(path, tensor, int(offset), int(length))
                           fallback["reason"] = f"native_error:{exc}"
                           return fallback
+                  if strict:
+                      raise RuntimeError(
+                          f"strict direct path requested but native backend unavailable: {_NATIVE_ERROR}"
+                      )
                   return _fallback_read_into_tensor(path, tensor, int(offset), int(length))
 
               def _load_profile(profile_json, device, strict, chunk_bytes, sample_bytes):
@@ -731,6 +758,10 @@ spec:
                           "mode_counts": "{}",
                           "reason_counts": "{}",
                       }
+                  if bool(strict) and _NATIVE_MODULE is None:
+                      raise RuntimeError(
+                          f"strict direct path requested but native backend unavailable: {_NATIVE_ERROR}"
+                      )
                   mode_counts = {}
                   reason_counts = {}
                   shards_sampled = 0
@@ -795,10 +826,13 @@ spec:
               impl_lib.impl("read_into_tensor", _read_into_tensor)
               impl_lib.impl("load_profile", _load_profile)
 
+          _CUFILE_ENV_PATH = _configure_cufile_env()
           _register_oci2gds_ops()
           oci2gds_backend = {
               "backend": "native-cufile" if _NATIVE_MODULE is not None else "python-fallback",
               "native_error": _NATIVE_ERROR,
+              "force_no_compat": _force_no_compat(),
+              "cufile_env_path": _CUFILE_ENV_PATH,
           }
           _IPC_NATIVE_MODULE, _IPC_NATIVE_ERROR = _load_ipc_native_module()
 
@@ -1035,8 +1069,8 @@ spec:
           top_p = float(os.environ.get("TOP_P", "0.95"))
           oci2gds_chunk_bytes = int(os.environ.get("OCI2GDS_CHUNK_BYTES", str(4 * 1024 * 1024)))
           oci2gds_sample_bytes = int(os.environ.get("OCI2GDS_SAMPLE_BYTES_PER_SHARD", str(8 * 1024 * 1024)))
-          oci2gds_strict = os.environ.get("OCI2GDS_STRICT", "false").strip().lower() in {"1", "true", "yes"}
-          oci2gds_probe_strict = os.environ.get("OCI2GDS_PROBE_STRICT", "false").strip().lower() in {"1", "true", "yes"}
+          oci2gds_strict = os.environ.get("OCI2GDS_STRICT", "true").strip().lower() in {"1", "true", "yes"}
+          oci2gds_probe_strict = os.environ.get("OCI2GDS_PROBE_STRICT", "true").strip().lower() in {"1", "true", "yes"}
           device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
           if device.type == "cuda" and hasattr(torch.cuda, "is_bf16_supported") and torch.cuda.is_bf16_supported():
               torch_dtype = torch.bfloat16
@@ -1190,6 +1224,8 @@ spec:
           value: "__OCI2GDS_STRICT__"
         - name: OCI2GDS_PROBE_STRICT
           value: "__OCI2GDS_PROBE_STRICT__"
+        - name: OCI2GDS_FORCE_NO_COMPAT
+          value: "__OCI2GDS_FORCE_NO_COMPAT__"
         - name: HF_HOME
           value: "/tmp/hf-cache"
         - name: XDG_CACHE_HOME

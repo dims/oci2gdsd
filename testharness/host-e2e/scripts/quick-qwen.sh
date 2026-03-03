@@ -16,9 +16,9 @@ OCI2GDS_CHUNK_BYTES="${OCI2GDS_CHUNK_BYTES:-4194304}"
 OCI2GDS_SAMPLE_BYTES_PER_SHARD="${OCI2GDS_SAMPLE_BYTES_PER_SHARD:-8388608}"
 OCI2GDS_STRICT="${OCI2GDS_STRICT:-true}"
 REQUIRE_DIRECT_GDS="${REQUIRE_DIRECT_GDS:-true}"
-OCI2GDS_FORCE_NO_COMPAT="${OCI2GDS_FORCE_NO_COMPAT:-false}"
+OCI2GDS_FORCE_NO_COMPAT="${OCI2GDS_FORCE_NO_COMPAT:-true}"
 OCI2GDS_VALIDATE_SAMPLE_BYTES="${OCI2GDS_VALIDATE_SAMPLE_BYTES:-true}"
-REQUIRE_NVFS_STATS_DELTA="${REQUIRE_NVFS_STATS_DELTA:-false}"
+REQUIRE_NVFS_STATS_DELTA="${REQUIRE_NVFS_STATS_DELTA:-true}"
 
 _ts() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
@@ -26,6 +26,10 @@ _ts() {
 
 log() {
   echo "[$(_ts)] $*"
+}
+
+warn() {
+  echo "[$(_ts)] WARN: $*" >&2
 }
 
 die() {
@@ -119,6 +123,25 @@ run_gds_preflight() {
   log "gdscheck preflight passed (report: ${report})"
 }
 
+check_nvfs_rw_stats_state() {
+  local f="/sys/module/nvidia_fs/parameters/rw_stats_enabled"
+  if [[ ! -r "${f}" ]]; then
+    warn "cannot read ${f}; nvfs counter assertions may be unavailable"
+    return 0
+  fi
+  local v
+  v="$(cat "${f}" 2>/dev/null || true)"
+  if [[ "${v}" == "1" ]]; then
+    log "nvidia-fs rw_stats_enabled=1 (kernel counters enabled)"
+    return 0
+  fi
+  warn "nvidia-fs rw_stats_enabled=${v:-unknown} (kernel IO counters disabled)"
+  warn "enable with: sudo sh -c 'echo 1 > /sys/module/nvidia_fs/parameters/rw_stats_enabled'"
+  if is_true "${REQUIRE_NVFS_STATS_DELTA}"; then
+    die "REQUIRE_NVFS_STATS_DELTA=true requires rw_stats_enabled=1"
+  fi
+}
+
 run_host_probe() {
   local probe_log="${RESULTS_DIR}/host-qwen-gds.log"
   local probe_script="${SCRIPT_DIR}/host_qwen_probe.py"
@@ -148,6 +171,19 @@ run_host_probe() {
   summary="$(grep '^HOST_QWEN_GDS_PROBE ' "${probe_log}" | tail -n1 | cut -d' ' -f2- || true)"
   [[ -n "${summary}" ]] || die "probe summary missing in ${probe_log}"
   printf '%s\n' "${summary}" | jq .
+  local io_stats_enabled
+  local rw_stats_enabled
+  local read_delta
+  local batch_delta
+  io_stats_enabled="$(printf '%s\n' "${summary}" | jq -r 'if (.nvfs_ops_before | has("io_stats_enabled")) then (.nvfs_ops_before.io_stats_enabled | tostring) else "unknown" end' 2>/dev/null || true)"
+  rw_stats_enabled="$(printf '%s\n' "${summary}" | jq -r 'if (.nvfs_ops_before | has("rw_stats_enabled")) then (.nvfs_ops_before.rw_stats_enabled | tostring) else "unknown" end' 2>/dev/null || true)"
+  read_delta="$(printf '%s\n' "${summary}" | jq -r '.nvfs_ops_delta.read // 0' 2>/dev/null || true)"
+  batch_delta="$(printf '%s\n' "${summary}" | jq -r '.nvfs_ops_delta.batchio // 0' 2>/dev/null || true)"
+  if [[ "${io_stats_enabled}" != "true" || "${rw_stats_enabled}" != "true" ]]; then
+    warn "nvfs IO stats appear disabled in probe (io_stats_enabled=${io_stats_enabled}, rw_stats_enabled=${rw_stats_enabled}); counter-based proof is not available"
+  else
+    log "nvfs counter deltas: read=${read_delta} batchio=${batch_delta}"
+  fi
   log "host qwen probe succeeded (artifact: ${probe_log})"
 }
 
@@ -166,4 +202,5 @@ if is_true "${REQUIRE_DIRECT_GDS}"; then
   run_gds_preflight
 fi
 
+check_nvfs_rw_stats_state
 run_host_probe

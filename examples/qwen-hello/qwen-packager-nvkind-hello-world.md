@@ -134,8 +134,9 @@ export OCI2GDSD_ROOT_PATH="/var/lib/oci2gdsd"
 export QWEN_HELLO_NAMESPACE="qwen-hello"
 export LEASE_HOLDER="qwen-hello"
 export PYTORCH_RUNTIME_IMAGE="nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1"
-export OCI2GDS_STRICT="false"
-export OCI2GDS_PROBE_STRICT="false"
+export OCI2GDS_STRICT="true"
+export OCI2GDS_PROBE_STRICT="true"
+export OCI2GDS_FORCE_NO_COMPAT="true"
 export MODEL_ROOT_PATH="${OCI2GDSD_ROOT_PATH}/models/${MODEL_ID}/${MODEL_DIGEST//:/-}"
 # Optional: force pure Python fallback probe backend (skip native extension build)
 # export OCI2GDS_TORCH_ENABLE_NATIVE="0"
@@ -150,6 +151,7 @@ gsed -i "s|__OCI2GDSD_IMAGE__|${OCI2GDSD_IMAGE}|g" /tmp/qwen-nvkind-hello.yaml
 gsed -i "s|__OCI2GDSD_ROOT_PATH__|${OCI2GDSD_ROOT_PATH}|g" /tmp/qwen-nvkind-hello.yaml
 gsed -i "s|__OCI2GDS_STRICT__|${OCI2GDS_STRICT}|g" /tmp/qwen-nvkind-hello.yaml
 gsed -i "s|__OCI2GDS_PROBE_STRICT__|${OCI2GDS_PROBE_STRICT}|g" /tmp/qwen-nvkind-hello.yaml
+gsed -i "s|__OCI2GDS_FORCE_NO_COMPAT__|${OCI2GDS_FORCE_NO_COMPAT}|g" /tmp/qwen-nvkind-hello.yaml
 gsed -i "s|__PYTORCH_RUNTIME_IMAGE__|${PYTORCH_RUNTIME_IMAGE}|g" /tmp/qwen-nvkind-hello.yaml
 gsed -i "s|__LEASE_HOLDER__|${LEASE_HOLDER}|g" /tmp/qwen-nvkind-hello.yaml
 

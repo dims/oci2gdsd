@@ -42,12 +42,8 @@ def configure_cufile_env(force_no_compat: bool) -> str:
     cfg_path = Path("/tmp/cufile-host-e2e.json")
     cfg = {
         "logging": {"level": "ERROR"},
-        "properties": {
-            "allow_compat_mode": False,
-            "use_compat_mode": False,
-            "force_compat_mode": False,
-            "force_odirect_mode": True,
-        },
+        "profile": {"cufile_stats": 3},
+        "properties": {"allow_compat_mode": False},
     }
     cfg_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     os.environ["CUFILE_ENV_PATH_JSON"] = str(cfg_path)
@@ -55,11 +51,27 @@ def configure_cufile_env(force_no_compat: bool) -> str:
 
 
 def read_nvfs_ops() -> dict:
-    out = {"available": False, "read": 0, "write": 0, "batchio": 0}
+    out = {
+        "available": False,
+        "read": 0,
+        "write": 0,
+        "batchio": 0,
+        "io_stats_enabled": None,
+        "rw_stats_enabled": None,
+    }
+    rw_param = Path("/sys/module/nvidia_fs/parameters/rw_stats_enabled")
+    if rw_param.exists():
+        try:
+            out["rw_stats_enabled"] = rw_param.read_text(encoding="utf-8", errors="ignore").strip() == "1"
+        except Exception:
+            pass
     p = Path("/proc/driver/nvidia-fs/stats")
     if not p.exists():
         return out
     text = p.read_text(encoding="utf-8", errors="ignore")
+    m_state = re.search(r"IO stats:\s*(Enabled|Disabled)", text)
+    if m_state:
+        out["io_stats_enabled"] = m_state.group(1).strip().lower() == "enabled"
     m = re.search(r"Ops\s*:\s*Read=(\d+)\s+Write=(\d+)\s+BatchIO=(\d+)", text)
     if not m:
         return out
@@ -70,7 +82,7 @@ def read_nvfs_ops() -> dict:
     return out
 
 
-def build_native_module():
+def build_native_module(force_no_compat: bool, cufile_env_path: str):
     code = r"""
 #include <torch/extension.h>
 #include <pybind11/pybind11.h>
@@ -317,7 +329,18 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         build_directory=str(build_dir),
         verbose=parse_bool("OCI2GDS_TORCH_NATIVE_VERBOSE", False),
     )
-    module.init_native()
+    try:
+        module.init_native()
+    except Exception as exc:
+        if force_no_compat:
+            raise RuntimeError(
+                "native cuFile init failed with OCI2GDS_FORCE_NO_COMPAT=true "
+                f"(CUFILE_ENV_PATH_JSON={cufile_env_path}); "
+                "if this platform/runtime cannot run with compat disabled, "
+                "keep fail-fast defaults and fix platform, or temporarily set "
+                "OCI2GDS_FORCE_NO_COMPAT=false only for debugging"
+            ) from exc
+        raise
     return module
 
 
@@ -328,7 +351,7 @@ def main() -> None:
     require_direct = parse_bool("REQUIRE_DIRECT_GDS", True)
     force_no_compat = parse_bool("OCI2GDS_FORCE_NO_COMPAT", True)
     validate_sample_bytes = parse_bool("OCI2GDS_VALIDATE_SAMPLE_BYTES", True)
-    require_nvfs_stats_delta = parse_bool("REQUIRE_NVFS_STATS_DELTA", False)
+    require_nvfs_stats_delta = parse_bool("REQUIRE_NVFS_STATS_DELTA", True)
     chunk_bytes = int(os.environ.get("OCI2GDS_CHUNK_BYTES", str(4 * 1024 * 1024)))
     sample_bytes = int(os.environ.get("OCI2GDS_SAMPLE_BYTES_PER_SHARD", str(8 * 1024 * 1024)))
     model_id = os.environ.get("MODEL_ID", "")
@@ -347,7 +370,7 @@ def main() -> None:
     cufile_env_path = configure_cufile_env(force_no_compat)
     nvfs_before = read_nvfs_ops()
 
-    module = build_native_module()
+    module = build_native_module(force_no_compat=force_no_compat, cufile_env_path=cufile_env_path)
 
     mode_counts = {}
     reason_counts = {}
@@ -431,6 +454,12 @@ def main() -> None:
     if require_nvfs_stats_delta:
         if not nvfs_delta["available"]:
             raise RuntimeError("REQUIRE_NVFS_STATS_DELTA=true but /proc/driver/nvidia-fs/stats is unavailable")
+        if nvfs_before.get("io_stats_enabled") is False or nvfs_before.get("rw_stats_enabled") is False:
+            raise RuntimeError(
+                "REQUIRE_NVFS_STATS_DELTA=true but nvidia-fs IO stats are disabled "
+                f"(io_stats_enabled={nvfs_before.get('io_stats_enabled')}, "
+                f"rw_stats_enabled={nvfs_before.get('rw_stats_enabled')})"
+            )
         if int(nvfs_delta["read"]) <= 0 and int(nvfs_delta["batchio"]) <= 0:
             raise RuntimeError(
                 "REQUIRE_NVFS_STATS_DELTA=true but nvfs Ops counters did not increase "
