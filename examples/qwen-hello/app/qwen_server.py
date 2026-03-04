@@ -2,6 +2,7 @@ import json
 import os
 import socket
 import shutil
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -195,11 +196,17 @@ def _register_oci2gds_ops():
                 "bytes_sampled": "0",
                 "mode_counts": "{}",
                 "reason_counts": "{}",
+                "force_no_compat": "true" if _force_no_compat() else "false",
+                "cufile_env_path": _CUFILE_ENV_PATH,
+                "cufile_init_ok": "true" if _NATIVE_MODULE is not None else "false",
+                "duration_ms": "0",
+                "throughput_mib_s": "0.00",
             }
         if bool(strict) and _NATIVE_MODULE is None:
             raise RuntimeError(
                 f"strict direct path requested but native backend unavailable: {_NATIVE_ERROR}"
             )
+        start_ns = time.monotonic_ns()
         mode_counts = {}
         reason_counts = {}
         shards_sampled = 0
@@ -248,6 +255,11 @@ def _register_oci2gds_ops():
                 except Exception:
                     pass
             torch.cuda.synchronize(target)
+        elapsed_ms = max(0, int((time.monotonic_ns() - start_ns) / 1_000_000))
+        if elapsed_ms > 0:
+            throughput_mib_s = (float(bytes_sampled) / (1024.0 * 1024.0)) / (float(elapsed_ms) / 1000.0)
+        else:
+            throughput_mib_s = 0.0
         backend_name = "native-cufile" if _NATIVE_MODULE is not None else "python-fallback"
         return {
             "status": "ok",
@@ -259,6 +271,11 @@ def _register_oci2gds_ops():
             "bytes_sampled": str(bytes_sampled),
             "mode_counts": json.dumps(mode_counts, sort_keys=True),
             "reason_counts": json.dumps(reason_counts, sort_keys=True),
+            "force_no_compat": "true" if _force_no_compat() else "false",
+            "cufile_env_path": _CUFILE_ENV_PATH,
+            "cufile_init_ok": "true" if _NATIVE_MODULE is not None else "false",
+            "duration_ms": str(elapsed_ms),
+            "throughput_mib_s": f"{throughput_mib_s:.2f}",
         }
 
     impl_lib.impl("read_into_tensor", _read_into_tensor)
@@ -543,6 +560,11 @@ except Exception as exc:
         "bytes_sampled": "0",
         "mode_counts": "{}",
         "reason_counts": "{}",
+        "force_no_compat": "true" if _force_no_compat() else "false",
+        "cufile_env_path": _CUFILE_ENV_PATH,
+        "cufile_init_ok": "true" if _NATIVE_MODULE is not None else "false",
+        "duration_ms": "0",
+        "throughput_mib_s": "0.00",
     }
 print("OCI2GDS_PROFILE_PROBE " + json.dumps(oci2gds_profile, sort_keys=True), flush=True)
 

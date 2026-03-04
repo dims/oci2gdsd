@@ -254,7 +254,7 @@ Enable counters:
 sudo sh -c 'echo 1 > /sys/module/nvidia_fs/parameters/rw_stats_enabled'
 ```
 
-Repo default currently keeps `REQUIRE_NVFS_STATS_DELTA=false` to avoid false negatives in environments where counters remain unavailable. Treat this as a visibility limitation, not proof of non-direct path by itself.
+Repo default now uses `REQUIRE_NVFS_STATS_DELTA_MODE=auto` to avoid false negatives in environments where counters remain unavailable. Use `REQUIRE_NVFS_STATS_DELTA_MODE=required` for hard counter gating when you know counters are enabled.
 
 ## 11) Quick Target Fails Due To Model Identity
 

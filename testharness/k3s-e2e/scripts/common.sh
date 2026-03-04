@@ -46,14 +46,21 @@ SKIP_OCI2GDSD_IMAGE_BUILD="${SKIP_OCI2GDSD_IMAGE_BUILD:-false}"
 SKIP_OCI2GDSD_IMAGE_LOAD="${SKIP_OCI2GDSD_IMAGE_LOAD:-false}"
 FORCE_OCI2GDSD_IMAGE_REBUILD="${FORCE_OCI2GDSD_IMAGE_REBUILD:-false}"
 PACKAGER_IMAGE="${PACKAGER_IMAGE:-oci2gdsd-qwen3-packager:local}"
-VLLM_RUNTIME_IMAGE="${VLLM_RUNTIME_IMAGE:-nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1}"
-PYTORCH_RUNTIME_IMAGE="${PYTORCH_RUNTIME_IMAGE:-nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1}"
-PRELOAD_PYTORCH_RUNTIME_IMAGE="${PRELOAD_PYTORCH_RUNTIME_IMAGE:-${PRELOAD_VLLM_RUNTIME_IMAGE:-false}}"
-PRELOAD_WORKLOAD_IMAGE="${PRELOAD_WORKLOAD_IMAGE:-false}"
+VLLM_RUNTIME_IMAGE="${VLLM_RUNTIME_IMAGE:-nvcr.io/nvidia/ai-dynamo/vllm-runtime@sha256:de8ac9afb52711b08169e0f58388528c091efae6fb367a6fcfa119edef4bb233}"
+PYTORCH_RUNTIME_IMAGE="${PYTORCH_RUNTIME_IMAGE:-${VLLM_RUNTIME_IMAGE}}"
+PRELOAD_PYTORCH_RUNTIME_IMAGE="${PRELOAD_PYTORCH_RUNTIME_IMAGE:-${PRELOAD_VLLM_RUNTIME_IMAGE:-true}}"
+PRELOAD_WORKLOAD_IMAGE="${PRELOAD_WORKLOAD_IMAGE:-true}"
 PYTORCH_IMAGE="${PYTORCH_IMAGE:-${PYTORCH_RUNTIME_IMAGE}}"
 QWEN_GDS_RUNTIME_IMAGE="${QWEN_GDS_RUNTIME_IMAGE:-oci2gdsd-qwen-runtime-gds:e2e}"
 BUILD_QWEN_GDS_RUNTIME_IMAGE="${BUILD_QWEN_GDS_RUNTIME_IMAGE:-false}"
 QWEN_GDS_RUNTIME_DOCKERFILE="${QWEN_GDS_RUNTIME_DOCKERFILE:-${REPO_ROOT}/examples/qwen-hello/Dockerfile.vllm-runtime-gds}"
+REQUIRE_STRICT_PROFILE_PROBE="${REQUIRE_STRICT_PROFILE_PROBE:-true}"
+REQUIRE_NO_COMPAT_EVIDENCE="${REQUIRE_NO_COMPAT_EVIDENCE:-true}"
+MIN_PROFILE_PROBE_MIB_S="${MIN_PROFILE_PROBE_MIB_S:-0}"
+PROFILE_PROBE_MAX_REGRESSION_PCT="${PROFILE_PROBE_MAX_REGRESSION_PCT:-0}"
+PROFILE_PROBE_BASELINE_FILE="${PROFILE_PROBE_BASELINE_FILE:-${WORK_DIR}/results/qwen-profile-probe-baseline.json}"
+RUNTIME_DRIFT_CHECKPOINTS="${RUNTIME_DRIFT_CHECKPOINTS:-true}"
+RECORD_ENVIRONMENT_REPORT="${RECORD_ENVIRONMENT_REPORT:-true}"
 
 if [[ -z "${REQUIRE_DAEMON_IPC_PROBE}" ]]; then
   REQUIRE_DAEMON_IPC_PROBE="${OCI2GDSD_ENABLE_GDS_IMAGE}"
@@ -761,6 +768,82 @@ ensure_gpu_capacity() {
   done
 }
 
+gpu_operator_device_plugin_ready() {
+  local ready desired
+  ready="$(kube -n gpu-operator get daemonset -l app=nvidia-device-plugin-daemonset -o jsonpath='{.items[0].status.numberReady}' 2>/dev/null || true)"
+  desired="$(kube -n gpu-operator get daemonset -l app=nvidia-device-plugin-daemonset -o jsonpath='{.items[0].status.desiredNumberScheduled}' 2>/dev/null || true)"
+  [[ -n "${ready}" && -n "${desired}" && "${ready}" == "${desired}" && "${desired}" != "0" ]]
+}
+
+write_environment_report() {
+  if [[ "${RECORD_ENVIRONMENT_REPORT}" != "true" ]]; then
+    return 0
+  fi
+  mkdir -p "${WORK_DIR}/results"
+  local out="${WORK_DIR}/results/environment-report.txt"
+  {
+    echo "# k3s-e2e environment $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "cluster_mode=${CLUSTER_MODE}"
+    echo "model_id=${MODEL_ID}"
+    echo "model_digest=${MODEL_DIGEST:-}"
+    echo "runtime_image=${PYTORCH_RUNTIME_IMAGE}"
+    echo "oci2gdsd_image=${OCI2GDSD_IMAGE}"
+    echo "strict=${OCI2GDS_STRICT}"
+    echo "probe_strict=${OCI2GDS_PROBE_STRICT}"
+    echo "force_no_compat=${OCI2GDS_FORCE_NO_COMPAT}"
+    echo "require_direct_gds=${REQUIRE_DIRECT_GDS}"
+    echo "docker_root=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)"
+    echo "kernel=$(uname -r)"
+    echo "---- nvidia-smi ----"
+    nvidia-smi || true
+    echo "---- k3s versions ----"
+    k3s --version || true
+    kube version -o yaml || true
+    echo "---- gpu operator ----"
+    helm_kube list -n gpu-operator || true
+    kube -n gpu-operator get pods -o wide || true
+    echo "---- node gpu allocatable ----"
+    kube get nodes -o custom-columns=NAME:.metadata.name,ALLOC:.status.allocatable.nvidia\\.com/gpu,CAP:.status.capacity.nvidia\\.com/gpu || true
+    echo "---- runtime image digest ----"
+    docker image inspect "${PYTORCH_RUNTIME_IMAGE}" --format '{{json .RepoDigests}}' 2>/dev/null || true
+    echo "---- gdscheck -p ----"
+    local gdscheck
+    gdscheck="$(gdscheck_binary || true)"
+    if [[ -n "${gdscheck}" ]]; then
+      maybe_sudo "${gdscheck}" -p || true
+    else
+      echo "gdscheck: unavailable"
+    fi
+    echo "---- nvfs stats ----"
+    cat /proc/driver/nvidia-fs/stats 2>/dev/null || true
+  } > "${out}" 2>&1
+  log "wrote environment report: ${out}"
+}
+
+runtime_drift_checkpoint() {
+  local label="$1"
+  if [[ "${RUNTIME_DRIFT_CHECKPOINTS}" != "true" ]]; then
+    return 0
+  fi
+  log "runtime drift checkpoint: ${label}"
+  if ! node_has_allocatable_gpu; then
+    die "runtime drift check failed (${label}): nvidia.com/gpu allocatable is missing"
+  fi
+  if ! gpu_operator_device_plugin_ready; then
+    kube -n gpu-operator get daemonset -l app=nvidia-device-plugin-daemonset -o wide || true
+    die "runtime drift check failed (${label}): nvidia-device-plugin daemonset is not ready"
+  fi
+  if [[ ! -d /run/udev ]]; then
+    die "runtime drift check failed (${label}): /run/udev missing on host"
+  fi
+  if ! ls /dev/nvidia-fs* >/dev/null 2>&1; then
+    die "runtime drift check failed (${label}): /dev/nvidia-fs* is missing"
+  fi
+  if [[ "${REQUIRE_DIRECT_GDS}" == "true" ]] && ! check_direct_gds_platform_support; then
+    die "runtime drift check failed (${label}): direct GDS platform support check failed"
+  fi
+}
+
 validate_local_gds_loader() {
   if [[ "${VALIDATE_LOCAL_GDS}" != "true" ]]; then
     log "skipping local GDS validation"
@@ -1044,6 +1127,43 @@ package_model_to_registry() {
   log "model ref for pods: ${MODEL_REF}"
 }
 
+assert_profile_probe_perf_gates() {
+  local throughput="$1"
+  local duration_ms="$2"
+  local min_required="${MIN_PROFILE_PROBE_MIB_S}"
+  local baseline_file="${PROFILE_PROBE_BASELINE_FILE}"
+  local max_reg_pct="${PROFILE_PROBE_MAX_REGRESSION_PCT}"
+
+  if ! [[ "${min_required}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    die "MIN_PROFILE_PROBE_MIB_S must be numeric (got ${min_required})"
+  fi
+  if ! [[ "${max_reg_pct}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    die "PROFILE_PROBE_MAX_REGRESSION_PCT must be numeric (got ${max_reg_pct})"
+  fi
+  awk -v t="${throughput}" -v m="${min_required}" 'BEGIN {exit !(t+0 >= m+0)}' || \
+    die "profile probe throughput too low: ${throughput} MiB/s < ${min_required} MiB/s"
+
+  mkdir -p "$(dirname "${baseline_file}")"
+  if [[ ! -f "${baseline_file}" ]]; then
+    jq -n \
+      --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      --argjson throughput "$(printf '%s' "${throughput}")" \
+      --argjson duration_ms "$(printf '%s' "${duration_ms}")" \
+      '{created_at:$ts, throughput_mib_s:$throughput, duration_ms:$duration_ms}' > "${baseline_file}"
+    log "created profile probe baseline: ${baseline_file}"
+    return 0
+  fi
+  if [[ "${max_reg_pct}" == "0" || "${max_reg_pct}" == "0.0" ]]; then
+    return 0
+  fi
+  local baseline_throughput
+  baseline_throughput="$(jq -r '.throughput_mib_s // 0' "${baseline_file}" 2>/dev/null || echo 0)"
+  local min_allowed
+  min_allowed="$(awk -v b="${baseline_throughput}" -v p="${max_reg_pct}" 'BEGIN {printf "%.2f", b * (1 - (p/100.0))}')"
+  awk -v t="${throughput}" -v m="${min_allowed}" 'BEGIN {exit !(t+0 >= m+0)}' || \
+    die "profile probe throughput regression exceeded threshold: current=${throughput} baseline=${baseline_throughput} max_regression_pct=${max_reg_pct} min_allowed=${min_allowed}"
+}
+
 validate_qwen_hello_example() {
   local template="${QWEN_HELLO_TEMPLATE}"
   local app_dir="${REPO_ROOT}/examples/qwen-hello/app"
@@ -1140,12 +1260,26 @@ validate_qwen_hello_example() {
   health_status="$(printf '%s' "${health_response}" | jq -r '.status // empty' 2>/dev/null || true)"
   local oci2gds_profile_status
   oci2gds_profile_status="$(printf '%s' "${health_response}" | jq -r '.oci2gds_profile.status // empty' 2>/dev/null || true)"
+  local oci2gds_profile_backend
+  oci2gds_profile_backend="$(printf '%s' "${health_response}" | jq -r '.oci2gds_profile.backend // empty' 2>/dev/null || true)"
   local oci2gds_backend
   oci2gds_backend="$(printf '%s' "${health_response}" | jq -r '.oci2gds_backend.backend // empty' 2>/dev/null || true)"
   local oci2gds_mode_counts
   oci2gds_mode_counts="$(printf '%s' "${health_response}" | jq -r '.oci2gds_profile.mode_counts // "{}"' 2>/dev/null || true)"
   local oci2gds_direct_count
   oci2gds_direct_count="$(printf '%s' "${health_response}" | jq -r '.oci2gds_profile.mode_counts // "{}" | (try fromjson catch {}) | .direct // 0' 2>/dev/null || true)"
+  local oci2gds_compat_count
+  oci2gds_compat_count="$(printf '%s' "${health_response}" | jq -r '.oci2gds_profile.mode_counts // "{}" | (try fromjson catch {}) | .compat // 0' 2>/dev/null || true)"
+  local oci2gds_force_no_compat
+  oci2gds_force_no_compat="$(printf '%s' "${health_response}" | jq -r '(.oci2gds_backend.force_no_compat // .oci2gds_profile.force_no_compat // false) | tostring' 2>/dev/null || true)"
+  local oci2gds_cufile_env_path
+  oci2gds_cufile_env_path="$(printf '%s' "${health_response}" | jq -r '.oci2gds_backend.cufile_env_path // .oci2gds_profile.cufile_env_path // ""' 2>/dev/null || true)"
+  local oci2gds_cufile_init_ok
+  oci2gds_cufile_init_ok="$(printf '%s' "${health_response}" | jq -r '(.oci2gds_profile.cufile_init_ok // false) | tostring' 2>/dev/null || true)"
+  local oci2gds_probe_duration_ms
+  oci2gds_probe_duration_ms="$(printf '%s' "${health_response}" | jq -r '.oci2gds_profile.duration_ms // 0' 2>/dev/null || true)"
+  local oci2gds_probe_throughput_mib_s
+  oci2gds_probe_throughput_mib_s="$(printf '%s' "${health_response}" | jq -r '.oci2gds_profile.throughput_mib_s // 0' 2>/dev/null || true)"
   local oci2gds_ipc_status
   oci2gds_ipc_status="$(printf '%s' "${health_response}" | jq -r '.oci2gds_ipc.status // empty' 2>/dev/null || true)"
   local oci2gds_ipc_backend
@@ -1175,9 +1309,19 @@ validate_qwen_hello_example() {
     warn "qwen hello health status is not ok: ${health_status}"
     return 1
   fi
-  if [[ -z "${oci2gds_profile_status}" || "${oci2gds_profile_status}" == "error" ]]; then
-    warn "qwen hello oci2gds profile probe failed: status=${oci2gds_profile_status} backend=${oci2gds_backend} mode_counts=${oci2gds_mode_counts}"
+  if [[ -z "${oci2gds_profile_status}" || "${oci2gds_profile_status}" != "ok" ]]; then
+    warn "qwen hello oci2gds profile probe failed: status=${oci2gds_profile_status} backend=${oci2gds_profile_backend} mode_counts=${oci2gds_mode_counts}"
     return 1
+  fi
+  if [[ "${REQUIRE_STRICT_PROFILE_PROBE}" == "true" ]]; then
+    if [[ "${oci2gds_profile_backend}" != "native-cufile" ]]; then
+      warn "strict profile probe backend check failed: profile_backend=${oci2gds_profile_backend} runtime_backend=${oci2gds_backend}"
+      return 1
+    fi
+    if [[ "${oci2gds_cufile_init_ok}" != "true" ]]; then
+      warn "strict profile probe cufile init check failed: cufile_init_ok=${oci2gds_cufile_init_ok}"
+      return 1
+    fi
   fi
   if [[ "${REQUIRE_DIRECT_GDS}" == "true" ]]; then
     if [[ -z "${oci2gds_direct_count}" || "${oci2gds_direct_count}" == "0" ]]; then
@@ -1185,12 +1329,30 @@ validate_qwen_hello_example() {
       return 1
     fi
   fi
+  if [[ "${REQUIRE_NO_COMPAT_EVIDENCE}" == "true" && "${OCI2GDS_FORCE_NO_COMPAT}" == "true" ]]; then
+    if [[ "${oci2gds_force_no_compat}" != "true" ]]; then
+      warn "force-no-compat evidence missing from health payload: force_no_compat=${oci2gds_force_no_compat}"
+      return 1
+    fi
+    if [[ -z "${oci2gds_cufile_env_path}" ]]; then
+      warn "force-no-compat evidence missing: cufile_env_path is empty"
+      return 1
+    fi
+    if [[ "${oci2gds_compat_count}" != "0" ]]; then
+      warn "compat mode reads observed despite OCI2GDS_FORCE_NO_COMPAT=true: compat_count=${oci2gds_compat_count}"
+      return 1
+    fi
+  fi
   if [[ "${REQUIRE_DAEMON_IPC_PROBE}" == "true" && "${oci2gds_ipc_status}" != "ok" ]]; then
     warn "qwen hello daemon ipc probe not ok: status=${oci2gds_ipc_status} backend=${oci2gds_ipc_backend}"
     return 1
   fi
+  assert_profile_probe_perf_gates "${oci2gds_probe_throughput_mib_s}" "${oci2gds_probe_duration_ms}"
+  log "qwen profile probe perf: duration_ms=${oci2gds_probe_duration_ms} throughput_mib_s=${oci2gds_probe_throughput_mib_s}"
   printf 'QWEN_K3S_HELLO_SUCCESS prompt=%s answer=%s oci2gds_profile_status=%s oci2gds_backend=%s oci2gds_mode_counts=%s oci2gds_ipc_status=%s oci2gds_ipc_backend=%s\n' \
     "${prompt}" "${answer}" "${oci2gds_profile_status}" "${oci2gds_backend}" "${oci2gds_mode_counts}" "${oci2gds_ipc_status}" "${oci2gds_ipc_backend}" >> "${log_file}"
+  printf 'QWEN_K3S_HELLO_PROFILE_PROBE backend=%s direct=%s compat=%s cufile_init_ok=%s force_no_compat=%s cufile_env_path=%s duration_ms=%s throughput_mib_s=%s\n' \
+    "${oci2gds_profile_backend}" "${oci2gds_direct_count}" "${oci2gds_compat_count}" "${oci2gds_cufile_init_ok}" "${oci2gds_force_no_compat}" "${oci2gds_cufile_env_path}" "${oci2gds_probe_duration_ms}" "${oci2gds_probe_throughput_mib_s}" >> "${log_file}"
   return 0
 }
 

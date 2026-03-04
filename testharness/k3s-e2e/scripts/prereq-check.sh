@@ -81,5 +81,6 @@ fi
 mkdir -p "${WORK_DIR}/results"
 check_runtime_image_toolchain "${PYTORCH_RUNTIME_IMAGE}"
 check_privileged_assumptions
+write_environment_report
 
 log "k3s prerequisites are satisfied"

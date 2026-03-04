@@ -10,11 +10,13 @@ help:
 	@echo "  demo-local             Self-contained local demo (no GPU, no k8s)"
 	@echo "  local-e2e-prereq       Check local CLI e2e prerequisites"
 	@echo "  local-e2e              Run local CLI lifecycle e2e (ensure/status/verify/release/gc)"
+	@echo "  local-e2e-negative     Run local CLI negative/failure-path assertions"
 	@echo "  k3s-e2e-prereq         Check/install k3s e2e prerequisites"
 	@echo "  k3s-e2e                Run k3s Kubernetes GPU e2e harness"
 	@echo "  host-e2e-prereq        Check/install host qwen quick prerequisites"
 	@echo "  k3s-e2e-qwen-quick     Fast qwen-hello redeploy/probe loop"
 	@echo "  host-e2e-qwen-quick    Run host-only strict direct-GDS qwen probe"
+	@echo "  doctor                 Run all prerequisite checks (local/host/k3s)"
 	@echo "  k3s-e2e-clean          Delete k3s e2e local harness artifacts"
 
 .PHONY: build
@@ -62,6 +64,11 @@ local-e2e-prereq:
 .PHONY: local-e2e
 local-e2e: local-e2e-prereq
 	./testharness/local-e2e/scripts/run.sh
+	./testharness/local-e2e/scripts/negative-tests.sh
+
+.PHONY: local-e2e-negative
+local-e2e-negative:
+	./testharness/local-e2e/scripts/negative-tests.sh
 
 .PHONY: k3s-e2e-prereq
 k3s-e2e-prereq:
@@ -82,6 +89,12 @@ host-e2e-prereq:
 .PHONY: host-e2e-qwen-quick
 host-e2e-qwen-quick: host-e2e-prereq
 	./testharness/host-e2e/scripts/quick-qwen.sh
+
+.PHONY: doctor
+doctor:
+	./testharness/local-e2e/scripts/prereq-check.sh
+	./testharness/host-e2e/scripts/prereq-check.sh
+	./testharness/k3s-e2e/scripts/prereq-check.sh
 
 .PHONY: k3s-e2e-clean
 k3s-e2e-clean:

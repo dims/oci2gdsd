@@ -70,13 +70,16 @@ Defaults:
 - `MODEL_REF_OVERRIDE` optional; when set, enables `ensure`/`release` quick-example checks
 - `VALIDATE_QUICK_EXAMPLE=true` (run CLI lifecycle assertions before probe)
 - `QUICK_EXAMPLE_LEASE_HOLDER=host-e2e-qwen-quick`
-- `PYTORCH_RUNTIME_IMAGE=nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1`
+- `PYTORCH_RUNTIME_IMAGE=nvcr.io/nvidia/ai-dynamo/vllm-runtime@sha256:de8ac9afb52711b08169e0f58388528c091efae6fb367a6fcfa119edef4bb233`
 - `OCI2GDS_STRICT=true`
 - `REQUIRE_DIRECT_GDS=true`
 - `OCI2GDS_FORCE_NO_COMPAT=true` (default fail-fast: sets `CUFILE_ENV_PATH_JSON` with compat-mode disabled for the probe process)
 - `OCI2GDS_FORCE_EXIT_AFTER_SUMMARY=true` (default; avoids known teardown crashes in some runtime/toolchain combinations)
 - `OCI2GDS_VALIDATE_SAMPLE_BYTES=true` (compares first 4KiB GPU-loaded bytes with host bytes per sampled shard)
-- `REQUIRE_NVFS_STATS_DELTA=false` (default relaxed because some direct-path environments still report zero `Ops` counters)
+- `REQUIRE_NVFS_STATS_DELTA_MODE=auto` (default: require counter deltas only when nvfs stats are enabled)
+- `REQUIRE_STRICT_PROBE_EVIDENCE=true` (fail unless probe reports native-cufile + cuFile init success)
+- `HOST_PROBE_MIN_THROUGHPUT_MIB_S=0` (optional perf floor gate)
+- `HOST_PROBE_MAX_REGRESSION_PCT=0` (optional baseline regression gate; `>0` enforces max drop)
 - `MIN_FREE_GB_DOCKER=80` (fails fast when Docker data-root free space is below 80 GiB)
 - `MIN_FREE_GB_MODEL_ROOT=20` (fails fast when `OCI2GDSD_ROOT_PATH` free space is below 20 GiB)
 - `AUTO_CONFIGURE_STORAGE=true` (auto-migrates Docker `data-root` to `/mnt/nvme/docker` when root disk is too small and `/mnt/nvme` has capacity)
@@ -112,8 +115,14 @@ OCI2GDS_STRICT=false REQUIRE_DIRECT_GDS=false make host-e2e-qwen-quick
 # Optional: disable immediate process exit after summary (debug-only)
 OCI2GDS_FORCE_EXIT_AFTER_SUMMARY=false make host-e2e-qwen-quick
 
-# Tighten nvfs counter requirement explicitly (optional)
-REQUIRE_NVFS_STATS_DELTA=true make host-e2e-qwen-quick
+# nvfs counter gate modes:
+# - auto (default): require deltas only when stats are enabled
+# - required: always require deltas
+# - off: never require deltas
+REQUIRE_NVFS_STATS_DELTA_MODE=required make host-e2e-qwen-quick
+
+# Optional perf gates
+HOST_PROBE_MIN_THROUGHPUT_MIB_S=5000 HOST_PROBE_MAX_REGRESSION_PCT=20 make host-e2e-qwen-quick
 
 # Skip CLI quick-example lifecycle validation
 VALIDATE_QUICK_EXAMPLE=false make host-e2e-qwen-quick
@@ -130,6 +139,9 @@ MIN_FREE_GB_DOCKER=120 MIN_FREE_GB_MODEL_ROOT=40 make host-e2e-prereq
 - `testharness/host-e2e/work/results/quick-example-ensure.json` (only when `MODEL_REF_OVERRIDE` is set)
 - `testharness/host-e2e/work/results/quick-example-release.json` (only when `MODEL_REF_OVERRIDE` is set)
 - `testharness/host-e2e/work/results/host-qwen-gds.log`
+- `testharness/host-e2e/work/results/host-qwen-gds-summary.json`
+- `testharness/host-e2e/work/results/host-qwen-probe-baseline.json`
+- `testharness/host-e2e/work/results/environment-report.txt`
 
 The probe prints a structured summary line:
 
@@ -150,7 +162,7 @@ cat /sys/module/nvidia_fs/parameters/rw_stats_enabled
 Then run with a hard gate:
 
 ```bash
-REQUIRE_NVFS_STATS_DELTA=true make host-e2e-qwen-quick
+REQUIRE_NVFS_STATS_DELTA_MODE=required make host-e2e-qwen-quick
 ```
 
 If strict no-compat init fails (for example `cuFileDriverOpen failed` under `OCI2GDS_FORCE_NO_COMPAT=true`), the harness now fails fast with an explicit error.

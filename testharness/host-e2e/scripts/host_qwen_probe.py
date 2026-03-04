@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 import torch
@@ -49,6 +50,19 @@ def configure_cufile_env(force_no_compat: bool) -> str:
     cfg_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     os.environ["CUFILE_ENV_PATH_JSON"] = str(cfg_path)
     return str(cfg_path)
+
+
+def parse_nvfs_mode() -> str:
+    legacy = os.environ.get("REQUIRE_NVFS_STATS_DELTA")
+    if legacy is not None:
+        return "required" if parse_bool("REQUIRE_NVFS_STATS_DELTA", False) else "off"
+    mode = os.environ.get("REQUIRE_NVFS_STATS_DELTA_MODE", "auto").strip().lower()
+    if mode not in {"auto", "required", "off"}:
+        raise RuntimeError(
+            "REQUIRE_NVFS_STATS_DELTA_MODE must be one of: auto|required|off "
+            f"(got {mode!r})"
+        )
+    return mode
 
 
 def read_nvfs_ops() -> dict:
@@ -131,10 +145,7 @@ def main() -> None:
     force_no_compat = parse_bool("OCI2GDS_FORCE_NO_COMPAT", True)
     force_exit_after_summary = parse_bool("OCI2GDS_FORCE_EXIT_AFTER_SUMMARY", False)
     validate_sample_bytes = parse_bool("OCI2GDS_VALIDATE_SAMPLE_BYTES", True)
-    # FIXME: Defaulted to false because some direct-path runs show no nvfs Ops
-    # increments despite successful cuFile direct reads. Revisit and restore
-    # true-by-default once provider/runtime counter behavior is consistent.
-    require_nvfs_stats_delta = parse_bool("REQUIRE_NVFS_STATS_DELTA", False)
+    nvfs_stats_mode = parse_nvfs_mode()
     chunk_bytes = int(os.environ.get("OCI2GDS_CHUNK_BYTES", str(4 * 1024 * 1024)))
     sample_bytes = int(os.environ.get("OCI2GDS_SAMPLE_BYTES_PER_SHARD", str(8 * 1024 * 1024)))
     model_id = os.environ.get("MODEL_ID", "")
@@ -151,15 +162,19 @@ def main() -> None:
         raise RuntimeError("profile.shards is empty")
 
     cufile_env_path = configure_cufile_env(force_no_compat)
+    if force_no_compat and not cufile_env_path:
+        raise RuntimeError("OCI2GDS_FORCE_NO_COMPAT=true but CUFILE_ENV_PATH_JSON was not configured")
     nvfs_before = read_nvfs_ops()
 
     module = build_native_module(force_no_compat=force_no_compat, cufile_env_path=cufile_env_path)
+    cufile_init_ok = True
 
     mode_counts = {}
     reason_counts = {}
     shards_sampled = 0
     bytes_sampled = 0
     device = torch.device("cuda:0")
+    start_ns = time.monotonic_ns()
 
     with torch.cuda.device(device):
         for shard in shards:
@@ -219,6 +234,11 @@ def main() -> None:
                 pass
         torch.cuda.synchronize(device)
 
+    duration_ms = max(0, int((time.monotonic_ns() - start_ns) / 1_000_000))
+    throughput_mib_s = 0.0
+    if duration_ms > 0:
+        throughput_mib_s = (float(bytes_sampled) / (1024.0 * 1024.0)) / (float(duration_ms) / 1000.0)
+
     nvfs_after = read_nvfs_ops()
     nvfs_delta = {
         "available": bool(nvfs_before.get("available")) and bool(nvfs_after.get("available")),
@@ -234,18 +254,30 @@ def main() -> None:
         non_direct = sum(v for k, v in mode_counts.items() if k != "direct")
         if non_direct > 0:
             raise RuntimeError(f"strict mode expected only direct reads; mode_counts={mode_counts}")
-    if require_nvfs_stats_delta:
+    if nvfs_stats_mode == "required":
         if not nvfs_delta["available"]:
-            raise RuntimeError("REQUIRE_NVFS_STATS_DELTA=true but /proc/driver/nvidia-fs/stats is unavailable")
+            raise RuntimeError("REQUIRE_NVFS_STATS_DELTA_MODE=required but /proc/driver/nvidia-fs/stats is unavailable")
         if nvfs_before.get("io_stats_enabled") is False or nvfs_before.get("rw_stats_enabled") is False:
             raise RuntimeError(
-                "REQUIRE_NVFS_STATS_DELTA=true but nvidia-fs IO stats are disabled "
+                "REQUIRE_NVFS_STATS_DELTA_MODE=required but nvidia-fs IO stats are disabled "
                 f"(io_stats_enabled={nvfs_before.get('io_stats_enabled')}, "
                 f"rw_stats_enabled={nvfs_before.get('rw_stats_enabled')})"
             )
         if int(nvfs_delta["read"]) <= 0 and int(nvfs_delta["batchio"]) <= 0:
             raise RuntimeError(
-                "REQUIRE_NVFS_STATS_DELTA=true but nvfs Ops counters did not increase "
+                "REQUIRE_NVFS_STATS_DELTA_MODE=required but nvfs Ops counters did not increase "
+                f"(delta={nvfs_delta})"
+            )
+    elif nvfs_stats_mode == "auto":
+        if (
+            nvfs_delta["available"]
+            and nvfs_before.get("io_stats_enabled") is True
+            and nvfs_before.get("rw_stats_enabled") is True
+            and int(nvfs_delta["read"]) <= 0
+            and int(nvfs_delta["batchio"]) <= 0
+        ):
+            raise RuntimeError(
+                "REQUIRE_NVFS_STATS_DELTA_MODE=auto detected enabled nvfs IO stats but Ops counters did not increase "
                 f"(delta={nvfs_delta})"
             )
 
@@ -258,10 +290,15 @@ def main() -> None:
         "strict": bool(strict),
         "require_direct_gds": bool(require_direct),
         "force_no_compat": bool(force_no_compat),
+        "compat_mode_disabled_evidence": bool(force_no_compat and bool(cufile_env_path)),
+        "cufile_init_ok": bool(cufile_init_ok),
         "force_exit_after_summary": bool(force_exit_after_summary),
         "validate_sample_bytes": bool(validate_sample_bytes),
-        "require_nvfs_stats_delta": bool(require_nvfs_stats_delta),
+        "require_nvfs_stats_delta": bool(nvfs_stats_mode == "required"),
+        "require_nvfs_stats_delta_mode": nvfs_stats_mode,
         "cufile_env_path": cufile_env_path,
+        "duration_ms": duration_ms,
+        "throughput_mib_s": round(throughput_mib_s, 2),
         "shards_total": len(shards),
         "shards_sampled": shards_sampled,
         "bytes_sampled": bytes_sampled,

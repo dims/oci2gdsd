@@ -16,7 +16,7 @@ OCI2GDSD_BIN="${OCI2GDSD_BIN:-}"
 OCI2GDSD_REGISTRY_CONFIG="${OCI2GDSD_REGISTRY_CONFIG:-}"
 VALIDATE_QUICK_EXAMPLE="${VALIDATE_QUICK_EXAMPLE:-true}"
 QUICK_EXAMPLE_LEASE_HOLDER="${QUICK_EXAMPLE_LEASE_HOLDER:-host-e2e-qwen-quick}"
-PYTORCH_RUNTIME_IMAGE="${PYTORCH_RUNTIME_IMAGE:-nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1}"
+PYTORCH_RUNTIME_IMAGE="${PYTORCH_RUNTIME_IMAGE:-nvcr.io/nvidia/ai-dynamo/vllm-runtime@sha256:de8ac9afb52711b08169e0f58388528c091efae6fb367a6fcfa119edef4bb233}"
 OCI2GDS_CHUNK_BYTES="${OCI2GDS_CHUNK_BYTES:-4194304}"
 OCI2GDS_SAMPLE_BYTES_PER_SHARD="${OCI2GDS_SAMPLE_BYTES_PER_SHARD:-8388608}"
 OCI2GDS_STRICT="${OCI2GDS_STRICT:-true}"
@@ -27,10 +27,17 @@ OCI2GDS_VALIDATE_SAMPLE_BYTES="${OCI2GDS_VALIDATE_SAMPLE_BYTES:-true}"
 # FIXME: Defaulted to false because some valid direct-path environments still
 # report zero nvfs Ops counters; re-enable true-by-default after counter
 # reliability is proven across supported providers/kernel/runtime combos.
-REQUIRE_NVFS_STATS_DELTA="${REQUIRE_NVFS_STATS_DELTA:-false}"
+REQUIRE_NVFS_STATS_DELTA_SET="${REQUIRE_NVFS_STATS_DELTA+x}"
+REQUIRE_NVFS_STATS_DELTA="${REQUIRE_NVFS_STATS_DELTA:-}"
+REQUIRE_NVFS_STATS_DELTA_MODE="${REQUIRE_NVFS_STATS_DELTA_MODE:-auto}"
+REQUIRE_STRICT_PROBE_EVIDENCE="${REQUIRE_STRICT_PROBE_EVIDENCE:-true}"
+HOST_PROBE_MIN_THROUGHPUT_MIB_S="${HOST_PROBE_MIN_THROUGHPUT_MIB_S:-0}"
+HOST_PROBE_MAX_REGRESSION_PCT="${HOST_PROBE_MAX_REGRESSION_PCT:-0}"
+HOST_PROBE_BASELINE_FILE="${HOST_PROBE_BASELINE_FILE:-${RESULTS_DIR}/host-qwen-probe-baseline.json}"
 OCI2GDSD_BIN_MODE=""
 declare -a OCI2GDSD_CMD=()
 declare -a OCI2GDSD_GLOBAL_ARGS=()
+NVFS_STATS_MODE=""
 
 _ts() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
@@ -68,6 +75,22 @@ is_true() {
   case "${v}" in
     1|true|yes|on) return 0 ;;
     *) return 1 ;;
+  esac
+}
+
+resolve_nvfs_stats_mode() {
+  if [[ -n "${REQUIRE_NVFS_STATS_DELTA_SET}" ]]; then
+    if is_true "${REQUIRE_NVFS_STATS_DELTA}"; then
+      NVFS_STATS_MODE="required"
+    else
+      NVFS_STATS_MODE="off"
+    fi
+  else
+    NVFS_STATS_MODE="$(printf '%s' "${REQUIRE_NVFS_STATS_DELTA_MODE}" | tr '[:upper:]' '[:lower:]')"
+  fi
+  case "${NVFS_STATS_MODE}" in
+    auto|required|off) ;;
+    *) die "invalid REQUIRE_NVFS_STATS_DELTA_MODE=${NVFS_STATS_MODE} (expected auto|required|off)" ;;
   esac
 }
 
@@ -215,6 +238,9 @@ check_nvfs_rw_stats_state() {
   local f="/sys/module/nvidia_fs/parameters/rw_stats_enabled"
   if [[ ! -r "${f}" ]]; then
     warn "cannot read ${f}; nvfs counter assertions may be unavailable"
+    if [[ "${NVFS_STATS_MODE}" == "required" ]]; then
+      die "REQUIRE_NVFS_STATS_DELTA_MODE=required but ${f} is not readable"
+    fi
     return 0
   fi
   local v
@@ -225,9 +251,96 @@ check_nvfs_rw_stats_state() {
   fi
   warn "nvidia-fs rw_stats_enabled=${v:-unknown} (kernel IO counters disabled)"
   warn "enable with: sudo sh -c 'echo 1 > /sys/module/nvidia_fs/parameters/rw_stats_enabled'"
-  if is_true "${REQUIRE_NVFS_STATS_DELTA}"; then
-    die "REQUIRE_NVFS_STATS_DELTA=true requires rw_stats_enabled=1"
+  if [[ "${NVFS_STATS_MODE}" == "required" ]]; then
+    die "REQUIRE_NVFS_STATS_DELTA_MODE=required requires rw_stats_enabled=1"
   fi
+}
+
+write_environment_report() {
+  local out="${RESULTS_DIR}/environment-report.txt"
+  {
+    echo "# host-e2e environment report $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "repo_root=${REPO_ROOT}"
+    echo "model_id=${MODEL_ID}"
+    echo "model_digest=${MODEL_DIGEST}"
+    echo "runtime_image=${PYTORCH_RUNTIME_IMAGE}"
+    echo "strict=${OCI2GDS_STRICT}"
+    echo "require_direct_gds=${REQUIRE_DIRECT_GDS}"
+    echo "force_no_compat=${OCI2GDS_FORCE_NO_COMPAT}"
+    echo "nvfs_stats_mode=${NVFS_STATS_MODE}"
+    echo "docker_root=$(maybe_sudo docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)"
+    echo "kernel=$(uname -r)"
+    echo "os=$(uname -s)"
+    echo "---- nvidia-smi ----"
+    nvidia-smi || true
+    echo "---- runtime image digest ----"
+    maybe_sudo docker image inspect "${PYTORCH_RUNTIME_IMAGE}" --format '{{json .RepoDigests}}' 2>/dev/null || true
+    echo "---- gdscheck -p ----"
+    local gdscheck
+    gdscheck="$(gdscheck_binary || true)"
+    if [[ -n "${gdscheck}" ]]; then
+      maybe_sudo "${gdscheck}" -p || true
+    else
+      echo "gdscheck: unavailable"
+    fi
+    echo "---- nvfs stats ----"
+    cat /proc/driver/nvidia-fs/stats 2>/dev/null || true
+  } > "${out}" 2>&1
+  log "wrote environment report: ${out}"
+}
+
+host_runtime_checkpoint() {
+  local label="$1"
+  log "host runtime checkpoint: ${label}"
+  command -v nvidia-smi >/dev/null 2>&1 || die "host runtime checkpoint failed (${label}): nvidia-smi not found"
+  nvidia-smi -L >/dev/null 2>&1 || die "host runtime checkpoint failed (${label}): nvidia-smi -L failed"
+  [[ -d /run/udev ]] || die "host runtime checkpoint failed (${label}): /run/udev missing"
+  ls /dev/nvidia-fs* >/dev/null 2>&1 || die "host runtime checkpoint failed (${label}): /dev/nvidia-fs* missing"
+  if is_true "${REQUIRE_DIRECT_GDS}"; then
+    run_gds_preflight
+  fi
+}
+
+assert_min_throughput() {
+  local throughput="$1"
+  local min_required="${HOST_PROBE_MIN_THROUGHPUT_MIB_S}"
+  if ! [[ "${min_required}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    die "HOST_PROBE_MIN_THROUGHPUT_MIB_S must be numeric (got ${min_required})"
+  fi
+  awk -v t="${throughput}" -v m="${min_required}" 'BEGIN {exit !(t+0 >= m+0)}' || \
+    die "host probe throughput too low: ${throughput} MiB/s < ${min_required} MiB/s"
+}
+
+apply_baseline_regression_gate() {
+  local throughput="$1"
+  local duration_ms="$2"
+  local baseline="${HOST_PROBE_BASELINE_FILE}"
+  local max_reg_pct="${HOST_PROBE_MAX_REGRESSION_PCT}"
+
+  if ! [[ "${max_reg_pct}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    die "HOST_PROBE_MAX_REGRESSION_PCT must be numeric (got ${max_reg_pct})"
+  fi
+
+  mkdir -p "$(dirname "${baseline}")"
+  if [[ ! -f "${baseline}" ]]; then
+    jq -n \
+      --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      --argjson throughput "$(printf '%s' "${throughput}")" \
+      --argjson duration_ms "$(printf '%s' "${duration_ms}")" \
+      '{created_at:$ts, throughput_mib_s:$throughput, duration_ms:$duration_ms}' > "${baseline}"
+    log "created host probe baseline: ${baseline}"
+    return 0
+  fi
+
+  local baseline_throughput
+  baseline_throughput="$(jq -r '.throughput_mib_s // 0' "${baseline}" 2>/dev/null || echo 0)"
+  if [[ "${max_reg_pct}" == "0" || "${max_reg_pct}" == "0.0" ]]; then
+    return 0
+  fi
+  local min_allowed
+  min_allowed="$(awk -v b="${baseline_throughput}" -v p="${max_reg_pct}" 'BEGIN {printf "%.2f", b * (1 - (p/100.0))}')"
+  awk -v t="${throughput}" -v m="${min_allowed}" 'BEGIN {exit !(t+0 >= m+0)}' || \
+    die "host probe throughput regression exceeded threshold: current=${throughput} baseline=${baseline_throughput} max_regression_pct=${max_reg_pct} min_allowed=${min_allowed}"
 }
 
 validate_quick_example_cli() {
@@ -310,7 +423,7 @@ run_host_probe() {
     -e OCI2GDS_FORCE_NO_COMPAT="${OCI2GDS_FORCE_NO_COMPAT}" \
     -e OCI2GDS_FORCE_EXIT_AFTER_SUMMARY="${OCI2GDS_FORCE_EXIT_AFTER_SUMMARY}" \
     -e OCI2GDS_VALIDATE_SAMPLE_BYTES="${OCI2GDS_VALIDATE_SAMPLE_BYTES}" \
-    -e REQUIRE_NVFS_STATS_DELTA="${REQUIRE_NVFS_STATS_DELTA}" \
+    -e REQUIRE_NVFS_STATS_DELTA_MODE="${NVFS_STATS_MODE}" \
     -e OCI2GDS_TORCH_NATIVE_VERBOSE="${OCI2GDS_TORCH_NATIVE_VERBOSE:-0}" \
     -e OCI2GDS_NATIVE_CPP_PATH="/opt/oci2gdsd/native/oci2gds_torch_native.cpp" \
     -v "${OCI2GDSD_ROOT_PATH}:${OCI2GDSD_ROOT_PATH}:ro" \
@@ -325,6 +438,39 @@ run_host_probe() {
   summary="$(grep '^HOST_QWEN_GDS_PROBE ' "${probe_log}" | tail -n1 | cut -d' ' -f2- || true)"
   [[ -n "${summary}" ]] || die "probe summary missing in ${probe_log}"
   printf '%s\n' "${summary}" | jq .
+  printf '%s\n' "${summary}" > "${RESULTS_DIR}/host-qwen-gds-summary.json"
+  local status
+  local backend
+  local direct_count
+  local compat_count
+  local cufile_init_ok
+  local force_no_compat_evidence
+  local throughput_mib_s
+  local duration_ms
+  status="$(printf '%s\n' "${summary}" | jq -r '.status // empty' 2>/dev/null || true)"
+  backend="$(printf '%s\n' "${summary}" | jq -r '.backend // empty' 2>/dev/null || true)"
+  direct_count="$(printf '%s\n' "${summary}" | jq -r '.mode_counts.direct // 0' 2>/dev/null || true)"
+  compat_count="$(printf '%s\n' "${summary}" | jq -r '.mode_counts.compat // 0' 2>/dev/null || true)"
+  cufile_init_ok="$(printf '%s\n' "${summary}" | jq -r '.cufile_init_ok // false | tostring' 2>/dev/null || true)"
+  force_no_compat_evidence="$(printf '%s\n' "${summary}" | jq -r '.compat_mode_disabled_evidence // false | tostring' 2>/dev/null || true)"
+  throughput_mib_s="$(printf '%s\n' "${summary}" | jq -r '.throughput_mib_s // 0' 2>/dev/null || true)"
+  duration_ms="$(printf '%s\n' "${summary}" | jq -r '.duration_ms // 0' 2>/dev/null || true)"
+  if [[ "${status}" != "ok" ]]; then
+    die "host probe status is not ok: ${status}"
+  fi
+  if is_true "${REQUIRE_STRICT_PROBE_EVIDENCE}"; then
+    [[ "${backend}" == "native-cufile" ]] || die "strict probe evidence failed: backend=${backend} (expected native-cufile)"
+    [[ "${cufile_init_ok}" == "true" ]] || die "strict probe evidence failed: cufile_init_ok=${cufile_init_ok}"
+  fi
+  if [[ "${REQUIRE_DIRECT_GDS}" == "true" ]]; then
+    [[ "${direct_count}" =~ ^[0-9]+$ ]] || die "unexpected direct_count=${direct_count}"
+    (( direct_count > 0 )) || die "direct GDS required but direct_count=${direct_count}"
+  fi
+  if [[ "${OCI2GDS_FORCE_NO_COMPAT}" == "true" ]] && is_true "${REQUIRE_STRICT_PROBE_EVIDENCE}"; then
+    [[ "${force_no_compat_evidence}" == "true" ]] || die "force_no_compat evidence missing in probe summary"
+    [[ "${compat_count}" =~ ^[0-9]+$ ]] || die "unexpected compat_count=${compat_count}"
+    (( compat_count == 0 )) || die "compat path observed while OCI2GDS_FORCE_NO_COMPAT=true (compat_count=${compat_count})"
+  fi
   local io_stats_enabled
   local rw_stats_enabled
   local read_delta
@@ -338,6 +484,9 @@ run_host_probe() {
   else
     log "nvfs counter deltas: read=${read_delta} batchio=${batch_delta}"
   fi
+  assert_min_throughput "${throughput_mib_s}"
+  apply_baseline_regression_gate "${throughput_mib_s}" "${duration_ms}"
+  log "host probe perf: duration_ms=${duration_ms} throughput_mib_s=${throughput_mib_s}"
   log "host qwen probe succeeded (artifact: ${probe_log})"
 }
 
@@ -345,14 +494,16 @@ log "starting host-only qwen direct-GDS quick e2e"
 ensure_cmd docker
 ensure_cmd jq
 ensure_cmd python3
+resolve_nvfs_stats_mode
 resolve_oci2gdsd_cmd
 resolve_oci2gdsd_global_args
 resolve_model_digest
+write_environment_report
 
 log "model_digest=${MODEL_DIGEST}"
 log "validate_quick_example=${VALIDATE_QUICK_EXAMPLE}"
 log "strict=${OCI2GDS_STRICT} require_direct_gds=${REQUIRE_DIRECT_GDS}"
-log "force_no_compat=${OCI2GDS_FORCE_NO_COMPAT} force_exit_after_summary=${OCI2GDS_FORCE_EXIT_AFTER_SUMMARY} validate_sample_bytes=${OCI2GDS_VALIDATE_SAMPLE_BYTES} require_nvfs_stats_delta=${REQUIRE_NVFS_STATS_DELTA}"
+log "force_no_compat=${OCI2GDS_FORCE_NO_COMPAT} force_exit_after_summary=${OCI2GDS_FORCE_EXIT_AFTER_SUMMARY} validate_sample_bytes=${OCI2GDS_VALIDATE_SAMPLE_BYTES} nvfs_stats_mode=${NVFS_STATS_MODE}"
 if [[ -n "${MODEL_REF_OVERRIDE}" ]]; then
   log "model_ref_override=${MODEL_REF_OVERRIDE}"
 fi
@@ -362,9 +513,7 @@ validate_quick_example_cli
 resolve_model_root
 log "model_root_path=${MODEL_ROOT_PATH}"
 
-if is_true "${REQUIRE_DIRECT_GDS}"; then
-  run_gds_preflight
-fi
-
 check_nvfs_rw_stats_state
+host_runtime_checkpoint "pre-probe"
 run_host_probe
+host_runtime_checkpoint "post-probe"

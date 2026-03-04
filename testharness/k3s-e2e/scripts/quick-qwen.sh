@@ -64,11 +64,14 @@ if ! kube get nodes >/dev/null 2>&1; then
 fi
 
 ensure_gpu_capacity
+runtime_drift_checkpoint "quick-start"
 if is_true "${AUTO_BUILD_OCI2GDSD_IMAGE}"; then
   build_and_load_oci2gdsd_image
 fi
+preload_workload_image
 seed_model_identity_if_needed
 resolve_model_identity
+write_environment_report
 log "model_ref=${MODEL_REF}"
 log "model_digest=${MODEL_DIGEST}"
 log "pytorch_runtime_image=${PYTORCH_RUNTIME_IMAGE}"
@@ -88,6 +91,7 @@ fi
 # Re-check allocatable GPU right before deployment in case node/plugin state changed
 # during image build/pull or model packaging.
 ensure_gpu_capacity
+runtime_drift_checkpoint "pre-qwen-deploy"
 
 if ! validate_qwen_hello_example; then
   collect_debug
@@ -95,6 +99,7 @@ if ! validate_qwen_hello_example; then
   kube -n "${QWEN_HELLO_NAMESPACE}" logs deploy/qwen-hello -c pytorch-api || true
   die "qwen-hello quick iterate validation failed"
 fi
+runtime_drift_checkpoint "post-qwen-validate"
 
 log "qwen-hello quick iterate succeeded"
 log "artifact: ${WORK_DIR}/results/qwen-hello.log"

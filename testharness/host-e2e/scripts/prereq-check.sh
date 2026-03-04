@@ -8,9 +8,11 @@ WORK_DIR="${HARNESS_DIR}/work"
 RESULTS_DIR="${WORK_DIR}/results"
 mkdir -p "${RESULTS_DIR}"
 
-PYTORCH_RUNTIME_IMAGE="${PYTORCH_RUNTIME_IMAGE:-nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1}"
+PYTORCH_RUNTIME_IMAGE="${PYTORCH_RUNTIME_IMAGE:-nvcr.io/nvidia/ai-dynamo/vllm-runtime@sha256:de8ac9afb52711b08169e0f58388528c091efae6fb367a6fcfa119edef4bb233}"
 REQUIRE_DIRECT_GDS="${REQUIRE_DIRECT_GDS:-true}"
-REQUIRE_NVFS_STATS_DELTA="${REQUIRE_NVFS_STATS_DELTA:-false}"
+REQUIRE_NVFS_STATS_DELTA_SET="${REQUIRE_NVFS_STATS_DELTA+x}"
+REQUIRE_NVFS_STATS_DELTA="${REQUIRE_NVFS_STATS_DELTA:-}"
+REQUIRE_NVFS_STATS_DELTA_MODE="${REQUIRE_NVFS_STATS_DELTA_MODE:-auto}"
 INSTALL_MISSING_PREREQS="${INSTALL_MISSING_PREREQS:-true}"
 OCI2GDSD_ROOT_PATH="${OCI2GDSD_ROOT_PATH:-/mnt/nvme/oci2gdsd}"
 MIN_FREE_GB_DOCKER="${MIN_FREE_GB_DOCKER:-80}"
@@ -19,6 +21,7 @@ AUTO_CONFIGURE_STORAGE="${AUTO_CONFIGURE_STORAGE:-true}"
 VALIDATE_QUICK_EXAMPLE="${VALIDATE_QUICK_EXAMPLE:-true}"
 
 APT_UPDATED=0
+NVFS_STATS_MODE=""
 
 _ts() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
@@ -64,6 +67,22 @@ is_true() {
   case "${v}" in
     1|true|yes|on) return 0 ;;
     *) return 1 ;;
+  esac
+}
+
+resolve_nvfs_stats_mode() {
+  if [[ -n "${REQUIRE_NVFS_STATS_DELTA_SET}" ]]; then
+    if is_true "${REQUIRE_NVFS_STATS_DELTA}"; then
+      NVFS_STATS_MODE="required"
+    else
+      NVFS_STATS_MODE="off"
+    fi
+  else
+    NVFS_STATS_MODE="$(printf '%s' "${REQUIRE_NVFS_STATS_DELTA_MODE}" | tr '[:upper:]' '[:lower:]')"
+  fi
+  case "${NVFS_STATS_MODE}" in
+    auto|required|off) ;;
+    *) die "invalid REQUIRE_NVFS_STATS_DELTA_MODE=${NVFS_STATS_MODE} (expected auto|required|off)" ;;
   esac
 }
 
@@ -309,6 +328,9 @@ check_nvfs_stats_state() {
   local f="/sys/module/nvidia_fs/parameters/rw_stats_enabled"
   if [[ ! -r "${f}" ]]; then
     warn "cannot read ${f}; nvfs counter assertions may be unavailable"
+    if [[ "${NVFS_STATS_MODE}" == "required" ]]; then
+      die "REQUIRE_NVFS_STATS_DELTA_MODE=required but ${f} is not readable"
+    fi
     return 0
   fi
   local v
@@ -319,8 +341,8 @@ check_nvfs_stats_state() {
   fi
   warn "nvidia-fs rw_stats_enabled=${v:-unknown}; nvfs Ops counters may stay zero"
   warn "enable with: sudo sh -c 'echo 1 > /sys/module/nvidia_fs/parameters/rw_stats_enabled'"
-  if is_true "${REQUIRE_NVFS_STATS_DELTA}"; then
-    die "REQUIRE_NVFS_STATS_DELTA=true requires rw_stats_enabled=1"
+  if [[ "${NVFS_STATS_MODE}" == "required" ]]; then
+    die "REQUIRE_NVFS_STATS_DELTA_MODE=required requires rw_stats_enabled=1"
   fi
 }
 
@@ -344,8 +366,30 @@ check_quick_example_cli_prereq() {
   die "VALIDATE_QUICK_EXAMPLE=true requires oci2gdsd CLI or Go toolchain (set VALIDATE_QUICK_EXAMPLE=false to skip lifecycle validation)"
 }
 
+write_environment_report() {
+  local out="${RESULTS_DIR}/environment-report.txt"
+  {
+    echo "# host-e2e prereq environment $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "runtime_image=${PYTORCH_RUNTIME_IMAGE}"
+    echo "require_direct_gds=${REQUIRE_DIRECT_GDS}"
+    echo "nvfs_stats_mode=${NVFS_STATS_MODE}"
+    echo "docker_root=$(maybe_sudo docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)"
+    echo "kernel=$(uname -r)"
+    echo "---- nvidia-smi ----"
+    nvidia-smi || true
+    echo "---- runtime image digest ----"
+    maybe_sudo docker image inspect "${PYTORCH_RUNTIME_IMAGE}" --format '{{json .RepoDigests}}' 2>/dev/null || true
+    echo "---- gdscheck prereq ----"
+    cat "${RESULTS_DIR}/gdscheck-prereq.txt" 2>/dev/null || true
+    echo "---- runtime image prereq ----"
+    cat "${RESULTS_DIR}/runtime-image-prereq.log" 2>/dev/null || true
+  } > "${out}" 2>&1
+  log "wrote environment report: ${out}"
+}
+
 log "running host-e2e prerequisite checks"
 log "assumption: probe containers run with --privileged"
+resolve_nvfs_stats_mode
 
 ensure_cmd_or_install python3 python3
 ensure_cmd_or_install jq jq
@@ -383,5 +427,6 @@ fi
 check_runtime_image_toolchain "${PYTORCH_RUNTIME_IMAGE}"
 check_nvfs_stats_state
 check_quick_example_cli_prereq
+write_environment_report
 
 log "host-e2e prerequisites are satisfied"

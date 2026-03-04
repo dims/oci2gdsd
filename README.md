@@ -54,6 +54,11 @@ For an automated version of that lifecycle:
 make local-e2e
 ```
 
+This now includes:
+- positive lifecycle checks
+- idempotency + concurrency checks
+- negative/failure-path assertions
+
 ---
 
 ## Install / Build
@@ -157,6 +162,9 @@ make local-e2e
 ```bash
 # Check/install prerequisites (k3s, Docker, NVIDIA toolkit, etc.)
 make k3s-e2e-prereq
+
+# One-shot prerequisite doctor (local + host + k3s)
+make doctor
 
 # Full e2e: package Qwen3, push to in-cluster registry, preload, run PyTorch smoke test
 make k3s-e2e

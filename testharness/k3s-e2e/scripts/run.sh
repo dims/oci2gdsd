@@ -12,6 +12,7 @@ bootstrap_tools
 configure_nvidia_runtime
 ensure_k3s_cluster_ready
 install_gpu_operator
+runtime_drift_checkpoint "run-start"
 
 CLEAN_STALE_WORKLOADS_BEFORE_RUN="${CLEAN_STALE_WORKLOADS_BEFORE_RUN:-true}"
 if is_true "${CLEAN_STALE_WORKLOADS_BEFORE_RUN}"; then
@@ -24,6 +25,7 @@ fi
 
 verify_gpu_pod
 validate_local_gds_loader
+runtime_drift_checkpoint "post-local-validation"
 
 build_and_load_oci2gdsd_image
 build_and_load_qwen_gds_runtime_image
@@ -39,6 +41,8 @@ else
 fi
 
 mkdir -p "${WORK_DIR}/rendered" "${WORK_DIR}/results"
+write_environment_report
+runtime_drift_checkpoint "pre-workload-deploy"
 
 render_template "${HARNESS_DIR}/manifests/namespace.yaml.tpl" "${WORK_DIR}/rendered/namespace.yaml" \
   "E2E_NAMESPACE=${E2E_NAMESPACE}"
@@ -72,6 +76,7 @@ if ! kube -n "${E2E_NAMESPACE}" wait job/oci2gdsd-pytorch-smoke --for=condition=
   kube -n "${E2E_NAMESPACE}" logs job/oci2gdsd-pytorch-smoke -c pytorch-smoke || true
   die "workload job failed"
 fi
+runtime_drift_checkpoint "post-workload-job"
 
 kube -n "${E2E_NAMESPACE}" logs job/oci2gdsd-pytorch-smoke -c preload-model > "${WORK_DIR}/results/preload.log"
 kube -n "${E2E_NAMESPACE}" logs job/oci2gdsd-pytorch-smoke -c pytorch-smoke > "${WORK_DIR}/results/pytorch.log"
@@ -92,6 +97,7 @@ if [[ "${VALIDATE_QWEN_HELLO}" == "true" ]]; then
     kube -n "${QWEN_HELLO_NAMESPACE}" logs deploy/qwen-hello -c pytorch-api || true
     die "qwen hello example validation failed"
   fi
+  runtime_drift_checkpoint "post-qwen-validation"
   cleanup_qwen_hello_example
 fi
 

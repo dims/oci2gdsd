@@ -139,7 +139,7 @@ make k3s-e2e-qwen-quick
 # Use a different model source
 HF_REPO=Qwen/Qwen3-0.6B HF_REVISION=main make k3s-e2e
 
-# Override workload image (default: nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1)
+# Override workload image (default pinned digest of nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1)
 PYTORCH_IMAGE=pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime make k3s-e2e
 
 # Reuse an already pushed model artifact and skip package/push
@@ -153,10 +153,10 @@ VALIDATE_QWEN_HELLO=false make k3s-e2e
 # Skip local host GDS preflight (`gpu probe` + `gpu load --mode benchmark`)
 VALIDATE_LOCAL_GDS=false make k3s-e2e
 
-# Optional: pre-load workload image(s) into k3s containerd (default false)
+# Optional: pre-load workload image(s) into k3s containerd (default true)
 PRELOAD_WORKLOAD_IMAGE=true make k3s-e2e
 
-# Optional: pre-load the qwen-hello PyTorch runtime image into k3s containerd (default false)
+# Optional: pre-load the qwen-hello PyTorch runtime image into k3s containerd (default true)
 PRELOAD_PYTORCH_RUNTIME_IMAGE=true make k3s-e2e
 
 # Optional: require daemon IPC probe to report status=ok
@@ -168,9 +168,15 @@ REQUIRE_DAEMON_IPC_PROBE=true make k3s-e2e
 # - OCI2GDS_STRICT=true
 # - OCI2GDS_PROBE_STRICT=true
 # - OCI2GDS_FORCE_NO_COMPAT=true
+# - REQUIRE_STRICT_PROFILE_PROBE=true
+# - REQUIRE_NO_COMPAT_EVIDENCE=true
+# - RUNTIME_DRIFT_CHECKPOINTS=true
 # - privileged container securityContext for GPU/GDS workload containers
 # You can still set them explicitly:
 REQUIRE_DIRECT_GDS=true OCI2GDS_STRICT=true OCI2GDS_PROBE_STRICT=true OCI2GDS_FORCE_NO_COMPAT=true make k3s-e2e-qwen-quick
+
+# Optional profile probe perf gates
+MIN_PROFILE_PROBE_MIB_S=3000 PROFILE_PROBE_MAX_REGRESSION_PCT=20 make k3s-e2e-qwen-quick
 
 # qwen-hello profile selection:
 # - `default`: generic settings
@@ -229,3 +235,5 @@ Logs are written under:
 - `testharness/k3s-e2e/work/results/pytorch.log`
 - `testharness/k3s-e2e/work/results/qwen-hello.log`
 - `testharness/k3s-e2e/work/results/release-gc.log`
+- `testharness/k3s-e2e/work/results/environment-report.txt`
+- `testharness/k3s-e2e/work/results/qwen-profile-probe-baseline.json`
