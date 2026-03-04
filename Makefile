@@ -5,6 +5,7 @@ help:
 	@echo "Targets:"
 	@echo "  build                  Build oci2gdsd CLI"
 	@echo "  install                Install oci2gdsd to \$$GOPATH/bin"
+	@echo "  clean                  Remove local build and test harness artifacts"
 	@echo "  test                   Run Go tests (no GPU required)"
 	@echo "  demo-local             Self-contained local demo (no GPU, no k8s)"
 	@echo "  nvkind-e2e-prereq      Check/install nvkind e2e prerequisites"
@@ -21,6 +22,15 @@ build:
 .PHONY: install
 install:
 	go install ./cmd/oci2gdsd
+
+.PHONY: clean
+clean:
+	@echo "==> Removing local artifacts..."
+	@rm -f ./oci2gdsd
+	@rm -rf ./testharness/nvkind-e2e/work ./testharness/host-e2e/work
+	@find . -type d \( -name '__pycache__' -o -name '.pytest_cache' -o -name '.mypy_cache' \) -prune -exec rm -rf {} +
+	@find . -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
+	@echo "==> Done"
 
 .PHONY: test
 test:
