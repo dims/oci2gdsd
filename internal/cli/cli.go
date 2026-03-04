@@ -486,6 +486,18 @@ func runGPULoad(ctx context.Context, svc *app.Service, args []string, globalJSON
 			stderr,
 		)
 	}
+	if !strict {
+		return emitError(
+			app.NewAppError(
+				app.ExitPolicy,
+				app.ReasonPolicyRejected,
+				"standalone gpu load enforces strict direct GDS; --strict=false is not allowed",
+				nil,
+			),
+			commandJSON,
+			stderr,
+		)
+	}
 	chunk, err := app.ParseByteSize(chunkBytes)
 	if err != nil {
 		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid --chunk-bytes", err), commandJSON, stderr)
@@ -567,6 +579,9 @@ func runGPUStatus(ctx context.Context, svc *app.Service, args []string, globalJS
 		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid gpu status flags", err), commandJSON, stderr)
 	}
 	res, err := svc.GPUListPersistent(ctx, device)
+	if err != nil {
+		return emitError(err, commandJSON, stderr)
+	}
 	if commandJSON {
 		_ = emitJSON(stdout, res)
 	} else {
@@ -576,9 +591,6 @@ func runGPUStatus(ctx context.Context, svc *app.Service, args []string, globalJS
 			fmt.Fprintf(stdout, "path=%s bytes=%d refs=%d ptr=%s direct=%t\n", f.Path, f.Bytes, f.RefCount, f.DevicePtr, f.Direct)
 		}
 		fmt.Fprintf(stdout, "device=%d persistent_files=%d total_bytes=%d\n", device, len(res), total)
-	}
-	if err != nil {
-		return emitError(err, commandJSON, stderr)
 	}
 	return app.ExitSuccess
 }

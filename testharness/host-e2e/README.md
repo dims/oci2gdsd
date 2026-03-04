@@ -31,6 +31,7 @@ Defaults:
 - `OCI2GDS_STRICT=true`
 - `REQUIRE_DIRECT_GDS=true`
 - `OCI2GDS_FORCE_NO_COMPAT=true` (default fail-fast: sets `CUFILE_ENV_PATH_JSON` with compat-mode disabled for the probe process)
+- `OCI2GDS_FORCE_EXIT_AFTER_SUMMARY=false` (default; set `true` only if you need to bypass known teardown crashes in specific runtime/toolchain combinations)
 - `OCI2GDS_VALIDATE_SAMPLE_BYTES=true` (compares first 4KiB GPU-loaded bytes with host bytes per sampled shard)
 - `REQUIRE_NVFS_STATS_DELTA=false` (default relaxed because some direct-path environments still report zero `Ops` counters)
 - `MIN_FREE_GB_DOCKER=80` (fails fast when Docker data-root free space is below 80 GiB)
@@ -41,6 +42,11 @@ Assumptions:
 
 - Probe container runs with `--privileged` by default in this harness.
 - Probe compiles native extension from shared source file: `examples/qwen-hello/native/oci2gds_torch_native.cpp`.
+
+Runtime dependency behavior:
+
+- `examples/qwen-hello/app/deps_bootstrap.py` is check-only by default and fails fast when required Python packages are missing.
+- Optional runtime `pip install` is debug-only via `OCI2GDS_ALLOW_RUNTIME_PIP_INSTALL=true`.
 
 ## Useful overrides
 
@@ -53,6 +59,9 @@ OCI2GDSD_ROOT_PATH=/var/lib/oci2gdsd make host-e2e-qwen-quick
 
 # Allow fallback mode (no direct-path enforcement)
 OCI2GDS_STRICT=false REQUIRE_DIRECT_GDS=false make host-e2e-qwen-quick
+
+# Optional: force immediate process exit after summary (debug-only workaround)
+OCI2GDS_FORCE_EXIT_AFTER_SUMMARY=true make host-e2e-qwen-quick
 
 # Tighten nvfs counter requirement explicitly (optional)
 REQUIRE_NVFS_STATS_DELTA=true make host-e2e-qwen-quick

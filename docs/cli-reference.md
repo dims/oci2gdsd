@@ -170,7 +170,7 @@ Flags:
 - `--device <index>` (default: `0`)
 - `--chunk-bytes <size>` (default: `16MiB`)
 - `--max-shards <n>` (`0` means all)
-- `--strict` (default: `true`)
+- `--strict` (default: `true`; standalone CLI rejects `--strict=false`)
 - `--mode <benchmark|persistent>` (default: `benchmark`)
 - `--json`
 
@@ -184,6 +184,8 @@ Current mode semantics:
 - `benchmark`: reads shard files through the configured loader path and reports throughput/progress metadata.
 - `persistent`: rejected in standalone one-shot CLI mode with `POLICY_REJECTED`.
   Use `serve` for long-lived process semantics.
+- `--strict=false`: rejected in standalone one-shot CLI mode with `POLICY_REJECTED`.
+  Standalone benchmark loads are fail-fast direct-GDS only.
 
 ## `gpu unload`
 

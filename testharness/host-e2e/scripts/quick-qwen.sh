@@ -17,6 +17,7 @@ OCI2GDS_SAMPLE_BYTES_PER_SHARD="${OCI2GDS_SAMPLE_BYTES_PER_SHARD:-8388608}"
 OCI2GDS_STRICT="${OCI2GDS_STRICT:-true}"
 REQUIRE_DIRECT_GDS="${REQUIRE_DIRECT_GDS:-true}"
 OCI2GDS_FORCE_NO_COMPAT="${OCI2GDS_FORCE_NO_COMPAT:-true}"
+OCI2GDS_FORCE_EXIT_AFTER_SUMMARY="${OCI2GDS_FORCE_EXIT_AFTER_SUMMARY:-false}"
 OCI2GDS_VALIDATE_SAMPLE_BYTES="${OCI2GDS_VALIDATE_SAMPLE_BYTES:-true}"
 # FIXME: Defaulted to false because some valid direct-path environments still
 # report zero nvfs Ops counters; re-enable true-by-default after counter
@@ -162,6 +163,7 @@ run_host_probe() {
     -e OCI2GDS_STRICT="${OCI2GDS_STRICT}" \
     -e REQUIRE_DIRECT_GDS="${REQUIRE_DIRECT_GDS}" \
     -e OCI2GDS_FORCE_NO_COMPAT="${OCI2GDS_FORCE_NO_COMPAT}" \
+    -e OCI2GDS_FORCE_EXIT_AFTER_SUMMARY="${OCI2GDS_FORCE_EXIT_AFTER_SUMMARY}" \
     -e OCI2GDS_VALIDATE_SAMPLE_BYTES="${OCI2GDS_VALIDATE_SAMPLE_BYTES}" \
     -e REQUIRE_NVFS_STATS_DELTA="${REQUIRE_NVFS_STATS_DELTA}" \
     -e OCI2GDS_TORCH_NATIVE_VERBOSE="${OCI2GDS_TORCH_NATIVE_VERBOSE:-0}" \
@@ -203,7 +205,7 @@ resolve_model_root
 log "model_root_path=${MODEL_ROOT_PATH}"
 log "model_digest=${MODEL_DIGEST}"
 log "strict=${OCI2GDS_STRICT} require_direct_gds=${REQUIRE_DIRECT_GDS}"
-log "force_no_compat=${OCI2GDS_FORCE_NO_COMPAT} validate_sample_bytes=${OCI2GDS_VALIDATE_SAMPLE_BYTES} require_nvfs_stats_delta=${REQUIRE_NVFS_STATS_DELTA}"
+log "force_no_compat=${OCI2GDS_FORCE_NO_COMPAT} force_exit_after_summary=${OCI2GDS_FORCE_EXIT_AFTER_SUMMARY} validate_sample_bytes=${OCI2GDS_VALIDATE_SAMPLE_BYTES} require_nvfs_stats_delta=${REQUIRE_NVFS_STATS_DELTA}"
 
 if is_true "${REQUIRE_DIRECT_GDS}"; then
   run_gds_preflight

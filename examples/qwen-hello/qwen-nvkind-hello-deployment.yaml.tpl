@@ -198,6 +198,8 @@ spec:
           value: "0"
         - name: OCI2GDS_NATIVE_CPP_PATH
           value: "/app/native/oci2gds_torch_native.cpp"
+        - name: OCI2GDS_ALLOW_RUNTIME_PIP_INSTALL
+          value: "false"
         - name: CUDA_INCLUDE_DIR
           value: "/usr/local/cuda/include"
         - name: CUDA_LIB_DIR

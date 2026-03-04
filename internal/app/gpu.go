@@ -353,15 +353,52 @@ func (s *Service) gpuPersistentLoad(ctx context.Context, start time.Time, req GP
 	}
 	files := make([]GPULoadFileResult, 0, len(shards))
 	var total int64
+	rollbackPersistent := func() error {
+		var rollbackErr error
+		for i := len(files) - 1; i >= 0; i-- {
+			path := strings.TrimSpace(files[i].Path)
+			if path == "" {
+				continue
+			}
+			if _, unloadErr := s.gpuLoader.UnloadPersistent(context.Background(), GPULoadFileRequest{
+				Path:   path,
+				Device: req.Device,
+			}); unloadErr != nil && rollbackErr == nil {
+				rollbackErr = unloadErr
+			}
+		}
+		if rollbackLease {
+			if _, leaseErr := s.releaseLeaseOnlyLocked(rec, leaseHolder); leaseErr != nil && rollbackErr == nil {
+				rollbackErr = leaseErr
+			}
+		}
+		return rollbackErr
+	}
 	for i, shard := range shards {
 		if req.MaxShards > 0 && i >= req.MaxShards {
 			break
 		}
 		if err := ValidateShardName(shard.Name); err != nil {
-			if rollbackLease {
-				_, _ = s.releaseLeaseOnlyLocked(rec, leaseHolder)
+			appErr := NewAppError(ExitValidation, ReasonValidationFailed, fmt.Sprintf("invalid shard name %q: %v", shard.Name, err), nil)
+			if rollbackErr := rollbackPersistent(); rollbackErr != nil {
+				return GPULoadResult{
+					Status:         "FAILED",
+					ModelID:        modelID,
+					ManifestDigest: manifestDigest,
+					LeaseHolder:    leaseHolder,
+					Path:           modelPath,
+					Device:         req.Device,
+					Loader:         s.gpuLoader.Name(),
+					Mode:           "persistent",
+					Persistent:     true,
+					Files:          files,
+					TotalBytes:     total,
+					DurationMS:     time.Since(start).Milliseconds(),
+					ReasonCode:     ReasonStateDBCorrupt,
+					Message:        fmt.Sprintf("%s (rollback failed: %v)", appErr.Error(), rollbackErr),
+				}, NewAppError(ExitStateCorrupt, ReasonStateDBCorrupt, "persistent load rollback failed", fmt.Errorf("original_error=%v rollback_error=%w", appErr, rollbackErr))
 			}
-			return GPULoadResult{}, NewAppError(ExitValidation, ReasonValidationFailed, fmt.Sprintf("invalid shard name %q: %v", shard.Name, err), nil)
+			return GPULoadResult{}, appErr
 		}
 		path := filepath.Join(modelPath, "shards", shard.Name)
 		res, err := s.gpuLoader.LoadPersistent(ctx, GPULoadFileRequest{
@@ -371,10 +408,25 @@ func (s *Service) gpuPersistentLoad(ctx context.Context, start time.Time, req GP
 			Strict:     req.Strict,
 		})
 		if err != nil {
-			if rollbackLease {
-				_, _ = s.releaseLeaseOnlyLocked(rec, leaseHolder)
-			}
 			appErr := AsAppError(err)
+			if rollbackErr := rollbackPersistent(); rollbackErr != nil {
+				return GPULoadResult{
+					Status:         "FAILED",
+					ModelID:        modelID,
+					ManifestDigest: manifestDigest,
+					LeaseHolder:    leaseHolder,
+					Path:           modelPath,
+					Device:         req.Device,
+					Loader:         s.gpuLoader.Name(),
+					Mode:           "persistent",
+					Persistent:     true,
+					Files:          files,
+					TotalBytes:     total,
+					DurationMS:     time.Since(start).Milliseconds(),
+					ReasonCode:     ReasonStateDBCorrupt,
+					Message:        fmt.Sprintf("failed persistent-loading shard %s: %v (rollback failed: %v)", shard.Name, appErr.Error(), rollbackErr),
+				}, NewAppError(ExitStateCorrupt, ReasonStateDBCorrupt, "persistent load rollback failed", fmt.Errorf("load_error=%v rollback_error=%w", appErr, rollbackErr))
+			}
 			return GPULoadResult{
 				Status:         "FAILED",
 				ModelID:        modelID,

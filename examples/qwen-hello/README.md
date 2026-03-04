@@ -77,3 +77,8 @@ It covers:
 - packaging + pushing Qwen artifact
 - rendering and applying the deployment template
 - calling `/healthz` and `/chat`
+
+Dependency bootstrap behavior:
+
+- `deps_bootstrap.py` checks required Python modules and fails fast by default if missing.
+- Runtime `pip install` is opt-in only (`OCI2GDS_ALLOW_RUNTIME_PIP_INSTALL=true`) and intended for temporary debugging, not reproducible runs.

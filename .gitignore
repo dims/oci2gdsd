@@ -2,6 +2,7 @@
 
 # Test harness runtime artifacts
 testharness/nvkind-e2e/work/
+testharness/host-e2e/work/
 
 # macOS
 .DS_Store

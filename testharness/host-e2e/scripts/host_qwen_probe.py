@@ -129,6 +129,7 @@ def main() -> None:
     strict = parse_bool("OCI2GDS_STRICT", True)
     require_direct = parse_bool("REQUIRE_DIRECT_GDS", True)
     force_no_compat = parse_bool("OCI2GDS_FORCE_NO_COMPAT", True)
+    force_exit_after_summary = parse_bool("OCI2GDS_FORCE_EXIT_AFTER_SUMMARY", False)
     validate_sample_bytes = parse_bool("OCI2GDS_VALIDATE_SAMPLE_BYTES", True)
     # FIXME: Defaulted to false because some direct-path runs show no nvfs Ops
     # increments despite successful cuFile direct reads. Revisit and restore
@@ -257,6 +258,7 @@ def main() -> None:
         "strict": bool(strict),
         "require_direct_gds": bool(require_direct),
         "force_no_compat": bool(force_no_compat),
+        "force_exit_after_summary": bool(force_exit_after_summary),
         "validate_sample_bytes": bool(validate_sample_bytes),
         "require_nvfs_stats_delta": bool(require_nvfs_stats_delta),
         "cufile_env_path": cufile_env_path,
@@ -270,11 +272,12 @@ def main() -> None:
         "nvfs_ops_delta": nvfs_delta,
     }
     print("HOST_QWEN_GDS_PROBE " + json.dumps(summary, sort_keys=True), flush=True)
-    # Some runtime/toolchain combos can crash in process teardown after a
-    # successful probe summary is emitted (exit 139). Exit hard after summary
-    # so harness status reflects the validated probe result.
-    sys.stdout.flush()
-    os._exit(0)
+    if force_exit_after_summary:
+        # Some runtime/toolchain combos can crash in process teardown after a
+        # successful probe summary is emitted (exit 139). Keep this opt-in so
+        # normal runs still surface teardown faults.
+        sys.stdout.flush()
+        os._exit(0)
 
 
 if __name__ == "__main__":

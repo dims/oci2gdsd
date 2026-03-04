@@ -134,7 +134,7 @@ If `gdscheck` reports `NVMe : Unsupported`, true direct path is not available on
 If you want to override the model identity explicitly:
 
 ```bash
-MODEL_REF_OVERRIDE=oci-model-registry.oci2gdsd-registry.svc.cluster.local:5000/models/qwen3-0.6b@sha256:... \
+MODEL_REF_OVERRIDE=oci-model-registry.oci-model-registry.svc.cluster.local:5000/models/qwen3-0.6b@sha256:... \
 MODEL_DIGEST_OVERRIDE=sha256:... \
 make nvkind-e2e-qwen-quick
 ```
@@ -149,7 +149,7 @@ HF_REPO=Qwen/Qwen3-0.6B HF_REVISION=main make nvkind-e2e
 PYTORCH_IMAGE=pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime make nvkind-e2e
 
 # Reuse an already pushed model artifact and skip package/push
-MODEL_REF_OVERRIDE=oci-model-registry.oci2gdsd-registry.svc.cluster.local:5000/models/qwen3-0.6b@sha256:... \
+MODEL_REF_OVERRIDE=oci-model-registry.oci-model-registry.svc.cluster.local:5000/models/qwen3-0.6b@sha256:... \
 MODEL_DIGEST_OVERRIDE=sha256:... \
 make nvkind-e2e
 

@@ -17,8 +17,9 @@ import (
 )
 
 type fakePersistentLoader struct {
-	mu    sync.Mutex
-	files map[string]*fakePersistentAlloc
+	mu           sync.Mutex
+	files        map[string]*fakePersistentAlloc
+	failLoadPath string
 }
 
 type fakePersistentAlloc struct {
@@ -53,6 +54,9 @@ func (l *fakePersistentLoader) LoadFile(_ context.Context, req GPULoadFileReques
 }
 
 func (l *fakePersistentLoader) LoadPersistent(_ context.Context, req GPULoadFileRequest) (GPULoadFileResult, error) {
+	if strings.TrimSpace(l.failLoadPath) != "" && req.Path == l.failLoadPath {
+		return GPULoadFileResult{}, NewAppError(ExitPolicy, ReasonDirectPathIneligible, "injected persistent load failure", nil)
+	}
 	fi, err := os.Stat(req.Path)
 	if err != nil {
 		return GPULoadFileResult{}, err
@@ -361,7 +365,90 @@ func TestGPUWeightShardsFiltersRuntimeEntries(t *testing.T) {
 	}
 }
 
+func TestGPULoadPersistentRollbackOnShardFailure(t *testing.T) {
+	svc := newStateOnlyService(t)
+	loader := newFakePersistentLoader()
+	svc.gpuLoader = loader
+
+	modelID := "demo"
+	manifest := "sha256:" + strings.Repeat("f", 64)
+	shards := []gpuTestShard{
+		{Name: "model-00001-of-00002.safetensors", Content: []byte("first-shard")},
+		{Name: "model-00002-of-00002.safetensors", Content: []byte("second-shard")},
+	}
+	modelPath, totalBytes := writeReadyModelWithShardsForGPUTest(t, svc.cfg.ModelRoot, modelID, manifest, shards)
+
+	loader.failLoadPath = filepath.Join(modelPath, "shards", shards[1].Name)
+
+	now := time.Now().UTC()
+	rec := &storepkg.ModelRecord{
+		Key:            modelKey(modelID, manifest),
+		ModelID:        modelID,
+		ManifestDigest: manifest,
+		Status:         StateReady,
+		Path:           modelPath,
+		Bytes:          totalBytes,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		LastAccessedAt: now,
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatalf("put model record: %v", err)
+	}
+
+	_, err := svc.GPULoad(context.Background(), GPULoadRequest{
+		ModelID:     modelID,
+		Digest:      manifest,
+		LeaseHolder: "holder-rollback",
+		Device:      0,
+		ChunkBytes:  4 * 1024,
+		Mode:        "persistent",
+		Strict:      true,
+	})
+	if err == nil {
+		t.Fatalf("expected persistent load failure")
+	}
+
+	loader.mu.Lock()
+	allocCount := len(loader.files)
+	loader.mu.Unlock()
+	if allocCount != 0 {
+		t.Fatalf("expected rollback to remove all persistent allocations, got %d", allocCount)
+	}
+
+	status, err := svc.GPUListPersistent(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("gpu status: %v", err)
+	}
+	if len(status) != 0 {
+		t.Fatalf("expected no persistent allocations after rollback, got %+v", status)
+	}
+
+	stored, ok, err := svc.store.Get(modelKey(modelID, manifest))
+	if err != nil {
+		t.Fatalf("store get: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected model record")
+	}
+	if hasLeaseHolder(stored.Leases, "holder-rollback") {
+		t.Fatalf("expected rollback lease holder to be removed; leases=%+v", stored.Leases)
+	}
+}
+
+type gpuTestShard struct {
+	Name    string
+	Content []byte
+}
+
 func writeReadyModelForGPUTest(t *testing.T, modelRoot, modelID, manifest string) (string, int64) {
+	t.Helper()
+	return writeReadyModelWithShardsForGPUTest(t, modelRoot, modelID, manifest, []gpuTestShard{
+		{Name: "model-00001-of-00001.safetensors", Content: []byte("gpu-test-shard-content")},
+	})
+}
+
+func writeReadyModelWithShardsForGPUTest(t *testing.T, modelRoot, modelID, manifest string, shards []gpuTestShard) (string, int64) {
 	t.Helper()
 	modelPath := filepath.Join(modelRoot, modelID, strings.ReplaceAll(manifest, ":", "-"))
 	if err := os.MkdirAll(filepath.Join(modelPath, "metadata"), 0o755); err != nil {
@@ -370,10 +457,28 @@ func writeReadyModelForGPUTest(t *testing.T, modelRoot, modelID, manifest string
 	if err := os.MkdirAll(filepath.Join(modelPath, "shards"), 0o755); err != nil {
 		t.Fatalf("mkdir shards: %v", err)
 	}
-	content := []byte("gpu-test-shard-content")
-	shardName := "model-00001-of-00001.safetensors"
-	if err := os.WriteFile(filepath.Join(modelPath, "shards", shardName), content, 0o444); err != nil {
-		t.Fatalf("write shard: %v", err)
+	if len(shards) == 0 {
+		t.Fatalf("expected at least one shard")
+	}
+	profileShards := make([]ModelShard, 0, len(shards))
+	var totalBytes int64
+	for i, shard := range shards {
+		if strings.TrimSpace(shard.Name) == "" {
+			t.Fatalf("shard[%d] name is empty", i)
+		}
+		if len(shard.Content) == 0 {
+			t.Fatalf("shard[%d] content is empty", i)
+		}
+		if err := os.WriteFile(filepath.Join(modelPath, "shards", shard.Name), shard.Content, 0o444); err != nil {
+			t.Fatalf("write shard[%d]: %v", i, err)
+		}
+		profileShards = append(profileShards, ModelShard{
+			Name:    shard.Name,
+			Digest:  digest.FromBytes(shard.Content).String(),
+			Size:    int64(len(shard.Content)),
+			Ordinal: i + 1,
+		})
+		totalBytes += int64(len(shard.Content))
 	}
 	md := localMetadata{
 		SchemaVersion:  1,
@@ -385,13 +490,8 @@ func writeReadyModelForGPUTest(t *testing.T, modelRoot, modelID, manifest string
 			ModelRevision: "r1",
 			Framework:     "pytorch",
 			Format:        "safetensors",
-			Shards: []ModelShard{{
-				Name:    shardName,
-				Digest:  digest.FromBytes(content).String(),
-				Size:    int64(len(content)),
-				Ordinal: 1,
-			}},
-			Integrity: ModelIntegrity{ManifestDigest: manifest},
+			Shards:        profileShards,
+			Integrity:     ModelIntegrity{ManifestDigest: manifest},
 		},
 	}
 	mb, err := json.Marshal(md)
@@ -404,5 +504,5 @@ func writeReadyModelForGPUTest(t *testing.T, modelRoot, modelID, manifest string
 	if err := os.WriteFile(filepath.Join(modelPath, "READY"), []byte("ok\n"), 0o444); err != nil {
 		t.Fatalf("write READY marker: %v", err)
 	}
-	return modelPath, int64(len(content))
+	return modelPath, totalBytes
 }
