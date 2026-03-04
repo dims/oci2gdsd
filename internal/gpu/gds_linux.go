@@ -450,10 +450,8 @@ static int gds_load_persistent(const char* path, int device, long long chunk_byt
 			rc = 3005;
 			goto cleanup;
 		}
-		/*
-		 * Tail bytes are not 4KiB-aligned; switch to a non-O_DIRECT fd for
-		 * host-buffer copy to avoid pread(EINVAL) on O_DIRECT descriptors.
-		 */
+		// Tail bytes are not 4KiB-aligned; switch to a non-O_DIRECT fd for
+		// host-buffer copy to avoid pread(EINVAL) on O_DIRECT descriptors.
 		if (buf_registered) {
 			(void)cuFileBufDeregister((void*)(uintptr_t)dptr);
 			buf_registered = 0;
