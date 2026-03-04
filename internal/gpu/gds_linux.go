@@ -659,10 +659,12 @@ import (
 )
 
 type persistentAllocation struct {
-	ptr    C.CUdeviceptr
-	bytes  int64
-	refs   int
-	direct bool
+	ptr          C.CUdeviceptr
+	bytes        int64
+	loadRefs     int
+	importerRefs int
+	importers    map[string]int
+	direct       bool
 }
 
 type gdsLoader struct {
@@ -863,13 +865,13 @@ func (l *gdsLoader) LoadPersistent(ctx context.Context, req app.GPULoadFileReque
 			l.mu.Unlock()
 			return app.GPULoadFileResult{}, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, "persistent allocation exists on different device/session state", nil)
 		}
-		alloc.refs++
+		alloc.loadRefs++
 		res := app.GPULoadFileResult{
 			Path:      req.Path,
 			Bytes:     alloc.bytes,
 			Direct:    alloc.direct,
 			Loaded:    false,
-			RefCount:  alloc.refs,
+			RefCount:  alloc.loadRefs + alloc.importerRefs,
 			DevicePtr: devicePtrString(alloc.ptr),
 			Message:   "already resident in GPU memory",
 		}
@@ -914,14 +916,15 @@ func (l *gdsLoader) LoadPersistent(ctx context.Context, req app.GPULoadFileReque
 		l.allocations = map[string]*persistentAllocation{}
 	}
 	if alloc, ok := l.allocations[req.Path]; ok {
-		alloc.refs++
+		alloc.loadRefs++
 		duplicate = alloc
 	} else {
 		l.allocations[req.Path] = &persistentAllocation{
-			ptr:    ptr,
-			bytes:  int64(total),
-			refs:   1,
-			direct: direct == 1,
+			ptr:       ptr,
+			bytes:     int64(total),
+			loadRefs:  1,
+			importers: map[string]int{},
+			direct:    direct == 1,
 		}
 	}
 	l.mu.Unlock()
@@ -932,7 +935,7 @@ func (l *gdsLoader) LoadPersistent(ctx context.Context, req app.GPULoadFileReque
 			Bytes:     duplicate.bytes,
 			Direct:    duplicate.direct,
 			Loaded:    false,
-			RefCount:  duplicate.refs,
+			RefCount:  duplicate.loadRefs + duplicate.importerRefs,
 			DevicePtr: devicePtrString(duplicate.ptr),
 			Message:   "already resident in GPU memory",
 		}, nil
@@ -985,10 +988,104 @@ func (l *gdsLoader) ExportPersistent(ctx context.Context, req app.GPULoadFileReq
 		Bytes:     alloc.bytes,
 		Direct:    alloc.direct,
 		Loaded:    true,
-		RefCount:  alloc.refs,
+		RefCount:  alloc.loadRefs + alloc.importerRefs,
 		DevicePtr: devicePtrString(alloc.ptr),
 		IPCHandle: base64.StdEncoding.EncodeToString(handle),
 		Message:   "exported CUDA IPC handle for persistent allocation",
+	}, nil
+}
+
+func (l *gdsLoader) AttachPersistent(ctx context.Context, req app.GPULoadFileRequest) (app.GPULoadFileResult, error) {
+	select {
+	case <-ctx.Done():
+		return app.GPULoadFileResult{}, app.NewAppError(app.ExitRegistry, app.ReasonRegistryTimeout, "context canceled before persistent GPU attach", ctx.Err())
+	default:
+	}
+	clientID := req.ClientID
+	if clientID == "" {
+		return app.GPULoadFileResult{}, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "client id is required for persistent attach", nil)
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.allocations == nil {
+		l.allocations = map[string]*persistentAllocation{}
+	}
+	alloc, ok := l.allocations[req.Path]
+	if !ok {
+		return app.GPULoadFileResult{}, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "persistent allocation not found for shard path", nil)
+	}
+	if !l.ready || l.device != req.Device {
+		return app.GPULoadFileResult{}, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, "persistent allocation exists on a different device/session state", nil)
+	}
+	if alloc.importers == nil {
+		alloc.importers = map[string]int{}
+	}
+	alloc.importers[clientID]++
+	alloc.importerRefs++
+
+	return app.GPULoadFileResult{
+		Path:      req.Path,
+		Bytes:     alloc.bytes,
+		Direct:    alloc.direct,
+		Loaded:    true,
+		RefCount:  alloc.loadRefs + alloc.importerRefs,
+		DevicePtr: devicePtrString(alloc.ptr),
+		Message:   "persistent allocation attached for client import",
+	}, nil
+}
+
+func (l *gdsLoader) DetachPersistent(ctx context.Context, req app.GPULoadFileRequest) (app.GPULoadFileResult, error) {
+	select {
+	case <-ctx.Done():
+		return app.GPULoadFileResult{}, app.NewAppError(app.ExitRegistry, app.ReasonRegistryTimeout, "context canceled before persistent GPU detach", ctx.Err())
+	default:
+	}
+	clientID := req.ClientID
+	if clientID == "" {
+		return app.GPULoadFileResult{}, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "client id is required for persistent detach", nil)
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.allocations == nil {
+		l.allocations = map[string]*persistentAllocation{}
+	}
+	alloc, ok := l.allocations[req.Path]
+	if !ok {
+		return app.GPULoadFileResult{
+			Path:     req.Path,
+			Loaded:   false,
+			RefCount: 0,
+			Message:  "persistent allocation already absent",
+		}, nil
+	}
+	if !l.ready || l.device != req.Device {
+		return app.GPULoadFileResult{}, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, "persistent allocation exists on a different device/session state", nil)
+	}
+	if alloc.importers == nil {
+		alloc.importers = map[string]int{}
+	}
+	if count := alloc.importers[clientID]; count > 1 {
+		alloc.importers[clientID] = count - 1
+		if alloc.importerRefs > 0 {
+			alloc.importerRefs--
+		}
+	} else if count == 1 {
+		delete(alloc.importers, clientID)
+		if alloc.importerRefs > 0 {
+			alloc.importerRefs--
+		}
+	}
+
+	return app.GPULoadFileResult{
+		Path:      req.Path,
+		Bytes:     alloc.bytes,
+		Direct:    alloc.direct,
+		Loaded:    true,
+		RefCount:  alloc.loadRefs + alloc.importerRefs,
+		DevicePtr: devicePtrString(alloc.ptr),
+		Message:   "persistent allocation detached for client import",
 	}, nil
 }
 
@@ -1011,21 +1108,24 @@ func (l *gdsLoader) UnloadPersistent(ctx context.Context, req app.GPULoadFileReq
 	if !l.ready || l.device != req.Device {
 		return app.GPULoadFileResult{}, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, "persistent allocation exists on a different device", nil)
 	}
-	if alloc.refs > 1 {
-		alloc.refs--
+	if alloc.loadRefs > 1 {
+		alloc.loadRefs--
 		return app.GPULoadFileResult{
 			Path:      req.Path,
 			Bytes:     0,
 			Direct:    alloc.direct,
 			Loaded:    false,
-			RefCount:  alloc.refs,
+			RefCount:  alloc.loadRefs + alloc.importerRefs,
 			DevicePtr: devicePtrString(alloc.ptr),
 			Message:   "persistent allocation retained; active references remain",
 		}, nil
 	}
+	if alloc.importerRefs > 0 {
+		return app.GPULoadFileResult{}, app.NewAppError(app.ExitPolicy, app.ReasonLeaseConflict, fmt.Sprintf("persistent allocation has %d active importer reference(s)", alloc.importerRefs), nil)
+	}
 	code := int(C.gds_free_persistent(C.int(req.Device), alloc.ptr))
 	if code != 0 {
-		alloc.refs = 1
+		alloc.loadRefs = 1
 		return app.GPULoadFileResult{}, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, fmt.Sprintf("persistent GPU free failed: %s", describeGDSCode(code)), nil)
 	}
 	res := app.GPULoadFileResult{
@@ -1065,8 +1165,9 @@ func (l *gdsLoader) ListPersistent(_ context.Context, device int) ([]app.GPULoad
 			Bytes:     alloc.bytes,
 			Direct:    alloc.direct,
 			Loaded:    true,
-			RefCount:  alloc.refs,
+			RefCount:  alloc.loadRefs + alloc.importerRefs,
 			DevicePtr: devicePtrString(alloc.ptr),
+			Message:   fmt.Sprintf("load_refs=%d importer_refs=%d", alloc.loadRefs, alloc.importerRefs),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {

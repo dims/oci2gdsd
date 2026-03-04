@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	configpkg "github.com/dims/oci2gdsd/internal/config"
@@ -26,8 +27,23 @@ type Service struct {
 	locks     *LockManager
 	fetcher   ModelFetcher
 	gpuLoader GPULoader
+	attachMu  sync.Mutex
+	attachTTL time.Duration
+	attachMap map[string]*gpuClientAttachment
 	// Optional allowlist regex for tenant-safe model identifiers.
 	modelIDAllowlist *regexp.Regexp
+}
+
+type gpuClientAttachment struct {
+	ModelKey        string
+	ModelID         string
+	ManifestDigest  string
+	Path            string
+	Device          int
+	ClientID        string
+	ShardPaths      []string
+	ExpiresAt       time.Time
+	LastHeartbeatAt time.Time
 }
 
 func (s *Service) MinFreeBytesDefault() int64 {
@@ -135,6 +151,8 @@ func NewService(cfg configpkg.Config, fetcher ModelFetcher, gpuLoader GPULoader)
 		locks:            NewLockManager(cfg.LocksRoot),
 		fetcher:          fetcher,
 		gpuLoader:        gpuLoader,
+		attachTTL:        5 * time.Minute,
+		attachMap:        map[string]*gpuClientAttachment{},
 		modelIDAllowlist: modelIDAllowlist,
 	}
 	if err := s.Recover(); err != nil {

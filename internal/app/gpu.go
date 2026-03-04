@@ -24,6 +24,7 @@ type GPULoadFileRequest struct {
 	Device     int
 	ChunkBytes int64
 	Strict     bool
+	ClientID   string
 }
 
 type GPULoadFileResult struct {
@@ -113,12 +114,85 @@ type GPUExportResult struct {
 	Message        string              `json:"message,omitempty"`
 }
 
+type GPUAttachRequest struct {
+	ModelID    string `json:"model_id"`
+	Digest     string `json:"digest"`
+	Path       string `json:"path"`
+	Device     int    `json:"device"`
+	ClientID   string `json:"client_id"`
+	MaxShards  int    `json:"max_shards"`
+	TTLSeconds int    `json:"ttl_seconds"`
+}
+
+type GPUAttachResult struct {
+	Status         string              `json:"status"`
+	ModelID        string              `json:"model_id,omitempty"`
+	ManifestDigest string              `json:"manifest_digest,omitempty"`
+	Path           string              `json:"path"`
+	Device         int                 `json:"device"`
+	ClientID       string              `json:"client_id"`
+	ExpiresAt      string              `json:"expires_at,omitempty"`
+	Loader         string              `json:"loader"`
+	Files          []GPULoadFileResult `json:"files"`
+	AttachedFiles  int                 `json:"attached_files"`
+	DurationMS     int64               `json:"duration_ms"`
+	ReasonCode     ReasonCode          `json:"reason_code"`
+	Message        string              `json:"message,omitempty"`
+}
+
+type GPUDetachRequest struct {
+	ModelID  string `json:"model_id"`
+	Digest   string `json:"digest"`
+	Path     string `json:"path"`
+	Device   int    `json:"device"`
+	ClientID string `json:"client_id"`
+}
+
+type GPUDetachResult struct {
+	Status         string              `json:"status"`
+	ModelID        string              `json:"model_id,omitempty"`
+	ManifestDigest string              `json:"manifest_digest,omitempty"`
+	Path           string              `json:"path"`
+	Device         int                 `json:"device"`
+	ClientID       string              `json:"client_id"`
+	Loader         string              `json:"loader"`
+	Files          []GPULoadFileResult `json:"files"`
+	DetachedFiles  int                 `json:"detached_files"`
+	DurationMS     int64               `json:"duration_ms"`
+	ReasonCode     ReasonCode          `json:"reason_code"`
+	Message        string              `json:"message,omitempty"`
+}
+
+type GPUHeartbeatRequest struct {
+	ModelID    string `json:"model_id"`
+	Digest     string `json:"digest"`
+	Path       string `json:"path"`
+	Device     int    `json:"device"`
+	ClientID   string `json:"client_id"`
+	TTLSeconds int    `json:"ttl_seconds"`
+}
+
+type GPUHeartbeatResult struct {
+	Status         string     `json:"status"`
+	ModelID        string     `json:"model_id,omitempty"`
+	ManifestDigest string     `json:"manifest_digest,omitempty"`
+	Path           string     `json:"path"`
+	Device         int        `json:"device"`
+	ClientID       string     `json:"client_id"`
+	ExpiresAt      string     `json:"expires_at,omitempty"`
+	DurationMS     int64      `json:"duration_ms"`
+	ReasonCode     ReasonCode `json:"reason_code"`
+	Message        string     `json:"message,omitempty"`
+}
+
 type GPULoader interface {
 	Name() string
 	Probe(ctx context.Context, device int) (GPUProbeResult, error)
 	LoadFile(ctx context.Context, req GPULoadFileRequest) (GPULoadFileResult, error)
 	LoadPersistent(ctx context.Context, req GPULoadFileRequest) (GPULoadFileResult, error)
 	ExportPersistent(ctx context.Context, req GPULoadFileRequest) (GPULoadFileResult, error)
+	AttachPersistent(ctx context.Context, req GPULoadFileRequest) (GPULoadFileResult, error)
+	DetachPersistent(ctx context.Context, req GPULoadFileRequest) (GPULoadFileResult, error)
 	UnloadPersistent(ctx context.Context, req GPULoadFileRequest) (GPULoadFileResult, error)
 	ListPersistent(ctx context.Context, device int) ([]GPULoadFileResult, error)
 }
@@ -532,6 +606,23 @@ func (s *Service) GPUUnload(ctx context.Context, req GPUUnloadRequest) (GPUUnloa
 	if !hasLeaseHolder(rec.Leases, leaseHolder) {
 		return GPUUnloadResult{}, NewAppError(ExitValidation, ReasonValidationFailed, fmt.Sprintf("lease holder %q not found on model", leaseHolder), nil)
 	}
+	if err := s.pruneExpiredAttachments(context.Background()); err != nil {
+		return GPUUnloadResult{}, err
+	}
+	if active := s.countActiveAttachmentsForModel(key, req.Device); active > 0 {
+		return GPUUnloadResult{
+			Status:         "FAILED",
+			ModelID:        modelID,
+			ManifestDigest: manifestDigest,
+			LeaseHolder:    leaseHolder,
+			Path:           modelPath,
+			Device:         req.Device,
+			Loader:         s.gpuLoader.Name(),
+			DurationMS:     time.Since(start).Milliseconds(),
+			ReasonCode:     ReasonLeaseConflict,
+			Message:        fmt.Sprintf("cannot unload while %d attachment client(s) are active; detach clients first or wait for heartbeat TTL expiry", active),
+		}, NewAppError(ExitPolicy, ReasonLeaseConflict, "active GPU attachment clients prevent unload", nil)
+	}
 
 	shards, err := gpuWeightShards(md.Profile)
 	if err != nil {
@@ -697,6 +788,388 @@ func (s *Service) GPUExport(ctx context.Context, req GPUExportRequest) (GPUExpor
 		ReasonCode:     ReasonNone,
 		Message:        "exported CUDA IPC handles for persistent allocations",
 	}, nil
+}
+
+const (
+	minAttachTTL = 15 * time.Second
+	maxAttachTTL = time.Hour
+)
+
+func (s *Service) GPUAttach(ctx context.Context, req GPUAttachRequest) (GPUAttachResult, error) {
+	start := time.Now()
+	if req.Device < 0 {
+		return GPUAttachResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "--device must be >= 0", nil)
+	}
+	clientID := strings.TrimSpace(req.ClientID)
+	if clientID == "" {
+		return GPUAttachResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "--client-id is required", nil)
+	}
+	if req.MaxShards <= 0 {
+		req.MaxShards = 0
+	}
+	ttl := s.normalizeAttachTTL(req.TTLSeconds)
+
+	modelPath, modelID, manifestDigest, md, key, err := s.resolveGPUModelTarget(req.Path, req.ModelID, req.Digest)
+	if err != nil {
+		return GPUAttachResult{}, err
+	}
+	if err := s.pruneExpiredAttachments(context.Background()); err != nil {
+		return GPUAttachResult{}, err
+	}
+
+	shardPaths, err := resolveWeightShardPaths(md, modelPath, req.MaxShards)
+	if err != nil {
+		return GPUAttachResult{}, err
+	}
+	files := make([]GPULoadFileResult, 0, len(shardPaths))
+	rollback := func() {
+		for i := len(files) - 1; i >= 0; i-- {
+			_, _ = s.gpuLoader.DetachPersistent(context.Background(), GPULoadFileRequest{
+				Path:     files[i].Path,
+				Device:   req.Device,
+				ClientID: clientID,
+			})
+		}
+	}
+	for _, shardPath := range shardPaths {
+		res, attachErr := s.gpuLoader.AttachPersistent(ctx, GPULoadFileRequest{
+			Path:     shardPath,
+			Device:   req.Device,
+			ClientID: clientID,
+		})
+		if attachErr != nil {
+			rollback()
+			appErr := AsAppError(attachErr)
+			return GPUAttachResult{
+				Status:         "FAILED",
+				ModelID:        modelID,
+				ManifestDigest: manifestDigest,
+				Path:           modelPath,
+				Device:         req.Device,
+				ClientID:       clientID,
+				Loader:         s.gpuLoader.Name(),
+				Files:          files,
+				AttachedFiles:  len(files),
+				DurationMS:     time.Since(start).Milliseconds(),
+				ReasonCode:     appErr.Reason,
+				Message:        fmt.Sprintf("failed attaching shard %s: %v", filepath.Base(shardPath), appErr.Error()),
+			}, appErr
+		}
+		files = append(files, res)
+	}
+
+	expiresAt := time.Now().UTC().Add(ttl)
+	s.attachMu.Lock()
+	if s.attachMap == nil {
+		s.attachMap = map[string]*gpuClientAttachment{}
+	}
+	s.attachMap[gpuAttachKey(key, req.Device, clientID)] = &gpuClientAttachment{
+		ModelKey:        key,
+		ModelID:         modelID,
+		ManifestDigest:  manifestDigest,
+		Path:            modelPath,
+		Device:          req.Device,
+		ClientID:        clientID,
+		ShardPaths:      append([]string(nil), shardPaths...),
+		ExpiresAt:       expiresAt,
+		LastHeartbeatAt: time.Now().UTC(),
+	}
+	s.attachMu.Unlock()
+
+	return GPUAttachResult{
+		Status:         "READY",
+		ModelID:        modelID,
+		ManifestDigest: manifestDigest,
+		Path:           modelPath,
+		Device:         req.Device,
+		ClientID:       clientID,
+		ExpiresAt:      expiresAt.Format(time.RFC3339Nano),
+		Loader:         s.gpuLoader.Name(),
+		Files:          files,
+		AttachedFiles:  len(files),
+		DurationMS:     time.Since(start).Milliseconds(),
+		ReasonCode:     ReasonNone,
+		Message:        "client attached to persistent GPU allocations",
+	}, nil
+}
+
+func (s *Service) GPUHeartbeat(ctx context.Context, req GPUHeartbeatRequest) (GPUHeartbeatResult, error) {
+	start := time.Now()
+	if req.Device < 0 {
+		return GPUHeartbeatResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "--device must be >= 0", nil)
+	}
+	clientID := strings.TrimSpace(req.ClientID)
+	if clientID == "" {
+		return GPUHeartbeatResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "--client-id is required", nil)
+	}
+
+	modelPath, modelID, manifestDigest, _, key, err := s.resolveGPUModelTarget(req.Path, req.ModelID, req.Digest)
+	if err != nil {
+		return GPUHeartbeatResult{}, err
+	}
+	if err := s.pruneExpiredAttachments(context.Background()); err != nil {
+		return GPUHeartbeatResult{}, err
+	}
+	ttl := s.normalizeAttachTTL(req.TTLSeconds)
+
+	now := time.Now().UTC()
+	attachKey := gpuAttachKey(key, req.Device, clientID)
+	s.attachMu.Lock()
+	session, ok := s.attachMap[attachKey]
+	if !ok {
+		s.attachMu.Unlock()
+		return GPUHeartbeatResult{
+			Status:         "FAILED",
+			ModelID:        modelID,
+			ManifestDigest: manifestDigest,
+			Path:           modelPath,
+			Device:         req.Device,
+			ClientID:       clientID,
+			DurationMS:     time.Since(start).Milliseconds(),
+			ReasonCode:     ReasonValidationFailed,
+			Message:        "attachment session not found; call gpu/attach first",
+		}, NewAppError(ExitValidation, ReasonValidationFailed, "attachment session not found", nil)
+	}
+	session.LastHeartbeatAt = now
+	session.ExpiresAt = now.Add(ttl)
+	expiresAt := session.ExpiresAt
+	s.attachMu.Unlock()
+
+	select {
+	case <-ctx.Done():
+		return GPUHeartbeatResult{}, NewAppError(ExitRegistry, ReasonRegistryTimeout, "context canceled before attachment heartbeat update completed", ctx.Err())
+	default:
+	}
+
+	return GPUHeartbeatResult{
+		Status:         "READY",
+		ModelID:        modelID,
+		ManifestDigest: manifestDigest,
+		Path:           modelPath,
+		Device:         req.Device,
+		ClientID:       clientID,
+		ExpiresAt:      expiresAt.Format(time.RFC3339Nano),
+		DurationMS:     time.Since(start).Milliseconds(),
+		ReasonCode:     ReasonNone,
+		Message:        "attachment heartbeat updated",
+	}, nil
+}
+
+func (s *Service) GPUDetach(ctx context.Context, req GPUDetachRequest) (GPUDetachResult, error) {
+	start := time.Now()
+	if req.Device < 0 {
+		return GPUDetachResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "--device must be >= 0", nil)
+	}
+	clientID := strings.TrimSpace(req.ClientID)
+	if clientID == "" {
+		return GPUDetachResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "--client-id is required", nil)
+	}
+
+	modelPath, modelID, manifestDigest, _, key, err := s.resolveGPUModelTarget(req.Path, req.ModelID, req.Digest)
+	if err != nil {
+		return GPUDetachResult{}, err
+	}
+	if err := s.pruneExpiredAttachments(context.Background()); err != nil {
+		return GPUDetachResult{}, err
+	}
+	attachKey := gpuAttachKey(key, req.Device, clientID)
+
+	s.attachMu.Lock()
+	session, ok := s.attachMap[attachKey]
+	if ok {
+		delete(s.attachMap, attachKey)
+	}
+	s.attachMu.Unlock()
+
+	if !ok {
+		return GPUDetachResult{
+			Status:         "READY",
+			ModelID:        modelID,
+			ManifestDigest: manifestDigest,
+			Path:           modelPath,
+			Device:         req.Device,
+			ClientID:       clientID,
+			Loader:         s.gpuLoader.Name(),
+			Files:          []GPULoadFileResult{},
+			DetachedFiles:  0,
+			DurationMS:     time.Since(start).Milliseconds(),
+			ReasonCode:     ReasonNone,
+			Message:        "attachment session already absent",
+		}, nil
+	}
+
+	files := make([]GPULoadFileResult, 0, len(session.ShardPaths))
+	for _, shardPath := range session.ShardPaths {
+		res, detachErr := s.gpuLoader.DetachPersistent(ctx, GPULoadFileRequest{
+			Path:     shardPath,
+			Device:   req.Device,
+			ClientID: clientID,
+		})
+		if detachErr != nil {
+			appErr := AsAppError(detachErr)
+			return GPUDetachResult{
+				Status:         "FAILED",
+				ModelID:        modelID,
+				ManifestDigest: manifestDigest,
+				Path:           modelPath,
+				Device:         req.Device,
+				ClientID:       clientID,
+				Loader:         s.gpuLoader.Name(),
+				Files:          files,
+				DetachedFiles:  len(files),
+				DurationMS:     time.Since(start).Milliseconds(),
+				ReasonCode:     appErr.Reason,
+				Message:        fmt.Sprintf("failed detaching shard %s: %v", filepath.Base(shardPath), appErr.Error()),
+			}, appErr
+		}
+		files = append(files, res)
+	}
+
+	return GPUDetachResult{
+		Status:         "READY",
+		ModelID:        modelID,
+		ManifestDigest: manifestDigest,
+		Path:           modelPath,
+		Device:         req.Device,
+		ClientID:       clientID,
+		Loader:         s.gpuLoader.Name(),
+		Files:          files,
+		DetachedFiles:  len(files),
+		DurationMS:     time.Since(start).Milliseconds(),
+		ReasonCode:     ReasonNone,
+		Message:        "client detached from persistent GPU allocations",
+	}, nil
+}
+
+func (s *Service) pruneExpiredAttachments(ctx context.Context) error {
+	now := time.Now().UTC()
+	type expiredSession struct {
+		clientID   string
+		device     int
+		shardPaths []string
+	}
+	expired := []expiredSession{}
+
+	s.attachMu.Lock()
+	for key, session := range s.attachMap {
+		if session == nil {
+			delete(s.attachMap, key)
+			continue
+		}
+		if session.ExpiresAt.IsZero() || session.ExpiresAt.After(now) {
+			continue
+		}
+		expired = append(expired, expiredSession{
+			clientID:   session.ClientID,
+			device:     session.Device,
+			shardPaths: append([]string(nil), session.ShardPaths...),
+		})
+		delete(s.attachMap, key)
+	}
+	s.attachMu.Unlock()
+	for _, session := range expired {
+		for _, shardPath := range session.shardPaths {
+			_, _ = s.gpuLoader.DetachPersistent(ctx, GPULoadFileRequest{
+				Path:     shardPath,
+				Device:   session.device,
+				ClientID: session.clientID,
+			})
+		}
+	}
+	return nil
+}
+
+func (s *Service) countActiveAttachmentsForModel(modelKey string, device int) int {
+	s.attachMu.Lock()
+	defer s.attachMu.Unlock()
+	count := 0
+	for _, session := range s.attachMap {
+		if session == nil {
+			continue
+		}
+		if session.ModelKey == modelKey && session.Device == device {
+			count++
+		}
+	}
+	return count
+}
+
+func (s *Service) normalizeAttachTTL(ttlSeconds int) time.Duration {
+	if ttlSeconds <= 0 {
+		return s.attachTTL
+	}
+	ttl := time.Duration(ttlSeconds) * time.Second
+	if ttl < minAttachTTL {
+		return minAttachTTL
+	}
+	if ttl > maxAttachTTL {
+		return maxAttachTTL
+	}
+	return ttl
+}
+
+func gpuAttachKey(modelKey string, device int, clientID string) string {
+	return fmt.Sprintf("%s|%d|%s", modelKey, device, clientID)
+}
+
+func resolveWeightShardPaths(md *localMetadata, modelPath string, maxShards int) ([]string, error) {
+	shards, err := gpuWeightShards(md.Profile)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(shards))
+	for i, shard := range shards {
+		if maxShards > 0 && i >= maxShards {
+			break
+		}
+		if err := ValidateShardName(shard.Name); err != nil {
+			return nil, NewAppError(ExitValidation, ReasonValidationFailed, fmt.Sprintf("invalid shard name %q: %v", shard.Name, err), nil)
+		}
+		out = append(out, filepath.Join(modelPath, "shards", shard.Name))
+	}
+	return out, nil
+}
+
+func (s *Service) resolveGPUModelTarget(path, modelID, digestValue string) (string, string, string, *localMetadata, string, error) {
+	modelPath := strings.TrimSpace(path)
+	resolvedModelID := strings.TrimSpace(modelID)
+	resolvedDigest := strings.TrimSpace(digestValue)
+	if modelPath == "" {
+		if resolvedModelID == "" || resolvedDigest == "" {
+			return "", "", "", nil, "", NewAppError(ExitValidation, ReasonValidationFailed, "either --path or (--model-id and --digest) is required", nil)
+		}
+		if err := s.validateModelID(resolvedModelID); err != nil {
+			return "", "", "", nil, "", NewAppError(ExitValidation, ReasonValidationFailed, "invalid --model-id", err)
+		}
+		rec, ok, err := s.store.Get(modelKey(resolvedModelID, resolvedDigest))
+		if err != nil {
+			return "", "", "", nil, "", err
+		}
+		if !ok {
+			return "", "", "", nil, "", NewAppError(ExitValidation, ReasonValidationFailed, "model not found in local state", nil)
+		}
+		modelPath = rec.Path
+	}
+
+	valid, reason, err := s.verifyPublishedPath(modelPath)
+	if err != nil || !valid {
+		if reason == ReasonNone {
+			reason = ReasonStateDBCorrupt
+		}
+		return "", "", "", nil, "", NewAppError(mapReasonToExitCode(reason), reason, "path failed READY verification", err)
+	}
+
+	md, err := loadLocalMetadata(modelPath)
+	if err != nil {
+		return "", "", "", nil, "", NewAppError(ExitStateCorrupt, ReasonStateDBCorrupt, "failed to load local model metadata", err)
+	}
+	if resolvedModelID == "" {
+		resolvedModelID = md.ModelID
+	}
+	if resolvedDigest == "" {
+		resolvedDigest = md.ManifestDigest
+	}
+	return modelPath, resolvedModelID, resolvedDigest, md, modelKey(resolvedModelID, resolvedDigest), nil
 }
 
 func (s *Service) releaseLeaseOnlyLocked(rec *storepkg.ModelRecord, leaseHolder string) (int, error) {

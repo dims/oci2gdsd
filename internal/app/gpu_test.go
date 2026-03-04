@@ -23,8 +23,10 @@ type fakePersistentLoader struct {
 }
 
 type fakePersistentAlloc struct {
-	bytes int64
-	refs  int
+	bytes        int64
+	loadRefs     int
+	importerRefs int
+	importers    map[string]int
 }
 
 func newFakePersistentLoader() *fakePersistentLoader {
@@ -64,17 +66,21 @@ func (l *fakePersistentLoader) LoadPersistent(_ context.Context, req GPULoadFile
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if alloc, ok := l.files[req.Path]; ok {
-		alloc.refs++
+		alloc.loadRefs++
 		return GPULoadFileResult{
 			Path:      req.Path,
 			Bytes:     alloc.bytes,
 			Direct:    true,
 			Loaded:    false,
-			RefCount:  alloc.refs,
+			RefCount:  alloc.loadRefs + alloc.importerRefs,
 			DevicePtr: fmt.Sprintf("0x%x", len(req.Path)),
 		}, nil
 	}
-	l.files[req.Path] = &fakePersistentAlloc{bytes: fi.Size(), refs: 1}
+	l.files[req.Path] = &fakePersistentAlloc{
+		bytes:     fi.Size(),
+		loadRefs:  1,
+		importers: map[string]int{},
+	}
 	return GPULoadFileResult{
 		Path:      req.Path,
 		Bytes:     fi.Size(),
@@ -97,9 +103,64 @@ func (l *fakePersistentLoader) ExportPersistent(_ context.Context, req GPULoadFi
 		Bytes:     alloc.bytes,
 		Direct:    true,
 		Loaded:    true,
-		RefCount:  alloc.refs,
+		RefCount:  alloc.loadRefs + alloc.importerRefs,
 		DevicePtr: fmt.Sprintf("0x%x", len(req.Path)),
 		IPCHandle: "ZmFrZS1pcGMtaGFuZGxl",
+	}, nil
+}
+
+func (l *fakePersistentLoader) AttachPersistent(_ context.Context, req GPULoadFileRequest) (GPULoadFileResult, error) {
+	if strings.TrimSpace(req.ClientID) == "" {
+		return GPULoadFileResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "client id is required", nil)
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	alloc, ok := l.files[req.Path]
+	if !ok {
+		return GPULoadFileResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "persistent allocation not found", nil)
+	}
+	if alloc.importers == nil {
+		alloc.importers = map[string]int{}
+	}
+	alloc.importers[req.ClientID]++
+	alloc.importerRefs++
+	return GPULoadFileResult{
+		Path:      req.Path,
+		Bytes:     alloc.bytes,
+		Direct:    true,
+		Loaded:    true,
+		RefCount:  alloc.loadRefs + alloc.importerRefs,
+		DevicePtr: fmt.Sprintf("0x%x", len(req.Path)),
+	}, nil
+}
+
+func (l *fakePersistentLoader) DetachPersistent(_ context.Context, req GPULoadFileRequest) (GPULoadFileResult, error) {
+	if strings.TrimSpace(req.ClientID) == "" {
+		return GPULoadFileResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "client id is required", nil)
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	alloc, ok := l.files[req.Path]
+	if !ok {
+		return GPULoadFileResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "persistent allocation not found", nil)
+	}
+	if count := alloc.importers[req.ClientID]; count > 1 {
+		alloc.importers[req.ClientID] = count - 1
+		alloc.importerRefs--
+	} else if count == 1 {
+		delete(alloc.importers, req.ClientID)
+		alloc.importerRefs--
+	}
+	if alloc.importerRefs < 0 {
+		alloc.importerRefs = 0
+	}
+	return GPULoadFileResult{
+		Path:      req.Path,
+		Bytes:     alloc.bytes,
+		Direct:    true,
+		Loaded:    true,
+		RefCount:  alloc.loadRefs + alloc.importerRefs,
+		DevicePtr: fmt.Sprintf("0x%x", len(req.Path)),
 	}, nil
 }
 
@@ -110,16 +171,19 @@ func (l *fakePersistentLoader) UnloadPersistent(_ context.Context, req GPULoadFi
 	if !ok {
 		return GPULoadFileResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "persistent allocation not found", nil)
 	}
-	alloc.refs--
-	if alloc.refs > 0 {
+	if alloc.loadRefs > 1 {
+		alloc.loadRefs--
 		return GPULoadFileResult{
 			Path:      req.Path,
 			Bytes:     0,
 			Direct:    true,
 			Loaded:    false,
-			RefCount:  alloc.refs,
+			RefCount:  alloc.loadRefs + alloc.importerRefs,
 			DevicePtr: fmt.Sprintf("0x%x", len(req.Path)),
 		}, nil
+	}
+	if alloc.importerRefs > 0 {
+		return GPULoadFileResult{}, NewAppError(ExitPolicy, ReasonLeaseConflict, "active importers prevent unload", nil)
 	}
 	delete(l.files, req.Path)
 	return GPULoadFileResult{
@@ -142,7 +206,7 @@ func (l *fakePersistentLoader) ListPersistent(_ context.Context, _ int) ([]GPULo
 			Bytes:     alloc.bytes,
 			Direct:    true,
 			Loaded:    true,
-			RefCount:  alloc.refs,
+			RefCount:  alloc.loadRefs + alloc.importerRefs,
 			DevicePtr: fmt.Sprintf("0x%x", len(p)),
 		})
 	}
@@ -344,6 +408,114 @@ func TestGPUExportReturnsPersistentIPCHandle(t *testing.T) {
 	}
 	if strings.TrimSpace(res.Files[0].IPCHandle) == "" {
 		t.Fatalf("expected non-empty ipc handle: %+v", res.Files[0])
+	}
+}
+
+func TestGPUAttachHeartbeatDetachBlocksUnloadUntilDetached(t *testing.T) {
+	svc := newStateOnlyService(t)
+	loader := newFakePersistentLoader()
+	svc.gpuLoader = loader
+	svc.attachTTL = 30 * time.Second
+
+	modelID := "demo"
+	manifest := "sha256:" + strings.Repeat("a", 64)
+	modelPath, shardSize := writeReadyModelForGPUTest(t, svc.cfg.ModelRoot, modelID, manifest)
+
+	now := time.Now().UTC()
+	rec := &storepkg.ModelRecord{
+		Key:            modelKey(modelID, manifest),
+		ModelID:        modelID,
+		ManifestDigest: manifest,
+		Status:         StateReady,
+		Path:           modelPath,
+		Bytes:          shardSize,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		LastAccessedAt: now,
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatalf("put model record: %v", err)
+	}
+
+	_, err := svc.GPULoad(context.Background(), GPULoadRequest{
+		ModelID:     modelID,
+		Digest:      manifest,
+		LeaseHolder: "holder-attach",
+		Device:      0,
+		ChunkBytes:  4 * 1024,
+		Mode:        "persistent",
+		Strict:      true,
+	})
+	if err != nil {
+		t.Fatalf("gpu persistent load: %v", err)
+	}
+
+	attachRes, err := svc.GPUAttach(context.Background(), GPUAttachRequest{
+		ModelID:    modelID,
+		Digest:     manifest,
+		Device:     0,
+		ClientID:   "client-a",
+		TTLSeconds: 60,
+	})
+	if err != nil {
+		t.Fatalf("gpu attach: %v", err)
+	}
+	if attachRes.AttachedFiles != 1 {
+		t.Fatalf("expected attached files=1, got %d", attachRes.AttachedFiles)
+	}
+	if strings.TrimSpace(attachRes.ExpiresAt) == "" {
+		t.Fatalf("expected non-empty expires_at")
+	}
+
+	_, err = svc.GPUHeartbeat(context.Background(), GPUHeartbeatRequest{
+		ModelID:    modelID,
+		Digest:     manifest,
+		Device:     0,
+		ClientID:   "client-a",
+		TTLSeconds: 60,
+	})
+	if err != nil {
+		t.Fatalf("gpu heartbeat: %v", err)
+	}
+
+	_, err = svc.GPUUnload(context.Background(), GPUUnloadRequest{
+		ModelID:     modelID,
+		Digest:      manifest,
+		LeaseHolder: "holder-attach",
+		Device:      0,
+	})
+	if err == nil {
+		t.Fatalf("expected unload to fail while attachment is active")
+	}
+	appErr := AsAppError(err)
+	if appErr.Reason != ReasonLeaseConflict {
+		t.Fatalf("expected reason %s, got %s", ReasonLeaseConflict, appErr.Reason)
+	}
+
+	detachRes, err := svc.GPUDetach(context.Background(), GPUDetachRequest{
+		ModelID:  modelID,
+		Digest:   manifest,
+		Device:   0,
+		ClientID: "client-a",
+	})
+	if err != nil {
+		t.Fatalf("gpu detach: %v", err)
+	}
+	if detachRes.DetachedFiles != 1 {
+		t.Fatalf("expected detached files=1, got %d", detachRes.DetachedFiles)
+	}
+
+	unloadRes, err := svc.GPUUnload(context.Background(), GPUUnloadRequest{
+		ModelID:     modelID,
+		Digest:      manifest,
+		LeaseHolder: "holder-attach",
+		Device:      0,
+	})
+	if err != nil {
+		t.Fatalf("gpu unload after detach: %v", err)
+	}
+	if unloadRes.ReleasedBytes != shardSize {
+		t.Fatalf("expected released bytes=%d, got %d", shardSize, unloadRes.ReleasedBytes)
 	}
 }
 

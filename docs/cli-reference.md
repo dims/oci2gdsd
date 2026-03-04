@@ -380,6 +380,9 @@ HTTP API surface:
 GET  /healthz
 POST /v1/gpu/load
 POST /v1/gpu/export
+POST /v1/gpu/attach
+POST /v1/gpu/heartbeat
+POST /v1/gpu/detach
 POST /v1/gpu/unload
 GET  /v1/gpu/status?device=<index>
 ```

@@ -41,6 +41,14 @@ func (l *unsupportedGPULoader) ExportPersistent(_ context.Context, req app.GPULo
 	return app.GPULoadFileResult{}, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, "GPU direct loader unavailable in this build", nil)
 }
 
+func (l *unsupportedGPULoader) AttachPersistent(_ context.Context, req app.GPULoadFileRequest) (app.GPULoadFileResult, error) {
+	return app.GPULoadFileResult{}, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, "GPU direct loader unavailable in this build", nil)
+}
+
+func (l *unsupportedGPULoader) DetachPersistent(_ context.Context, req app.GPULoadFileRequest) (app.GPULoadFileResult, error) {
+	return app.GPULoadFileResult{}, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, "GPU direct loader unavailable in this build", nil)
+}
+
 func (l *unsupportedGPULoader) UnloadPersistent(_ context.Context, req app.GPULoadFileRequest) (app.GPULoadFileResult, error) {
 	return app.GPULoadFileResult{}, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, "GPU direct loader unavailable in this build", nil)
 }

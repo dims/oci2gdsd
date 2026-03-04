@@ -126,8 +126,11 @@ wait_for_workload_and_collect() {
   for marker in \
     "DAEMON_GPU_LOAD_READY" \
     "DAEMON_GPU_EXPORT_OK" \
+    "DAEMON_GPU_ATTACH_OK" \
+    "DAEMON_GPU_HEARTBEAT_OK" \
     "DAEMON_GPU_STATUS_OK" \
     "DAEMON_QWEN_IPC_BIND_OK" \
+    "DAEMON_GPU_DETACH_OK" \
     "DAEMON_GPU_UNLOAD_OK" \
     "PYTORCH_DAEMON_CLIENT_SUCCESS"; do
     if ! grep -q "${marker}" "${WORKLOAD_RESULT_LOG}"; then

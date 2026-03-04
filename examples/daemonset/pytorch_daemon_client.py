@@ -8,7 +8,7 @@ import struct
 from pathlib import Path
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 
 def parse_bool_env(name: str, default: bool) -> bool:
@@ -259,12 +259,50 @@ def build_runtime_dir(model_root: Path) -> Path:
     return runtime_dir
 
 
-def bind_parameters_from_ipc(model, native_module, index, handle_b64: str, shard_bytes: int, device_index: int):
+def build_tensor_binding_index(model_root: Path, export_files):
+    shard_exports = {}
+    for entry in export_files:
+        shard_path = str(entry.get("path", "")).strip()
+        if not shard_path:
+            continue
+        handle = str(entry.get("ipc_handle", "")).strip()
+        shard_bytes = int(entry.get("bytes", "0"))
+        if handle and shard_bytes > 0 and shard_path.endswith(".safetensors"):
+            shard_exports[shard_path] = {"handle": handle, "bytes": shard_bytes}
+    if not shard_exports:
+        raise RuntimeError("gpu/export did not return any safetensors shards with valid ipc_handle and bytes")
+
+    global_index = {}
+    for shard_path, export_meta in shard_exports.items():
+        shard_file = Path(shard_path)
+        if not shard_file.exists():
+            shard_file = model_root / "shards" / shard_file.name
+        if not shard_file.exists():
+            raise RuntimeError(f"exported shard path does not exist: {shard_path}")
+        shard_index = parse_safetensors_index(shard_file)
+        for name, spec in shard_index.items():
+            if name in global_index:
+                raise RuntimeError(f"duplicate tensor {name} found across shards")
+            global_index[name] = {
+                "dtype": spec["dtype"],
+                "shape": spec["shape"],
+                "byte_offset": int(spec["byte_offset"]),
+                "byte_length": int(spec["byte_length"]),
+                "handle": export_meta["handle"],
+                "shard_bytes": int(export_meta["bytes"]),
+                "shard_path": str(shard_file),
+            }
+    if not global_index:
+        raise RuntimeError("failed to build tensor binding index from exported shards")
+    return global_index, len(shard_exports)
+
+
+def bind_parameters_from_ipc(model, native_module, tensor_index, device_index: int):
     imported = {}
     rebound_params = 0
     rebound_bytes = 0
     for name, param in model.named_parameters():
-        spec = index.get(name)
+        spec = tensor_index.get(name)
         if spec is None:
             continue
         expected_shape = tuple(int(x) for x in spec["shape"])
@@ -273,10 +311,9 @@ def bind_parameters_from_ipc(model, native_module, index, handle_b64: str, shard
                 f"shape mismatch for {name}: model={tuple(param.shape)} safetensors={expected_shape}"
             )
         expected_dtype = torch_dtype_from_safetensors(spec["dtype"])
-        if param.dtype != expected_dtype:
-            raise RuntimeError(f"dtype mismatch for {name}: model={param.dtype} safetensors={expected_dtype}")
         byte_offset = int(spec["byte_offset"])
         byte_length = int(spec["byte_length"])
+        shard_bytes = int(spec["shard_bytes"])
         if byte_offset < 0 or byte_length <= 0:
             raise RuntimeError(f"invalid byte range for {name}")
         if byte_offset + byte_length > shard_bytes:
@@ -284,7 +321,7 @@ def bind_parameters_from_ipc(model, native_module, index, handle_b64: str, shard
                 f"tensor byte range exceeds shard size for {name}: offset={byte_offset} length={byte_length} shard_bytes={shard_bytes}"
             )
         tensor = native_module.import_ipc_tensor_view(
-            handle_b64,
+            str(spec["handle"]),
             int(byte_offset),
             list(expected_shape),
             str(spec["dtype"]),
@@ -320,22 +357,6 @@ def bind_parameters_from_ipc(model, native_module, index, handle_b64: str, shard
     return imported, rebound_params, rebound_bytes
 
 
-def pick_weight_shard(model_root: Path, export_files):
-    candidates = []
-    for entry in export_files:
-        p = str(entry.get("path", "")).strip()
-        if p.endswith(".safetensors"):
-            candidates.append(Path(p))
-    if candidates:
-        return candidates[0]
-    profile = json.loads((model_root / "metadata" / "model.json").read_text(encoding="utf-8")).get("profile", {})
-    for shard in sorted(profile.get("shards", []), key=lambda s: int(s.get("ordinal", 0))):
-        name = str(shard.get("name", "")).strip()
-        if name.endswith(".safetensors"):
-            return model_root / "shards" / name
-    raise RuntimeError("failed to locate safetensors weight shard")
-
-
 def main():
     model_root = Path(os.environ["MODEL_ROOT_PATH"])
     model_id = os.environ["MODEL_ID"]
@@ -367,157 +388,229 @@ def main():
         raise RuntimeError("torch.cuda.is_available() is false")
     native_module = load_native_module()
 
-    load_req = {
-        "model_id": model_id,
-        "digest": model_digest,
-        "lease_holder": lease_holder,
-        "device": device_index,
-        "chunk_bytes": 4 * 1024 * 1024,
-        "strict": strict_load,
-        "mode": "persistent",
-    }
-    load_code, load_payload = unix_http_json(socket_path, "POST", "/v1/gpu/load", load_req, timeout_seconds=600)
-    assert_http_ok(load_code, load_payload, "gpu/load")
-    files = load_payload.get("files", []) if isinstance(load_payload, dict) else []
-    if not files:
-        raise RuntimeError(f"gpu/load returned no files: {load_payload}")
-    direct_files = sum(1 for entry in files if bool(entry.get("direct", False)))
-    if require_direct and direct_files == 0:
-        raise RuntimeError(f"gpu/load returned zero direct files in strict run: {load_payload}")
-    print(
-        "DAEMON_GPU_LOAD_READY "
-        f"files={len(files)} direct_files={direct_files} "
-        f"mode={load_payload.get('mode', '')} persistent={load_payload.get('persistent', False)} "
-        f"strict={strict_load}"
-    )
+    attach_client_id = f"{lease_holder}-client-{os.getpid()}"
+    load_ready = False
+    attached = False
+    detached = False
+    direct_files = 0
+    rebound_params = 0
+    rebound_bytes = 0
+    shard_count = 0
+    answer_sha = ""
+    exported = []
 
-    export_req = {
-        "model_id": model_id,
-        "digest": model_digest,
-        "device": device_index,
-        "max_shards": 1,
-    }
-    export_code, export_payload = unix_http_json(socket_path, "POST", "/v1/gpu/export", export_req, timeout_seconds=120)
-    assert_http_ok(export_code, export_payload, "gpu/export")
-    exported = export_payload.get("files", []) if isinstance(export_payload, dict) else []
-    if not exported:
-        raise RuntimeError(f"gpu/export returned no files: {export_payload}")
-    first_export = exported[0]
-    first_ipc = str(first_export.get("ipc_handle", "")).strip()
-    if not first_ipc:
-        raise RuntimeError(f"gpu/export missing ipc_handle: {export_payload}")
-    shard_bytes = int(first_export.get("bytes", "0"))
-    if shard_bytes <= 0:
-        raise RuntimeError(f"gpu/export reported invalid shard bytes: {first_export}")
-    print(f"DAEMON_GPU_EXPORT_OK files={len(exported)}")
-
-    status_code, status_payload = unix_http_json(
-        socket_path, "GET", f"/v1/gpu/status?device={device_index}", payload=None, timeout_seconds=60
-    )
-    assert_http_ok(status_code, status_payload, "gpu/status")
-    status_files = status_payload.get("files", []) if isinstance(status_payload, dict) else []
-    if not status_files:
-        raise RuntimeError(f"gpu/status returned no files after load: {status_payload}")
-    print(f"DAEMON_GPU_STATUS_OK files={len(status_files)}")
-
-    weight_shard = pick_weight_shard(model_root, exported)
-    if not weight_shard.exists():
-        raise RuntimeError(f"weight shard path does not exist: {weight_shard}")
-    index = parse_safetensors_index(weight_shard)
-
-    runtime_dir = build_runtime_dir(model_root)
-    dtypes = {spec["dtype"] for spec in index.values()}
-    if len(dtypes) != 1:
-        raise RuntimeError(f"expected a single dtype for qwen3-0.6b, got: {sorted(dtypes)}")
-    model_dtype = torch_dtype_from_safetensors(next(iter(dtypes)))
-    tokenizer = AutoTokenizer.from_pretrained(str(runtime_dir), local_files_only=True, trust_remote_code=True)
-    model = AutoModelForCausalLM.from_pretrained(
-        str(runtime_dir),
-        local_files_only=True,
-        trust_remote_code=True,
-        torch_dtype=model_dtype,
-    )
-    target_device = torch.device(f"cuda:{device_index}")
-    model.to(target_device)
-    model.eval()
-
-    imported_tensors, rebound_params, rebound_bytes = bind_parameters_from_ipc(
-        model=model,
-        native_module=native_module,
-        index=index,
-        handle_b64=first_ipc,
-        shard_bytes=shard_bytes,
-        device_index=device_index,
-    )
-    first_param_name = next(iter(imported_tensors.keys()))
-    first_param_ptr = int(imported_tensors[first_param_name].data_ptr())
-    print(
-        "DAEMON_QWEN_IPC_BIND_OK "
-        f"rebound_params={rebound_params} "
-        f"rebound_bytes={rebound_bytes} "
-        f"first_param={first_param_name} "
-        f"first_param_ptr={first_param_ptr}"
-    )
-
-    prompt = os.environ.get(
-        "PROMPT",
-        "Explain in one sentence why loading model weights directly into GPU memory is useful.",
-    )
-    inputs = tokenizer(prompt, return_tensors="pt")
-    inputs = {k: v.to(target_device) for k, v in inputs.items()}
-    with torch.no_grad():
-        generated = model.generate(
-            **inputs,
-            max_new_tokens=48,
-            do_sample=False,
-            pad_token_id=tokenizer.eos_token_id,
+    try:
+        load_req = {
+            "model_id": model_id,
+            "digest": model_digest,
+            "lease_holder": lease_holder,
+            "device": device_index,
+            "chunk_bytes": 4 * 1024 * 1024,
+            "strict": strict_load,
+            "mode": "persistent",
+        }
+        load_code, load_payload = unix_http_json(socket_path, "POST", "/v1/gpu/load", load_req, timeout_seconds=600)
+        assert_http_ok(load_code, load_payload, "gpu/load")
+        files = load_payload.get("files", []) if isinstance(load_payload, dict) else []
+        if not files:
+            raise RuntimeError(f"gpu/load returned no files: {load_payload}")
+        direct_files = sum(1 for entry in files if bool(entry.get("direct", False)))
+        if require_direct and direct_files == 0:
+            raise RuntimeError(f"gpu/load returned zero direct files in strict run: {load_payload}")
+        load_ready = True
+        print(
+            "DAEMON_GPU_LOAD_READY "
+            f"files={len(files)} direct_files={direct_files} "
+            f"mode={load_payload.get('mode', '')} persistent={load_payload.get('persistent', False)} "
+            f"strict={strict_load}"
         )
-    answer = tokenizer.decode(generated[0], skip_special_tokens=True)
-    if not answer.strip():
-        raise RuntimeError("model inference returned empty answer")
-    answer_sha = hashlib.sha256(answer.encode("utf-8")).hexdigest()
 
-    del generated
-    del inputs
-    del model
-    imported_tensors.clear()
-    del imported_tensors
-    gc.collect()
-    torch.cuda.synchronize(device_index)
-    torch.cuda.empty_cache()
+        export_req = {
+            "model_id": model_id,
+            "digest": model_digest,
+            "device": device_index,
+        }
+        export_code, export_payload = unix_http_json(socket_path, "POST", "/v1/gpu/export", export_req, timeout_seconds=120)
+        assert_http_ok(export_code, export_payload, "gpu/export")
+        exported = export_payload.get("files", []) if isinstance(export_payload, dict) else []
+        if not exported:
+            raise RuntimeError(f"gpu/export returned no files: {export_payload}")
+        print(f"DAEMON_GPU_EXPORT_OK files={len(exported)}")
 
-    unload_req = {
-        "model_id": model_id,
-        "digest": model_digest,
-        "lease_holder": lease_holder,
-        "device": device_index,
-    }
-    unload_code, unload_payload = unix_http_json(socket_path, "POST", "/v1/gpu/unload", unload_req, timeout_seconds=180)
-    assert_http_ok(unload_code, unload_payload, "gpu/unload")
-    print("DAEMON_GPU_UNLOAD_OK")
+        attach_req = {
+            "model_id": model_id,
+            "digest": model_digest,
+            "device": device_index,
+            "client_id": attach_client_id,
+            "ttl_seconds": 300,
+        }
+        attach_code, attach_payload = unix_http_json(socket_path, "POST", "/v1/gpu/attach", attach_req, timeout_seconds=120)
+        assert_http_ok(attach_code, attach_payload, "gpu/attach")
+        attached = True
+        print(
+            "DAEMON_GPU_ATTACH_OK "
+            f"client_id={attach_client_id} "
+            f"attached_files={attach_payload.get('attached_files', 0)} "
+            f"expires_at={attach_payload.get('expires_at', '')}"
+        )
 
-    post_code, post_payload = unix_http_json(
-        socket_path, "GET", f"/v1/gpu/status?device={device_index}", payload=None, timeout_seconds=60
-    )
-    assert_http_ok(post_code, post_payload, "post-unload gpu/status")
-    post_files = post_payload.get("files", []) if isinstance(post_payload, dict) else []
-    still_loaded = []
-    for entry in post_files:
-        p = str(entry.get("path", "")).strip()
-        if p and p.startswith(str(model_root)):
-            still_loaded.append(p)
-    if still_loaded:
-        raise RuntimeError(f"model paths still loaded after unload: {still_loaded}")
+        status_code, status_payload = unix_http_json(
+            socket_path, "GET", f"/v1/gpu/status?device={device_index}", payload=None, timeout_seconds=60
+        )
+        assert_http_ok(status_code, status_payload, "gpu/status")
+        status_files = status_payload.get("files", []) if isinstance(status_payload, dict) else []
+        if not status_files:
+            raise RuntimeError(f"gpu/status returned no files after load: {status_payload}")
+        print(f"DAEMON_GPU_STATUS_OK files={len(status_files)}")
+
+        tensor_index, shard_count = build_tensor_binding_index(model_root, exported)
+        runtime_dir = build_runtime_dir(model_root)
+        dtypes = {spec["dtype"] for spec in tensor_index.values()}
+        if len(dtypes) != 1:
+            raise RuntimeError(f"expected a single dtype for qwen3-0.6b, got: {sorted(dtypes)}")
+        model_dtype = torch_dtype_from_safetensors(next(iter(dtypes)))
+
+        config = AutoConfig.from_pretrained(str(runtime_dir), local_files_only=True, trust_remote_code=True)
+        with torch.device("meta"):
+            model = AutoModelForCausalLM.from_config(config, trust_remote_code=True)
+        target_device = torch.device(f"cuda:{device_index}")
+        model.to_empty(device=target_device)
+        model.eval()
+        tokenizer = AutoTokenizer.from_pretrained(str(runtime_dir), local_files_only=True, trust_remote_code=True)
+
+        heartbeat_req = {
+            "model_id": model_id,
+            "digest": model_digest,
+            "device": device_index,
+            "client_id": attach_client_id,
+            "ttl_seconds": 300,
+        }
+        hb_code, hb_payload = unix_http_json(socket_path, "POST", "/v1/gpu/heartbeat", heartbeat_req, timeout_seconds=60)
+        assert_http_ok(hb_code, hb_payload, "gpu/heartbeat")
+        print(f"DAEMON_GPU_HEARTBEAT_OK expires_at={hb_payload.get('expires_at', '')}")
+
+        imported_tensors, rebound_params, rebound_bytes = bind_parameters_from_ipc(
+            model=model,
+            native_module=native_module,
+            tensor_index=tensor_index,
+            device_index=device_index,
+        )
+        first_param_name = next(iter(imported_tensors.keys()))
+        first_param_ptr = int(imported_tensors[first_param_name].data_ptr())
+        print(
+            "DAEMON_QWEN_IPC_BIND_OK "
+            f"rebound_params={rebound_params} "
+            f"rebound_bytes={rebound_bytes} "
+            f"shards={shard_count} "
+            f"first_param={first_param_name} "
+            f"first_param_ptr={first_param_ptr}"
+        )
+
+        prompt = os.environ.get(
+            "PROMPT",
+            "Explain in one sentence why loading model weights directly into GPU memory is useful.",
+        )
+        inputs = tokenizer(prompt, return_tensors="pt")
+        inputs = {k: v.to(target_device) for k, v in inputs.items()}
+        with torch.no_grad():
+            generated = model.generate(
+                **inputs,
+                max_new_tokens=48,
+                do_sample=False,
+                pad_token_id=tokenizer.eos_token_id,
+            )
+        answer = tokenizer.decode(generated[0], skip_special_tokens=True)
+        if not answer.strip():
+            raise RuntimeError("model inference returned empty answer")
+        answer_sha = hashlib.sha256(answer.encode("utf-8")).hexdigest()
+
+        del generated
+        del inputs
+        del model
+        imported_tensors.clear()
+        del imported_tensors
+        gc.collect()
+        torch.cuda.synchronize(device_index)
+        torch.cuda.empty_cache()
+
+        detach_req = {
+            "model_id": model_id,
+            "digest": model_digest,
+            "device": device_index,
+            "client_id": attach_client_id,
+        }
+        detach_code, detach_payload = unix_http_json(socket_path, "POST", "/v1/gpu/detach", detach_req, timeout_seconds=120)
+        assert_http_ok(detach_code, detach_payload, "gpu/detach")
+        attached = False
+        detached = True
+        print(f"DAEMON_GPU_DETACH_OK detached_files={detach_payload.get('detached_files', 0)}")
+
+        unload_req = {
+            "model_id": model_id,
+            "digest": model_digest,
+            "lease_holder": lease_holder,
+            "device": device_index,
+        }
+        unload_code, unload_payload = unix_http_json(socket_path, "POST", "/v1/gpu/unload", unload_req, timeout_seconds=180)
+        assert_http_ok(unload_code, unload_payload, "gpu/unload")
+        load_ready = False
+        print("DAEMON_GPU_UNLOAD_OK")
+
+        post_code, post_payload = unix_http_json(
+            socket_path, "GET", f"/v1/gpu/status?device={device_index}", payload=None, timeout_seconds=60
+        )
+        assert_http_ok(post_code, post_payload, "post-unload gpu/status")
+        post_files = post_payload.get("files", []) if isinstance(post_payload, dict) else []
+        still_loaded = []
+        for entry in post_files:
+            p = str(entry.get("path", "")).strip()
+            if p and p.startswith(str(model_root)):
+                still_loaded.append(p)
+        if still_loaded:
+            raise RuntimeError(f"model paths still loaded after unload: {still_loaded}")
+    finally:
+        if attached:
+            detach_req = {
+                "model_id": model_id,
+                "digest": model_digest,
+                "device": device_index,
+                "client_id": attach_client_id,
+            }
+            try:
+                detach_code, detach_payload = unix_http_json(
+                    socket_path, "POST", "/v1/gpu/detach", detach_req, timeout_seconds=120
+                )
+                assert_http_ok(detach_code, detach_payload, "gpu/detach(finalizer)")
+                detached = True
+                print(f"DAEMON_GPU_DETACH_OK detached_files={detach_payload.get('detached_files', 0)} finalizer=true")
+            except Exception as exc:
+                print(f"DAEMON_GPU_DETACH_WARN error={exc}")
+        if load_ready:
+            unload_req = {
+                "model_id": model_id,
+                "digest": model_digest,
+                "lease_holder": lease_holder,
+                "device": device_index,
+            }
+            try:
+                unload_code, unload_payload = unix_http_json(
+                    socket_path, "POST", "/v1/gpu/unload", unload_req, timeout_seconds=180
+                )
+                assert_http_ok(unload_code, unload_payload, "gpu/unload(finalizer)")
+                print("DAEMON_GPU_UNLOAD_OK finalizer=true")
+            except Exception as exc:
+                print(f"DAEMON_GPU_UNLOAD_WARN error={exc}")
 
     cuda_name = torch.cuda.get_device_name(device_index)
     print(
         "PYTORCH_DAEMON_CLIENT_SUCCESS "
         f"model_id={metadata.get('modelId')} "
         f"manifest={metadata.get('manifestDigest')} "
-        f"shard={weight_shard.name} "
         f"sample_sha256={sample_sha} "
         f"direct_files={direct_files} "
         f"exported_files={len(exported)} "
+        f"shards={shard_count} "
+        f"detached={detached} "
         f"rebound_params={rebound_params} "
         f"rebound_bytes={rebound_bytes} "
         f"answer_sha256={answer_sha} "

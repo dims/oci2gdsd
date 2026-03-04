@@ -64,6 +64,9 @@ func Serve(ctx context.Context, svc *app.Service, cfg ServerConfig) error {
 	mux.HandleFunc("/v1/gpu/unload", h.handleGPUUnload)
 	mux.HandleFunc("/v1/gpu/status", h.handleGPUStatus)
 	mux.HandleFunc("/v1/gpu/export", h.handleGPUExport)
+	mux.HandleFunc("/v1/gpu/attach", h.handleGPUAttach)
+	mux.HandleFunc("/v1/gpu/detach", h.handleGPUDetach)
+	mux.HandleFunc("/v1/gpu/heartbeat", h.handleGPUHeartbeat)
 
 	srv := &http.Server{
 		Handler:           mux,
@@ -207,6 +210,60 @@ func (h *handler) handleGPUExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := h.svc.GPUExport(r.Context(), req)
+	if err != nil {
+		writeAppErrorWithResult(w, err, res)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (h *handler) handleGPUAttach(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w)
+		return
+	}
+	var req app.GPUAttachRequest
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeAppError(w, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid gpu attach request body", err))
+		return
+	}
+	res, err := h.svc.GPUAttach(r.Context(), req)
+	if err != nil {
+		writeAppErrorWithResult(w, err, res)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (h *handler) handleGPUDetach(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w)
+		return
+	}
+	var req app.GPUDetachRequest
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeAppError(w, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid gpu detach request body", err))
+		return
+	}
+	res, err := h.svc.GPUDetach(r.Context(), req)
+	if err != nil {
+		writeAppErrorWithResult(w, err, res)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (h *handler) handleGPUHeartbeat(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w)
+		return
+	}
+	var req app.GPUHeartbeatRequest
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeAppError(w, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid gpu heartbeat request body", err))
+		return
+	}
+	res, err := h.svc.GPUHeartbeat(r.Context(), req)
 	if err != nil {
 		writeAppErrorWithResult(w, err, res)
 		return

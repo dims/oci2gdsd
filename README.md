@@ -219,7 +219,8 @@ GPU load contract in this repo:
 
 - `gpu load --mode benchmark` (standalone CLI): direct-path throughput probe only; VRAM buffers are freed before command exit.
 - `serve` + `/v1/gpu/load` (`mode=persistent`): daemon keeps allocations alive for the daemon process lifetime and can export CUDA IPC handles.
-- Current examples use persistent load/export as a verifiable handoff probe; they do not remap full framework parameter storage to daemon-owned VRAM.
+- Daemon persistent lifecycle now supports explicit client ownership over the Unix socket API: `/v1/gpu/attach`, `/v1/gpu/heartbeat`, `/v1/gpu/detach`.
+- Daemonset PyTorch example remaps model parameter storage to daemon-exported CUDA IPC tensor views before inference.
 
 ---
 

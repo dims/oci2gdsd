@@ -18,8 +18,12 @@ as a node-level daemon and validating GPU load/export lifecycle from a workload 
 4. Runs a PyTorch workload that calls daemon APIs:
    - `POST /v1/gpu/load` (`mode=persistent`)
    - `POST /v1/gpu/export`
+   - `POST /v1/gpu/attach`
+   - `POST /v1/gpu/heartbeat`
+   - `POST /v1/gpu/detach`
    - `GET /v1/gpu/status`
    - `POST /v1/gpu/unload`
+5. Rebinds model parameter storage to daemon-exported CUDA IPC tensor views before generation.
 
 ## Harness entrypoint (recommended)
 
@@ -46,7 +50,11 @@ The daemon-client workload log (`testharness/k3s-e2e/work/results/pytorch-daemon
 
 - `DAEMON_GPU_LOAD_READY`
 - `DAEMON_GPU_EXPORT_OK`
+- `DAEMON_GPU_ATTACH_OK`
+- `DAEMON_GPU_HEARTBEAT_OK`
 - `DAEMON_GPU_STATUS_OK`
+- `DAEMON_QWEN_IPC_BIND_OK`
+- `DAEMON_GPU_DETACH_OK`
 - `DAEMON_GPU_UNLOAD_OK`
 - `PYTORCH_DAEMON_CLIENT_SUCCESS`
 
