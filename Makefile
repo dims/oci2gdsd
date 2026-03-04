@@ -8,13 +8,13 @@ help:
 	@echo "  clean                  Remove local build and test harness artifacts"
 	@echo "  test                   Run Go tests (no GPU required)"
 	@echo "  demo-local             Self-contained local demo (no GPU, no k8s)"
-	@echo "  local-e2e-prereq       Check local CLI e2e prerequisites"
+	@echo "  local-e2e-prereq       Stage 0 prereq: local/base tooling + storage"
 	@echo "  local-e2e              Run local CLI lifecycle e2e (ensure/status/verify/release/gc)"
 	@echo "  local-e2e-negative     Run local CLI negative/failure-path assertions"
-	@echo "  k3s-e2e-prereq         Check/install k3s e2e prerequisites"
+	@echo "  host-e2e-prereq        Stage 1 prereq: host direct-GDS (extends local-e2e-prereq)"
+	@echo "  k3s-e2e-prereq         Stage 2 prereq: k3s harness (extends host-e2e-prereq)"
 	@echo "  k3s-e2e                Run k3s Kubernetes GPU e2e harness"
 	@echo "  k3s-e2e-daemonset-manifest Run k3s e2e using raw daemonset manifests"
-	@echo "  host-e2e-prereq        Check/install host qwen quick prerequisites"
 	@echo "  k3s-e2e-qwen-quick     Fast qwen-hello redeploy/probe loop"
 	@echo "  host-e2e-qwen-quick    Run host-only strict direct-GDS qwen probe"
 	@echo "  doctor                 Run all prerequisite checks (local/host/k3s)"
@@ -72,7 +72,7 @@ local-e2e-negative:
 	./testharness/local-e2e/scripts/negative-tests.sh
 
 .PHONY: k3s-e2e-prereq
-k3s-e2e-prereq:
+k3s-e2e-prereq: host-e2e-prereq
 	./testharness/k3s-e2e/scripts/prereq-check.sh
 
 .PHONY: k3s-e2e
@@ -88,7 +88,7 @@ k3s-e2e-qwen-quick: k3s-e2e-prereq
 	./testharness/k3s-e2e/scripts/quick-qwen.sh
 
 .PHONY: host-e2e-prereq
-host-e2e-prereq:
+host-e2e-prereq: local-e2e-prereq
 	./testharness/host-e2e/scripts/prereq-check.sh
 
 .PHONY: host-e2e-qwen-quick
@@ -96,10 +96,7 @@ host-e2e-qwen-quick: host-e2e-prereq
 	./testharness/host-e2e/scripts/quick-qwen.sh
 
 .PHONY: doctor
-doctor:
-	./testharness/local-e2e/scripts/prereq-check.sh
-	./testharness/host-e2e/scripts/prereq-check.sh
-	./testharness/k3s-e2e/scripts/prereq-check.sh
+doctor: local-e2e-prereq host-e2e-prereq k3s-e2e-prereq
 
 .PHONY: k3s-e2e-clean
 k3s-e2e-clean:

@@ -12,6 +12,10 @@ make host-e2e-prereq
 make host-e2e-qwen-quick
 ```
 
+Prereq hierarchy:
+- Stage 0 (`local-e2e-prereq`) runs first via Make dependency.
+- Stage 1 (`host-e2e-prereq`) adds strict host direct-GDS checks.
+
 `host-e2e-qwen-quick` now auto-seeds identity when needed:
 - starts/creates a local OCI registry container (`oci2gdsd-host-registry`)
 - builds/runs the Qwen packager
@@ -67,7 +71,7 @@ Base dev toolchain expected on the host for full repo workflows:
 - `make`
 - `c++`/build headers (native extension/probe compilation path)
 
-`make host-e2e-prereq` auto-installs host prerequisites by default on Ubuntu/Debian (`INSTALL_MISSING_PREREQS=true`).
+`make host-e2e-prereq` auto-installs host prerequisites by default on Ubuntu/Debian (`INSTALL_MISSING_PREREQS=true`) and executes after stage 0 (`local-e2e-prereq`).
 When `REQUIRE_DIRECT_GDS=true`, it also installs GDS user-space tools (`gdscheck`) if missing and
 attempts non-destructive remediation unless a hard blocker is detected (for example no guest-visible NVMe).
 It does not mutate GPU driver/kernel packages automatically.

@@ -4,8 +4,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HARNESS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${HARNESS_DIR}/../.." && pwd)"
+LIB_DIR="$(cd "${SCRIPT_DIR}/../../lib" && pwd)"
 # shellcheck source=./common.sh
 source "${SCRIPT_DIR}/common.sh"
+# shellcheck source=../../lib/prereq.sh
+source "${LIB_DIR}/prereq.sh"
 WORK_DIR="${HARNESS_DIR}/work"
 RESULTS_DIR="${WORK_DIR}/results"
 mkdir -p "${RESULTS_DIR}"
@@ -26,7 +29,6 @@ MIN_FREE_GB_MODEL_ROOT="${MIN_FREE_GB_MODEL_ROOT:-20}"
 AUTO_CONFIGURE_STORAGE="${AUTO_CONFIGURE_STORAGE:-true}"
 VALIDATE_QUICK_EXAMPLE="${VALIDATE_QUICK_EXAMPLE:-true}"
 
-APT_UPDATED=0
 NVFS_STATS_MODE=""
 
 emit_direct_gds_remediation() {
@@ -157,30 +159,15 @@ ensure_root_writable() {
 }
 
 ensure_apt_available() {
-  command -v apt-get >/dev/null 2>&1 || die "apt-get not found; install prerequisites manually"
+  prereq_ensure_apt_available
 }
 
 apt_install() {
-  ensure_apt_available
-  if [[ "${APT_UPDATED}" -eq 0 ]]; then
-    maybe_sudo apt-get update -y >/dev/null
-    APT_UPDATED=1
-  fi
-  maybe_sudo apt-get install -y "$@" >/dev/null
+  prereq_apt_install "$@"
 }
 
 ensure_cmd_or_install() {
-  local cmd="$1"
-  local pkg="$2"
-  if command -v "${cmd}" >/dev/null 2>&1; then
-    return 0
-  fi
-  if ! is_true "${INSTALL_MISSING_PREREQS}"; then
-    die "missing required command: ${cmd} (set INSTALL_MISSING_PREREQS=true to auto-install)"
-  fi
-  log "installing missing prerequisite: ${pkg}"
-  apt_install "${pkg}"
-  command -v "${cmd}" >/dev/null 2>&1 || die "failed to install ${cmd} via package ${pkg}"
+  prereq_ensure_cmd_or_install "$1" "$2" "${INSTALL_MISSING_PREREQS}"
 }
 
 install_gds_tools_if_missing() {
@@ -196,7 +183,7 @@ install_gds_tools_if_missing() {
     curl -fsSL -o "${keyring}" \
       "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb"
     maybe_sudo dpkg -i "${keyring}" >/dev/null
-    APT_UPDATED=0
+    PREREQ_APT_UPDATED=0
   fi
 
   apt_install nvidia-gds || true
@@ -306,27 +293,7 @@ attempt_full_gds_remediation_bundle() {
 }
 
 check_runtime_image_toolchain() {
-  local image="$1"
-  local probe_log="${RESULTS_DIR}/runtime-image-prereq.log"
-  local probe='set -eu
-command -v python3 >/dev/null || { echo "missing: python3"; exit 31; }
-command -v c++ >/dev/null 2>&1 || { echo "missing: c++"; exit 32; }
-if [ ! -e /usr/local/cuda/lib64/libcufile.so ] && [ ! -e /usr/local/cuda/lib64/libcufile.so.0 ] && [ ! -e /usr/lib/x86_64-linux-gnu/libcufile.so ]; then
-  echo "missing: libcufile"
-  exit 33
-fi
-echo "runtime-image-probe:ok"'
-
-  log "checking runtime image toolchain: ${image}"
-  maybe_sudo docker pull "${image}" >/dev/null
-  if ! maybe_sudo docker run --rm --privileged --gpus all --user 0:0 \
-    "${image}" /bin/sh -lc "${probe}" >"${probe_log}" 2>&1; then
-    cat "${probe_log}" >&2 || true
-    if grep -q 'missing: c++' "${probe_log}"; then
-      die "runtime image is missing c++ (native torch extension cannot build). Use PYTORCH_RUNTIME_IMAGE=nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1 or an equivalent image with a compiler"
-    fi
-    die "runtime image prerequisite check failed; see ${probe_log}"
-  fi
+  prereq_check_runtime_image_toolchain "$1" "${RESULTS_DIR}/runtime-image-prereq.log" "true"
 }
 
 check_nvfs_stats_state() {
@@ -392,60 +359,69 @@ write_environment_report() {
   log "wrote environment report: ${out}"
 }
 
+prereq_stage_base_common() {
+  prereq_stage_begin "base-common"
+  ensure_cmd_or_install python3 python3
+  ensure_cmd_or_install jq jq
+  ensure_cmd_or_install curl curl
+  ensure_cmd_or_install docker docker.io
+  command -v nvidia-smi >/dev/null 2>&1 || die "nvidia-smi not found; GPU runtime not available"
+  prereq_ensure_docker_access
+  check_storage_prereqs
+  ensure_root_writable
+  prereq_stage_end "base-common"
+}
+
+prereq_stage_host_direct_gds() {
+  prereq_stage_begin "host-direct-gds"
+  if is_true "${REQUIRE_DIRECT_GDS}"; then
+    if is_true "${INSTALL_MISSING_PREREQS}"; then
+      install_gds_tools_if_missing
+    fi
+    gdscheck="$(gdscheck_binary || true)"
+    if [[ -z "${gdscheck}" ]]; then
+      emit_direct_gds_remediation
+      die "gdscheck not found while REQUIRE_DIRECT_GDS=true"
+    fi
+    local_report="${RESULTS_DIR}/gdscheck-prereq.txt"
+    if ! maybe_sudo "${gdscheck}" -p >"${local_report}" 2>&1; then
+      emit_direct_gds_remediation
+      die "gdscheck -p failed; see ${local_report}"
+    fi
+    if ! grep -Eq 'NVMe[[:space:]]*:[[:space:]]*Supported' "${local_report}"; then
+      if attempt_full_gds_remediation_bundle "${gdscheck}"; then
+        log "full GDS remediation succeeded; proceeding with strict validation"
+        cp "${RESULTS_DIR}/gdscheck-prereq-post-remediation.txt" "${local_report}" || true
+      else
+        rc=$?
+        emit_direct_gds_remediation
+        if [[ "${rc}" -eq 2 ]]; then
+          die "gdscheck direct preflight failed and host has no guest-visible NVMe (/dev/nvme*); see ${local_report} and ${RESULTS_DIR}/gds-remediation.log"
+        fi
+        if [[ "${rc}" -eq 3 ]]; then
+          die "full GDS remediation attempted but reboot is required before strict validation; reboot host and rerun prereq (see ${RESULTS_DIR}/gds-remediation.log)"
+        fi
+        die "full GDS remediation attempted but NVMe direct path is still unavailable; see ${local_report} and ${RESULTS_DIR}/gds-remediation.log"
+      fi
+    fi
+  fi
+  prereq_stage_end "host-direct-gds"
+}
+
+prereq_stage_host_runtime() {
+  prereq_stage_begin "host-runtime-image"
+  check_runtime_image_toolchain "${PYTORCH_RUNTIME_IMAGE}"
+  check_nvfs_stats_state
+  check_quick_example_cli_prereq
+  write_environment_report
+  prereq_stage_end "host-runtime-image"
+}
+
 log "running host-e2e prerequisite checks"
 log "assumption: probe containers run with --privileged"
 enforce_strict_gds_policy
 resolve_nvfs_stats_mode
-
-ensure_cmd_or_install python3 python3
-ensure_cmd_or_install jq jq
-ensure_cmd_or_install curl curl
-ensure_cmd_or_install docker docker.io
-
-command -v nvidia-smi >/dev/null 2>&1 || die "nvidia-smi not found; GPU runtime not available"
-
-if ! maybe_sudo docker info >/dev/null 2>&1; then
-  die "docker daemon is not reachable"
-fi
-
-check_storage_prereqs
-ensure_root_writable
-
-if is_true "${REQUIRE_DIRECT_GDS}"; then
-  if is_true "${INSTALL_MISSING_PREREQS}"; then
-    install_gds_tools_if_missing
-  fi
-  gdscheck="$(gdscheck_binary || true)"
-  if [[ -z "${gdscheck}" ]]; then
-    emit_direct_gds_remediation
-    die "gdscheck not found while REQUIRE_DIRECT_GDS=true"
-  fi
-  local_report="${RESULTS_DIR}/gdscheck-prereq.txt"
-  if ! maybe_sudo "${gdscheck}" -p >"${local_report}" 2>&1; then
-    emit_direct_gds_remediation
-    die "gdscheck -p failed; see ${local_report}"
-  fi
-  if ! grep -Eq 'NVMe[[:space:]]*:[[:space:]]*Supported' "${local_report}"; then
-    if attempt_full_gds_remediation_bundle "${gdscheck}"; then
-      log "full GDS remediation succeeded; proceeding with strict validation"
-      cp "${RESULTS_DIR}/gdscheck-prereq-post-remediation.txt" "${local_report}" || true
-    else
-      rc=$?
-      emit_direct_gds_remediation
-      if [[ "${rc}" -eq 2 ]]; then
-        die "gdscheck direct preflight failed and host has no guest-visible NVMe (/dev/nvme*); see ${local_report} and ${RESULTS_DIR}/gds-remediation.log"
-      fi
-      if [[ "${rc}" -eq 3 ]]; then
-        die "full GDS remediation attempted but reboot is required before strict validation; reboot host and rerun prereq (see ${RESULTS_DIR}/gds-remediation.log)"
-      fi
-      die "full GDS remediation attempted but NVMe direct path is still unavailable; see ${local_report} and ${RESULTS_DIR}/gds-remediation.log"
-    fi
-  fi
-fi
-
-check_runtime_image_toolchain "${PYTORCH_RUNTIME_IMAGE}"
-check_nvfs_stats_state
-check_quick_example_cli_prereq
-write_environment_report
-
+prereq_stage_base_common
+prereq_stage_host_direct_gds
+prereq_stage_host_runtime
 log "host-e2e prerequisites are satisfied"

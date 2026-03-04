@@ -27,13 +27,18 @@ make k3s-e2e-prereq
 make k3s-e2e
 ```
 
+Prereq hierarchy:
+- Stage 0: `local-e2e-prereq`
+- Stage 1: `host-e2e-prereq` (strict host direct-GDS)
+- Stage 2: `k3s-e2e-prereq` (cluster/runtime checks)
+
 Raw-manifest DaemonSet path (no Helm):
 
 ```bash
 make k3s-e2e-daemonset-manifest
 ```
 
-`make k3s-e2e-prereq` validates cluster/runtime/image prerequisites and auto-installs host packages by default (`INSTALL_MISSING_PREREQS=true`).
+`make k3s-e2e-prereq` validates cluster/runtime/image prerequisites and auto-installs host packages by default (`INSTALL_MISSING_PREREQS=true`) after running stages 0 and 1.
 It does not mutate GPU driver/kernel packages automatically.
 Set `INSTALL_MISSING_PREREQS=false` to run checks only.
 

@@ -162,7 +162,10 @@ make local-e2e
 ```
 
 ```bash
-# Check/install prerequisites (k3s, Docker, NVIDIA toolkit, etc.)
+# Prereq hierarchy:
+# Stage 0: base/local prerequisites
+# Stage 1: host direct-GDS prerequisites (extends stage 0)
+# Stage 2: k3s prerequisites (extends stage 1)
 make k3s-e2e-prereq
 
 # One-shot prerequisite doctor (local + host + k3s)

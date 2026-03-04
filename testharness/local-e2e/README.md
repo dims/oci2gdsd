@@ -25,6 +25,8 @@ make local-e2e-prereq
 make local-e2e
 ```
 
+`local-e2e-prereq` is stage 0 in the prereq hierarchy and is reused by host/k3s prereq targets.
+
 For a one-liner:
 
 ```bash
