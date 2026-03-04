@@ -1,151 +1,185 @@
-# OCI-ModelProfile-v1: Rationale and Design Principles
+# OCI-ModelProfile-v1 Spec
 
-## Why this document exists
+`OCI-ModelProfile-v1` is the metadata contract that `oci2gdsd` uses to treat a model
+artifact as deterministic infrastructure input. It is pushed to an OCI registry as the
+**config blob** of the model manifest, alongside the shard blobs.
 
-`OCI-ModelProfile-v1` is the contract that lets `oci2gdsd` treat a model artifact as
-deterministic infrastructure input rather than best-effort content. This document captures
-the principles behind that contract so future contributors can evaluate changes against
-the original intent.
+Design rationale and the "why" behind these choices: [docs/design-rationale.md](design-rationale.md)
 
-## Problem statement
+---
 
-General OCI image semantics are excellent for software distribution, but model serving
-preload has additional requirements:
+## Schema
 
-- Large payload integrity must be provable without ambiguity.
-- Runtime consumers need deterministic, machine-readable metadata.
-- Partial writes must never be observed as "ready."
-- Registry content should remain portable across clouds/providers.
-- K8s and standalone workflows should share one artifact format.
+The profile is a JSON document. Required fields are marked *.
 
-`OCI-ModelProfile-v1` defines the minimal structure needed to satisfy those requirements.
+```json
+{
+  "schemaVersion": 1,
+  "modelId": "qwen3-0.6b",
+  "modelRevision": "main",
+  "framework": "pytorch",
+  "format": "safetensors",
+  "shards": [
+    {
+      "name": "model-00001-of-00004.safetensors",
+      "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb924...",
+      "size": 5368709120,
+      "ordinal": 1,
+      "kind": "weights"
+    },
+    {
+      "name": "model-00002-of-00004.safetensors",
+      "digest": "sha256:a87ff679a2f3e71d9181a67b7542122c...",
+      "size": 5368709120,
+      "ordinal": 2,
+      "kind": "weights"
+    }
+  ],
+  "integrity": {
+    "manifestDigest": "sha256:resolved-manifest-digest..."
+  },
+  "loadPlan": {
+    "recommendedOrder": [0, 1, 2, 3]
+  }
+}
+```
 
-## Core principles
+---
 
-## 1) Deterministic identity
+## Field reference
 
-The model artifact is addressed by immutable digest (`<repo>@sha256:...`). The profile
-must bind shard metadata to that digest so any materialized local copy can be re-verified
-with no hidden state.
+### Top-level fields
 
-Consequence:
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `schemaVersion` | int | * | Must be `1` |
+| `modelId` | string | * | Logical model name (e.g. `qwen3-0.6b`). Must match `--model-id` passed to `ensure`. |
+| `modelRevision` | string | * | Source revision hint (e.g. `main`, `v3.2`). Not used for identity — digest is authoritative. |
+| `framework` | string | * | ML framework: `pytorch`, `gguf`, etc. |
+| `format` | string | * | Weight file format: `safetensors` or `gguf` |
+| `shards` | array | * | List of shard descriptors (see below) |
+| `integrity` | object | | Optional digest binding to the manifest |
+| `loadPlan` | object | | Optional loader hints |
 
-- `ensure` requires digest-pinned refs.
-- Status, lease, and GC are keyed by `model-id + manifest-digest`.
+### Shard descriptor fields
 
-## 2) Explicit data contract
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | * | Filename (must match the blob in the OCI manifest) |
+| `digest` | string | * | `sha256:<hex>` digest of the shard file |
+| `size` | int64 | * | Byte size of the shard file |
+| `ordinal` | int | * | 1-based position in the shard sequence |
+| `kind` | string | | Purpose of this shard: `weights`, `tokenizer`, `config`, etc. |
 
-The profile is not optional documentation. It is a required control-plane payload
-describing:
+### `integrity` object
 
-- model identity and revision hints,
-- shard list and expected order,
-- content digests and byte sizes,
-- optional loader/runtime hints.
+| Field | Type | Description |
+|-------|------|-------------|
+| `manifestDigest` | string | The OCI manifest digest this profile is bound to. Used by `verify` to confirm the profile hasn't been swapped. |
 
-Consequence:
+### `loadPlan` object
 
-- Parsing/linting failures are hard errors, not warnings.
-- Missing/invalid fields block readiness.
+| Field | Type | Description |
+|-------|------|-------------|
+| `recommendedOrder` | []int | Zero-based shard indices in preferred load order. Optional hint for GPU loaders. |
 
-## 3) Atomic visibility
+---
 
-Consumers must never see half-materialized model state.
+## Validation rules enforced by `oci2gdsd`
 
-Consequence:
+During `ensure` and `profile lint`, the following are hard errors:
 
-- `oci2gdsd` writes into temp/journal paths first.
-- Final model directory is only considered consumable after metadata and all shard checks pass.
-- `READY` is the last write and the read contract boundary.
+- `schemaVersion` must be `1`
+- `modelId`, `modelRevision`, `framework` must be non-empty
+- `format` must be `safetensors` or `gguf`
+- Every shard must have `name`, `digest`, `size` (> 0), and `ordinal` (> 0)
+- Shard `digest` must be parseable as `sha256:<hex>`
+- Downloaded shard bytes must match `digest` and `size` exactly
+- Profile `modelId` must match the `--model-id` flag passed to `ensure`
 
-## 4) Integrity-first over convenience
-
-Model startup reliability is more important than permissive behavior.
-
-Consequence:
-
-- Digest/size mismatches fail the operation.
-- `verify` is first-class and repeatable.
-- Strict integrity mode remains the default posture for production.
-
-## 5) OCI-native interoperability
-
-The format should work in any OCI-compliant registry and tooling stack (oras/containerd/ecosystem scanners),
-without proprietary transport requirements.
-
-Consequence:
-
-- Artifact is published as OCI manifest + config + blobs.
-- Metadata lives in OCI payloads and labels, not external side channels.
-
-## 6) Operationally composable
-
-One artifact format should serve:
-
-- standalone CLI workflows,
-- K8s init-container preload flows,
-- future controller/operator automation.
-
-Consequence:
-
-- Output/status is machine-readable (`--json`).
-- Lease and lifecycle operations are explicit (`ensure/status/release/gc`).
+---
 
 ## Recommended artifact layout
 
-`OCI-ModelProfile-v1` does not require one exact folder tree, but it assumes a
-clear separation between metadata and shard payloads. A practical convention:
+`OCI-ModelProfile-v1` does not require one exact folder structure, but this convention
+keeps profile parsing simple and predictable:
 
 ```text
 payload/
   metadata/
-    model.json             # canonical OCI-ModelProfile-v1 profile
+    model.json             # OCI-ModelProfile-v1 profile (this document's schema)
   shards/
     model-00001-of-0000N.safetensors
+    model-00002-of-0000N.safetensors
     ...
 ```
 
-This convention keeps profile parsing simple and predictable while remaining OCI-native.
+After `ensure`, the local cache mirrors this layout:
 
-## Why we still define stricter conventions than generic OCI
+```text
+/var/lib/oci2gdsd/models/<model-id>/<manifest-digest>/
+  metadata/
+    model.json
+  shards/
+    model-00001-of-0000N.safetensors
+    ...
+  READY                    # Written last; read contract boundary
+```
 
-OCI allows many equivalent encodings. For model preload, that flexibility can create
-ambiguity (layer ordering, duplicated metadata, non-obvious shard mapping).
+---
 
-`OCI-ModelProfile-v1` deliberately narrows flexibility where ambiguity hurts operations:
+## Pushing an artifact to an OCI registry
 
-- canonical profile location and schema,
-- explicit shard descriptors with digest+size,
-- strict linkage between profile and manifest digest.
+Use `oras push` with the correct media types:
 
-This reduces integration bugs and supports deterministic automation.
+```bash
+oras push registry.example.com/models/qwen3-0.6b:v1 \
+  --config metadata/model.json:application/vnd.oci.model-profile.v1+json \
+  shards/model-00001-of-00004.safetensors:application/vnd.oci.model.shard.v1 \
+  shards/model-00002-of-00004.safetensors:application/vnd.oci.model.shard.v1 \
+  shards/model-00003-of-00004.safetensors:application/vnd.oci.model.shard.v1 \
+  shards/model-00004-of-00004.safetensors:application/vnd.oci.model.shard.v1
+```
 
-## Non-goals (v1)
+Get the immutable digest for use with `oci2gdsd ensure --ref`:
 
-- Defining framework-specific tensor graph semantics.
-- Replacing model provenance/signing systems.
-- Enforcing a single shard format across all model families.
-- Mandating one snapshotter/runtime implementation.
+```bash
+oras resolve registry.example.com/models/qwen3-0.6b:v1
+# sha256:abcdef1234...
+```
 
-`v1` is a preload and integrity contract, not a complete model packaging standard.
+See [packaging/qwen3-oci-modelprofile-v1/README.md](../packaging/qwen3-oci-modelprofile-v1/README.md)
+for the full Hugging Face → OCI packaging workflow.
+
+---
 
 ## Evolution rules
 
-To keep compatibility stable:
+- **Additive fields** are allowed when old readers can safely ignore them.
+- **Breaking schema changes** require a new profile version (`schemaVersion: 2`).
+- **Behavioral tightening** (e.g. stricter lint) should be opt-in before becoming default.
 
-- Additive fields are allowed when old readers can ignore them safely.
-- Breaking schema changes require a new profile version.
-- Behavioral tightening (e.g., stricter lint) should be opt-in before becoming default.
+---
 
-## Acceptance checklist for future changes
+## Non-goals (v1)
+
+- Defining framework-specific tensor graph semantics
+- Replacing model provenance or signing systems
+- Enforcing a single shard format across all model families
+- Mandating one snapshotter or runtime implementation
+
+`v1` is a preload and integrity contract, not a complete model packaging standard.
+
+---
+
+## Checklist for profile changes
 
 Any proposed change to `OCI-ModelProfile-v1` should answer:
 
 1. Does this preserve deterministic identity and replayable verification?
 2. Does this keep `READY` atomicity guarantees intact?
-3. Can existing OCI registries/tooling handle it without custom side channels?
-4. Can standalone and K8s flows both consume it?
+3. Can existing OCI registries and tooling handle it without custom side channels?
+4. Can standalone CLI and Kubernetes init-container flows both consume it?
 5. Does it reduce ambiguity rather than introduce it?
 
 If any answer is "no", the change likely belongs in a new profile version or optional extension.
-

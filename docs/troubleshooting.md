@@ -1,5 +1,10 @@
 # Troubleshooting Guide
 
+> **New here?** Before anything else, run `make nvkind-e2e-prereq` (or `make host-e2e-prereq`
+> for host-only). That single step auto-installs missing tools and catches the most common
+> setup problems. If you're on a machine without an A100 + NVMe, see §4 and §14 first —
+> strict direct-GDS requires specific hardware.
+
 This guide is for failures we repeatedly observed while running:
 
 - `make nvkind-e2e-qwen-quick`

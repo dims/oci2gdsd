@@ -3,34 +3,42 @@
 This document describes the current CLI behavior implemented in this repo.
 It is intentionally implementation-accurate and does not describe planned-only features.
 
+New here? Start with [docs/getting-started.md](getting-started.md) for a hands-on walkthrough.
+
 ## Command surface
 
 Top-level commands:
 
-- `ensure`
-- `status`
-- `list`
-- `release`
-- `gc`
-- `verify`
-- `profile lint`
-- `profile inspect`
-- `gpu probe`
-- `gpu load`
-- `gpu unload`
-- `gpu status`
-- `serve`
+| Command | Description |
+|---------|-------------|
+| `ensure` | Download and cache a model; acquire a lease |
+| `status` | Query status of one cached model record |
+| `list` | List all cached model records |
+| `release` | Remove a lease holder from a model |
+| `gc` | Garbage collect zero-lease models |
+| `verify` | Re-check READY contract and shard digests |
+| `profile lint` | Validate OCI-ModelProfile-v1 metadata |
+| `profile inspect` | Print model id, shards, total bytes |
+| `gpu probe` | Check GPU Direct Storage availability |
+| `gpu load` | Benchmark shard loading via GDS |
+| `gpu unload` | Release persistent GPU allocations |
+| `gpu status` | List current persistent GPU allocations |
+| `serve` | Run long-lived daemon on a Unix socket |
 
 ## Global flags
 
 Global flags apply before the command name:
 
-- `--root <abs-path>`
-- `--target-root <abs-path>`
-- `--registry-config <path-to-yaml>`
+```bash
+oci2gdsd [GLOBAL FLAGS] <command> [COMMAND FLAGS]
+```
+
+- `--root <abs-path>` — state directory root (default: `/var/lib/oci2gdsd`)
+- `--target-root <abs-path>` — published model path root
+- `--registry-config <path-to-yaml>` — full standalone config file
 - `--log-level <debug|info|warn|error>`
-- `--json`
-- `--timeout <duration>`
+- `--json` — machine-readable JSON output on stdout; errors go to stderr
+- `--timeout <duration>` — Go duration, e.g. `30s`, `5m`
 
 Notes:
 
@@ -39,33 +47,54 @@ Notes:
 - For failures in JSON mode, error JSON is emitted on `stderr`.
 - `--timeout` is parsed as Go duration (for example: `30s`, `5m`).
 
-## Command reference
+---
 
 ## `ensure`
 
 Materializes a digest-pinned OCI model artifact into local cache and acquires/refreshes a lease.
 
+```bash
+oci2gdsd \
+  --root /var/lib/oci2gdsd \
+  ensure \
+  --ref registry.example.com/models/qwen3-0.6b@sha256:abc123... \
+  --model-id qwen3-0.6b \
+  --lease-holder my-pod-run-1 \
+  --wait \
+  --json
+```
+
 Flags:
 
-- `--ref <repo@sha256:...>` (required)
-- `--model-id <id>` (required)
-- `--lease-holder <holder>`
-- `--strict-integrity` (optional)
-- `--strict-direct-path` (optional)
-- `--wait` (optional)
-- `--json` (optional command-level override)
+- `--ref <repo@sha256:...>` (required) — digest-pinned OCI reference
+- `--model-id <id>` (required) — logical name for the model (used as directory and lease key)
+- `--lease-holder <holder>` — identifier for the caller holding the lease (e.g. pod name or job ID)
+- `--strict-integrity` — adds artifact type check when manifest `artifactType` is present
+- `--strict-direct-path` — fails if `model_root` is on a transient path (`/dev/shm` or tmpfs)
+- `--wait` — wait for lock if another `ensure` is in progress for the same model+digest
+- `--json`
 
-Current behavior details:
+Current behavior:
 
-- `--ref` must be digest-pinned (`repo@sha256:...`).
-- `--strict-direct-path` currently enforces a guard: fails if `model_root` appears transient (`/dev/shm` or contains `tmpfs`).
-- `--strict-integrity` currently adds an artifact type check when registry manifest `artifactType` is present.
-- Profile linting and shard digest/size verification are always enforced during ensure.
-- If lock acquisition is pending and `--wait` is not satisfied, result may be `PENDING`.
+- `--ref` must be digest-pinned (`repo@sha256:...`). Tags like `:latest` are rejected.
+- Profile linting and shard digest/size verification are always enforced.
+- If a lock is held and `--wait` is not passed, result may be `PENDING`.
+- Running again with the same ref + lease-holder is safe (idempotent).
+
+---
 
 ## `status`
 
-Returns status for one materialized model record.
+Returns the current status for one cached model record.
+
+```bash
+oci2gdsd \
+  --root /var/lib/oci2gdsd \
+  status \
+  --model-id qwen3-0.6b \
+  --digest sha256:abc123... \
+  --json
+```
 
 Flags:
 
@@ -73,123 +102,226 @@ Flags:
 - `--digest sha256:...` (required)
 - `--json`
 
+---
+
 ## `list`
 
-Lists all local records.
+Lists all local model records with their status and lease holders.
+
+```bash
+oci2gdsd --root /var/lib/oci2gdsd list --json
+```
 
 Flags:
 
 - `--json`
 
+---
+
 ## `release`
 
-Releases one lease holder for a model.
+Removes one lease holder from a model. When all leases are removed, the model becomes
+eligible for garbage collection.
+
+```bash
+oci2gdsd \
+  --root /var/lib/oci2gdsd \
+  release \
+  --model-id qwen3-0.6b \
+  --digest sha256:abc123... \
+  --lease-holder my-pod-run-1 \
+  --json
+```
 
 Flags:
 
 - `--model-id <id>` (required)
 - `--digest sha256:...` (required)
 - `--lease-holder <holder>` (required)
-- `--cleanup` (optional immediate delete when lease count reaches zero)
+- `--cleanup` — immediately delete the model directory when lease count reaches zero
 - `--json`
+
+---
 
 ## `gc`
 
-Garbage collects releasable, no-lease model paths.
+Garbage collects releasable (zero-lease) model paths to free disk space.
+
+```bash
+# Dry run first to see what would be deleted
+oci2gdsd --root /var/lib/oci2gdsd gc \
+  --policy lru_no_lease \
+  --min-free-bytes 200G \
+  --dry-run \
+  --json
+
+# Actually delete
+oci2gdsd --root /var/lib/oci2gdsd gc \
+  --policy lru_no_lease \
+  --min-free-bytes 200G \
+  --json
+```
 
 Flags:
 
-- `--policy <policy>` (currently supports only `lru_no_lease`)
-- `--min-free-bytes <size>` (accepts units like `200G`, `200GiB`, etc.)
-- `--dry-run`
+- `--policy <policy>` — currently only `lru_no_lease` is supported
+- `--min-free-bytes <size>` — target free space; accepts `200G`, `200GiB`, etc.
+- `--dry-run` — report what would be deleted without deleting
 - `--json`
 
-If `--min-free-bytes` is omitted, config `retention.min_free_bytes` is used.
+If `--min-free-bytes` is omitted, the value from `config.retention.min_free_bytes` is used.
+
+---
 
 ## `verify`
 
-Verifies READY contract and shard integrity of a local materialized model.
+Re-verifies the READY contract and shard integrity of a locally cached model.
+Reads every shard on disk and compares against the profile's recorded digests and sizes.
+
+```bash
+# Verify by model-id + digest
+oci2gdsd \
+  --root /var/lib/oci2gdsd \
+  verify \
+  --model-id qwen3-0.6b \
+  --digest sha256:abc123... \
+  --json
+
+# Verify by path directly
+oci2gdsd verify \
+  --path /var/lib/oci2gdsd/models/qwen3-0.6b/sha256-abc123... \
+  --json
+```
 
 Flags:
 
-- `--path <published-model-path>`
-- `--model-id <id>`
-- `--digest sha256:...`
+- `--path <published-model-path>` — direct path to the model directory
+- `--model-id <id>` + `--digest sha256:...` — alternative to `--path`
 - `--json`
 
-One of:
+One of `--path` or `--model-id` + `--digest` is required.
 
-- `--path`
-- or both `--model-id` + `--digest`
+---
 
 ## `profile lint`
 
-Lints OCI-ModelProfile-v1 metadata.
+Validates OCI-ModelProfile-v1 metadata from a registry ref or a local file.
+
+```bash
+# Lint from registry
+oci2gdsd profile lint \
+  --ref localhost:5000/models/qwen3-0.6b@sha256:abc123... \
+  --json
+
+# Lint from local file
+oci2gdsd profile lint \
+  --config /path/to/model.json \
+  --digest sha256:abc123... \
+  --json
+```
 
 Flags:
 
-- `--ref <repo@sha256:...>`
-- `--config <path-to-model-config.(json|yaml|yml)>`
-- `--digest sha256:...` (expected digest when linting via `--config`)
+- `--ref <repo@sha256:...>` — fetch and lint config from registry
+- `--config <path>` — lint a local `.json`, `.yaml`, or `.yml` file
+- `--digest sha256:...` — expected digest to validate against when using `--config`
 - `--json`
 
 One of `--ref` or `--config` is required.
+
+---
 
 ## `profile inspect`
 
-Prints profile summary (model id, framework, format, shard count, total bytes, manifest).
+Prints a human-readable (or JSON) summary of a model profile: model id, framework,
+format, shard count, total bytes, and manifest digest.
+
+```bash
+# Inspect from registry
+oci2gdsd profile inspect \
+  --ref localhost:5000/models/qwen3-0.6b@sha256:abc123... \
+  --json
+
+# Inspect from local file
+oci2gdsd profile inspect \
+  --config /var/lib/oci2gdsd/models/qwen3-0.6b/sha256-abc123.../metadata/model.json \
+  --json
+```
 
 Flags:
 
 - `--ref <repo@sha256:...>`
-- `--config <path-to-model-config.(json|yaml|yml)>`
+- `--config <path>`
 - `--json`
 
 One of `--ref` or `--config` is required.
 
+---
+
 ## `gpu probe`
 
-Probes GPU loader capability for a device.
+Probes GPU Direct Storage (GDS) capability for a device. Requires the binary to be
+built with `-tags gds` and a compatible NVIDIA driver stack.
+
+```bash
+oci2gdsd gpu probe --device 0 --json
+```
 
 Flags:
 
-- `--device <index>` (default: `0`)
+- `--device <index>` — GPU device index (default: `0`)
 - `--json`
 
 Returns non-zero (`ExitPolicy`) when direct GPU path is unavailable.
 
+---
+
 ## `gpu load`
 
-Loads shard files from local published model path into GPU path (GDS loader when available, fallback based on strict mode).
+Loads shard files into GPU memory via the GDS loader (when available). In `benchmark` mode,
+reports throughput and progress metadata, then releases GPU memory.
+
+```bash
+# Benchmark mode: load shards, report throughput, release
+oci2gdsd gpu load \
+  --model-id qwen3-0.6b \
+  --digest sha256:abc123... \
+  --device 0 \
+  --mode benchmark \
+  --json
+```
 
 Flags:
 
-- `--model-id <id>`
-- `--digest sha256:...`
-- `--path <published-model-path>`
+- `--model-id <id>` — resolve path from local state
+- `--digest sha256:...` — used with `--model-id` to find the model path
+- `--path <published-model-path>` — alternative to `--model-id` + `--digest`
 - `--device <index>` (default: `0`)
-- `--chunk-bytes <size>` (default: `16MiB`)
-- `--max-shards <n>` (`0` means all)
-- `--strict` (default: `true`; standalone CLI rejects `--strict=false`)
+- `--chunk-bytes <size>` (default: `16MiB`) — chunk size for shard reads
+- `--max-shards <n>` — limit to first N shards; `0` means all
+- `--strict` (default: `true`) — fail if direct GDS path is unavailable; `false` is rejected in standalone mode
 - `--mode <benchmark|persistent>` (default: `benchmark`)
 - `--json`
 
-Path resolution:
+Mode semantics:
 
-- Uses `--path` directly, or
-- resolves from local state using `--model-id` + `--digest`.
+- `benchmark`: reads shards through the GDS path and reports throughput. GPU memory is freed on completion.
+- `persistent`: **not allowed in standalone CLI** — use `serve` mode for persistent GPU allocations.
 
-Current mode semantics:
-
-- `benchmark`: reads shard files through the configured loader path and reports throughput/progress metadata.
-- `persistent`: rejected in standalone one-shot CLI mode with `POLICY_REJECTED`.
-  Use `serve` for long-lived process semantics.
-- `--strict=false`: rejected in standalone one-shot CLI mode with `POLICY_REJECTED`.
-  Standalone benchmark loads are fail-fast direct-GDS only.
+---
 
 ## `gpu unload`
 
-Attempts to unload persistent GPU allocations for a model path.
+Releases persistent GPU allocations for a model. Only relevant when using `serve` daemon mode.
+
+```bash
+oci2gdsd gpu unload \
+  --model-id qwen3-0.6b \
+  --digest sha256:abc123... \
+  --lease-holder my-pod-run-1 \
+  --device 0 \
+  --json
+```
 
 Flags:
 
@@ -200,103 +332,106 @@ Flags:
 - `--device <index>` (default: `0`)
 - `--json`
 
-Notes:
+Note: in standalone CLI mode, persistent loads are rejected, so `gpu unload` is primarily
+useful for embedded or daemon integrations.
 
-- In standalone CLI mode, `gpu load --mode persistent` is rejected, so `gpu unload` is
-  primarily relevant for embedded/long-running service integrations that keep process state.
+---
 
 ## `gpu status`
 
-Lists persistent GPU allocations tracked by the current process for a device.
+Lists persistent GPU allocations tracked by the current process.
+
+```bash
+oci2gdsd gpu status --device 0 --json
+```
 
 Flags:
 
 - `--device <index>` (default: `0`)
 - `--json`
 
-Notes:
+Note: in one-shot CLI mode this returns an empty list because no cross-invocation state is kept.
 
-- In standalone one-shot CLI mode this will usually return an empty list because no
-  cross-command process state is retained.
+---
 
 ## `serve`
 
-Runs a long-lived daemon process over a Unix socket and keeps in-process GPU persistent
-allocations alive across API calls.
+Runs a long-lived daemon listening on a Unix socket. Keeps persistent GPU allocations
+alive across HTTP API calls. Used by Kubernetes workloads where the app container needs
+to call into `oci2gdsd` over IPC.
+
+```bash
+oci2gdsd serve \
+  --unix-socket /tmp/oci2gdsd/daemon.sock \
+  --json
+```
 
 Flags:
 
 - `--unix-socket <path>` (default: `/tmp/oci2gdsd/daemon.sock`)
 - `--socket-perms <octal>` (default: `0600`)
-- `--remove-stale-socket` (default: `true`)
+- `--remove-stale-socket` (default: `true`) — remove socket file on startup if stale
 - `--shutdown-timeout <duration>` (default: `5s`)
 - `--json`
 
-Current HTTP API surface:
+HTTP API surface:
 
-- `GET /healthz`
-- `POST /v1/gpu/load`
-- `POST /v1/gpu/export`
-- `POST /v1/gpu/unload`
-- `GET /v1/gpu/status?device=<index>`
+```
+GET  /healthz
+POST /v1/gpu/load
+POST /v1/gpu/export
+POST /v1/gpu/unload
+GET  /v1/gpu/status?device=<index>
+```
+
+---
 
 ## Output behavior
 
-Success:
-
-- Human-readable line output by default.
+**Success:**
+- Human-readable text on `stdout` by default.
 - JSON object/array on `stdout` when `--json` is enabled.
 
-Failure:
-
+**Failure:**
 - Human-readable error on `stderr` by default.
-- JSON error on `stderr` in JSON mode:
+- JSON error on `stderr` in JSON mode with fields:
   - `status`
   - `reason_code`
   - `message`
   - `exit_code`
 
+---
+
 ## Exit codes
 
-- `0`: success
-- `2`: validation failure
-- `3`: auth failure
-- `4`: registry/network class failure
-- `5`: integrity failure
-- `6`: filesystem failure
-- `7`: policy failure
-- `8`: state corruption/internal fallback
+| Code | Meaning |
+|------|---------|
+| `0` | Success |
+| `2` | Validation failure |
+| `3` | Auth failure |
+| `4` | Registry / network failure |
+| `5` | Integrity failure (digest or size mismatch) |
+| `6` | Filesystem failure |
+| `7` | Policy rejection |
+| `8` | State corruption / internal fallback |
+
+---
 
 ## Common reason codes
 
-- `REGISTRY_AUTH_FAILED`
-- `REGISTRY_UNREACHABLE`
-- `REGISTRY_TIMEOUT`
-- `MANIFEST_NOT_FOUND`
-- `BLOB_NOT_FOUND`
-- `BLOB_SIZE_MISMATCH`
-- `BLOB_DIGEST_MISMATCH`
-- `PROFILE_LINT_FAILED`
-- `DISK_SPACE_INSUFFICIENT`
-- `DIRECT_PATH_INELIGIBLE`
-- `VALIDATION_FAILED`
-- `FILESYSTEM_ERROR`
-- `STATE_DB_CORRUPT`
-
-## Quick examples
-
-```bash
-oci2gdsd --registry-config ./examples/oci2gdsd.yaml ensure \
-  --ref registry.example.com/models/demo@sha256:... \
-  --model-id demo \
-  --lease-holder session-a \
-  --wait \
-  --json
-```
-
-```bash
-oci2gdsd status --model-id demo --digest sha256:... --json
-oci2gdsd verify --model-id demo --digest sha256:... --json
-oci2gdsd release --model-id demo --digest sha256:... --lease-holder session-a --json
-oci2gdsd gc --policy lru_no_lease --min-free-bytes 200G --json
-```
+| Code | When |
+|------|------|
+| `REGISTRY_AUTH_FAILED` | Credentials missing or rejected |
+| `REGISTRY_UNREACHABLE` | Network or DNS failure |
+| `REGISTRY_TIMEOUT` | Registry took too long to respond |
+| `MANIFEST_NOT_FOUND` | Ref not found in registry |
+| `BLOB_NOT_FOUND` | Shard blob missing from registry |
+| `BLOB_SIZE_MISMATCH` | Downloaded blob has wrong byte count |
+| `BLOB_DIGEST_MISMATCH` | Downloaded blob has wrong sha256 |
+| `PROFILE_LINT_FAILED` | OCI-ModelProfile-v1 validation failed |
+| `DISK_SPACE_INSUFFICIENT` | Not enough free space to proceed |
+| `DIRECT_PATH_INELIGIBLE` | Model root is on a non-direct-path filesystem |
+| `VALIDATION_FAILED` | General validation error |
+| `FILESYSTEM_ERROR` | Local filesystem operation failed |
+| `STATE_DB_CORRUPT` | state.db cannot be parsed or is inconsistent |
+| `POLICY_REJECTED` | Operation rejected by current policy |

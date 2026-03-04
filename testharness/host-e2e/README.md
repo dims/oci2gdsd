@@ -1,10 +1,48 @@
 # host direct-GDS quick e2e
 
 This harness runs a host-only strict direct-GDS probe for a preloaded Qwen model.
-It does not require Kubernetes.
+It does not require Kubernetes for the probe itself, but it does need a model already
+downloaded to disk.
 
-For a fresh A100, run `make nvkind-e2e-qwen-quick` first so the model is preloaded to
-`OCI2GDSD_ROOT_PATH`, then run this host probe target.
+## Getting a model on disk (pick one)
+
+**Option A — run the full e2e once first (recommended for first-time setup):**
+
+```bash
+make nvkind-e2e-prereq
+make nvkind-e2e
+```
+
+This provisions a local k3s cluster, packages Qwen3, and runs `oci2gdsd ensure` to
+download the model to `OCI2GDSD_ROOT_PATH`. After it completes, the model is on disk
+and the host probe can use it.
+
+**Option B — pass model identity explicitly (skips Kubernetes entirely):**
+
+If you already have a model digest and registry ref, pass them directly:
+
+```bash
+MODEL_ID=qwen3-0.6b \
+MODEL_DIGEST=sha256:... \
+MODEL_REF_OVERRIDE=registry.example.com/models/qwen3-0.6b@sha256:... \
+make host-e2e-prereq
+make host-e2e-qwen-quick
+```
+
+The `host-e2e-prereq` script will run `oci2gdsd ensure` directly on the host to
+download the model before the GDS probe runs.
+
+**Option C — model is already on disk:**
+
+If you've previously run the full e2e or manually downloaded the model, just run:
+
+```bash
+make host-e2e-prereq
+make host-e2e-qwen-quick
+```
+
+The prereq script auto-detects the newest `READY` entry for `MODEL_ID` under
+`OCI2GDSD_ROOT_PATH`.
 
 Defaults are strict direct-GDS. On hosts where `gdscheck -p` reports
 `NVMe : compat/Unsupported`, the target intentionally fails fast.
