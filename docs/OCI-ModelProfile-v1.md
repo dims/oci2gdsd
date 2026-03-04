@@ -25,18 +25,18 @@ The profile is a JSON document. Required fields are marked *.
       "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb924...",
       "size": 5368709120,
       "ordinal": 1,
-      "kind": "weights"
+      "kind": "weight"
     },
     {
       "name": "model-00002-of-00004.safetensors",
       "digest": "sha256:a87ff679a2f3e71d9181a67b7542122c...",
       "size": 5368709120,
       "ordinal": 2,
-      "kind": "weights"
+      "kind": "weight"
     }
   ],
   "integrity": {
-    "manifestDigest": "sha256:resolved-manifest-digest..."
+    "manifestDigest": "resolved-manifest-digest"
   },
   "loadPlan": {
     "recommendedOrder": [0, 1, 2, 3]
@@ -58,7 +58,7 @@ The profile is a JSON document. Required fields are marked *.
 | `framework` | string | * | ML framework: `pytorch`, `gguf`, etc. |
 | `format` | string | * | Weight file format: `safetensors` or `gguf` |
 | `shards` | array | * | List of shard descriptors (see below) |
-| `integrity` | object | | Optional digest binding to the manifest |
+| `integrity` | object | * | Digest binding to the manifest (`manifestDigest` required) |
 | `loadPlan` | object | | Optional loader hints |
 
 ### Shard descriptor fields
@@ -69,7 +69,7 @@ The profile is a JSON document. Required fields are marked *.
 | `digest` | string | * | `sha256:<hex>` digest of the shard file |
 | `size` | int64 | * | Byte size of the shard file |
 | `ordinal` | int | * | 1-based position in the shard sequence |
-| `kind` | string | | Purpose of this shard: `weights`, `tokenizer`, `config`, etc. |
+| `kind` | string | | Shard class: `weight` or `runtime` |
 
 ### `integrity` object
 
@@ -93,7 +93,11 @@ During `ensure` and `profile lint`, the following are hard errors:
 - `modelId`, `modelRevision`, `framework` must be non-empty
 - `format` must be `safetensors` or `gguf`
 - Every shard must have `name`, `digest`, `size` (> 0), and `ordinal` (> 0)
+- If shard `kind` is set, it must be `weight` or `runtime`
 - Shard `digest` must be parseable as `sha256:<hex>`
+- `integrity.manifestDigest` is required and must be either:
+  - a valid digest matching resolved manifest digest, or
+  - the literal placeholder `resolved-manifest-digest`
 - Downloaded shard bytes must match `digest` and `size` exactly
 - Profile `modelId` must match the `--model-id` flag passed to `ensure`
 
@@ -134,11 +138,12 @@ Use `oras push` with the correct media types:
 
 ```bash
 oras push registry.example.com/models/qwen3-0.6b:v1 \
-  --config metadata/model.json:application/vnd.oci.model-profile.v1+json \
-  shards/model-00001-of-00004.safetensors:application/vnd.oci.model.shard.v1 \
-  shards/model-00002-of-00004.safetensors:application/vnd.oci.model.shard.v1 \
-  shards/model-00003-of-00004.safetensors:application/vnd.oci.model.shard.v1 \
-  shards/model-00004-of-00004.safetensors:application/vnd.oci.model.shard.v1
+  --artifact-type application/vnd.oci2gdsd.model.v1 \
+  --config metadata/model.json:application/vnd.oci2gdsd.model.config.v1+json \
+  shards/model-00001-of-00004.safetensors:application/vnd.oci2gdsd.model.shard.v1+safetensors \
+  shards/model-00002-of-00004.safetensors:application/vnd.oci2gdsd.model.shard.v1+safetensors \
+  shards/model-00003-of-00004.safetensors:application/vnd.oci2gdsd.model.shard.v1+safetensors \
+  shards/model-00004-of-00004.safetensors:application/vnd.oci2gdsd.model.shard.v1+safetensors
 ```
 
 Get the immutable digest for use with `oci2gdsd ensure --ref`:

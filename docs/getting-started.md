@@ -23,10 +23,10 @@ Time: about 10 minutes.
 git clone https://github.com/dims/oci2gdsd
 cd oci2gdsd
 go build ./cmd/oci2gdsd
-./oci2gdsd --help
+./oci2gdsd
 ```
 
-You should see the help output listing all subcommands.
+You should see usage output listing all subcommands.
 
 ---
 
@@ -57,11 +57,15 @@ We'll push a minimal OCI artifact that `oci2gdsd` can consume. An artifact needs
 mkdir -p /tmp/test-model/shards /tmp/test-model/metadata
 
 # Create a dummy "shard" (real models use .safetensors or .gguf files)
-dd if=/dev/urandom of=/tmp/test-model/shards/model-00001-of-00001.bin bs=1M count=1 2>/dev/null
+dd if=/dev/urandom of=/tmp/test-model/shards/model-00001-of-00001.safetensors bs=1M count=1 2>/dev/null
 
-# Compute its sha256 digest
-SHARD_DIGEST=$(sha256sum /tmp/test-model/shards/model-00001-of-00001.bin | awk '{print "sha256:"$1}')
-SHARD_SIZE=$(stat -c%s /tmp/test-model/shards/model-00001-of-00001.bin)
+# Compute its sha256 digest (Linux: sha256sum, macOS: shasum -a 256)
+if command -v sha256sum >/dev/null 2>&1; then
+  SHARD_DIGEST=$(sha256sum /tmp/test-model/shards/model-00001-of-00001.safetensors | awk '{print "sha256:"$1}')
+else
+  SHARD_DIGEST=$(shasum -a 256 /tmp/test-model/shards/model-00001-of-00001.safetensors | awk '{print "sha256:"$1}')
+fi
+SHARD_SIZE=$(wc -c < /tmp/test-model/shards/model-00001-of-00001.safetensors | tr -d ' ')
 
 echo "Shard digest: $SHARD_DIGEST"
 echo "Shard size:   $SHARD_SIZE bytes"
@@ -79,13 +83,16 @@ cat > /tmp/test-model/metadata/model.json <<EOF
   "format": "safetensors",
   "shards": [
     {
-      "name": "model-00001-of-00001.bin",
+      "name": "model-00001-of-00001.safetensors",
       "digest": "${SHARD_DIGEST}",
       "size": ${SHARD_SIZE},
       "ordinal": 1,
-      "kind": "weights"
+      "kind": "weight"
     }
-  ]
+  ],
+  "integrity": {
+    "manifestDigest": "resolved-manifest-digest"
+  }
 }
 EOF
 ```
@@ -96,8 +103,9 @@ EOF
 cd /tmp/test-model
 
 oras push localhost:5000/models/test-model:v1 \
-  --config metadata/model.json:application/vnd.oci.model-profile.v1+json \
-  shards/model-00001-of-00001.bin:application/vnd.oci.model.shard.v1
+  --artifact-type application/vnd.oci2gdsd.model.v1 \
+  --config metadata/model.json:application/vnd.oci2gdsd.model.config.v1+json \
+  shards/model-00001-of-00001.safetensors:application/vnd.oci2gdsd.model.shard.v1+safetensors
 ```
 
 Get the immutable digest of what was pushed:
@@ -112,18 +120,22 @@ Hold onto that digest — you'll use it in every subsequent command.
 
 ---
 
-## Step 4: Create a working directory for oci2gdsd
-
-```bash
-sudo mkdir -p /var/lib/oci2gdsd
-sudo chown $USER /var/lib/oci2gdsd
-```
-
-Or use a temp dir if you prefer not to write to `/var/lib`:
+## Step 4: Create local config (`plain_http` for localhost)
 
 ```bash
 export OCI2GDSD_ROOT=/tmp/oci2gdsd-test
-mkdir -p $OCI2GDSD_ROOT
+mkdir -p "${OCI2GDSD_ROOT}"
+
+cat > /tmp/oci2gdsd-local.yaml <<EOF
+root: ${OCI2GDSD_ROOT}
+model_root: ${OCI2GDSD_ROOT}/models
+tmp_root: ${OCI2GDSD_ROOT}/tmp
+locks_root: ${OCI2GDSD_ROOT}/locks
+journal_dir: ${OCI2GDSD_ROOT}/journal
+state_db: ${OCI2GDSD_ROOT}/state.db
+registry:
+  plain_http: true
+EOF
 ```
 
 ---
@@ -134,7 +146,7 @@ mkdir -p $OCI2GDSD_ROOT
 cd /path/to/oci2gdsd  # back to repo root where you built the binary
 
 ./oci2gdsd \
-  --root /var/lib/oci2gdsd \
+  --registry-config /tmp/oci2gdsd-local.yaml \
   ensure \
   --ref localhost:5000/models/test-model@${MODEL_DIGEST} \
   --model-id test-model \
@@ -146,7 +158,7 @@ cd /path/to/oci2gdsd  # back to repo root where you built the binary
 Expected output (success):
 
 ```json
-{"status":"READY","model_id":"test-model","digest":"sha256:a3f8c1d2...","path":"/var/lib/oci2gdsd/models/test-model/sha256-a3f8c1d2..."}
+{"status":"READY","model_id":"test-model","manifest_digest":"sha256:a3f8c1d2...","model_root_path":"/tmp/oci2gdsd-test/models/test-model/sha256-a3f8c1d2..."}
 ```
 
 What happened:
@@ -165,7 +177,7 @@ What happened:
 
 ```bash
 ./oci2gdsd \
-  --root /var/lib/oci2gdsd \
+  --registry-config /tmp/oci2gdsd-local.yaml \
   status \
   --model-id test-model \
   --digest ${MODEL_DIGEST} \
@@ -173,7 +185,18 @@ What happened:
 ```
 
 ```json
-{"model_id":"test-model","status":"READY","leases":["getting-started-1"],...}
+{
+  "model_id": "test-model",
+  "manifest_digest": "sha256:a3f8c1d2...",
+  "status": "READY",
+  "path": "/tmp/oci2gdsd-test/models/test-model/sha256-a3f8c1d2...",
+  "active_leases": [
+    {
+      "holder": "getting-started-1",
+      "acquired_at": "2026-03-03T12:00:00Z"
+    }
+  ]
+}
 ```
 
 ---
@@ -181,7 +204,7 @@ What happened:
 ## Step 7: list — see all cached models
 
 ```bash
-./oci2gdsd --root /var/lib/oci2gdsd list --json
+./oci2gdsd --registry-config /tmp/oci2gdsd-local.yaml list --json
 ```
 
 ---
@@ -190,7 +213,7 @@ What happened:
 
 ```bash
 ./oci2gdsd \
-  --root /var/lib/oci2gdsd \
+  --registry-config /tmp/oci2gdsd-local.yaml \
   verify \
   --model-id test-model \
   --digest ${MODEL_DIGEST} \
@@ -206,6 +229,7 @@ Exit code `0` means the cached copy is intact.
 
 ```bash
 ./oci2gdsd \
+  --registry-config /tmp/oci2gdsd-local.yaml \
   profile inspect \
   --ref localhost:5000/models/test-model@${MODEL_DIGEST} \
   --json
@@ -219,7 +243,7 @@ First release the lease you acquired during `ensure`:
 
 ```bash
 ./oci2gdsd \
-  --root /var/lib/oci2gdsd \
+  --registry-config /tmp/oci2gdsd-local.yaml \
   release \
   --model-id test-model \
   --digest ${MODEL_DIGEST} \
@@ -231,7 +255,7 @@ Now run garbage collection. Because no leases remain, the model is eligible:
 
 ```bash
 ./oci2gdsd \
-  --root /var/lib/oci2gdsd \
+  --registry-config /tmp/oci2gdsd-local.yaml \
   gc \
   --policy lru_no_lease \
   --min-free-bytes 1G \
@@ -241,7 +265,7 @@ Now run garbage collection. Because no leases remain, the model is eligible:
 The cached model directory is deleted. Confirm with:
 
 ```bash
-./oci2gdsd --root /var/lib/oci2gdsd list --json
+./oci2gdsd --registry-config /tmp/oci2gdsd-local.yaml list --json
 # Should return an empty array []
 ```
 
@@ -264,8 +288,9 @@ The cached model directory is deleted. Confirm with:
 
 **`plain_http` needed for localhost registry**
 
-If `ensure` fails with a TLS error against `localhost:5000`, add `--registry-config` pointing
-to a config with `registry.plain_http: true`, or set the flag inline:
+The walkthrough config in Step 4 already sets `registry.plain_http: true`.
+If you used a different config and `ensure` fails with a TLS error against `localhost:5000`,
+use this override:
 
 ```bash
 # Create a minimal config override
@@ -280,13 +305,7 @@ registry:
   plain_http: true
 EOF
 
-./oci2gdsd \
-  --registry-config /tmp/oci2gdsd-local.yaml \
-  ensure \
-  --ref localhost:5000/models/test-model@${MODEL_DIGEST} \
-  --model-id test-model \
-  --lease-holder getting-started-1 \
-  --wait --json
+./oci2gdsd --registry-config /tmp/oci2gdsd-local.yaml ensure ...
 ```
 
 **`permission denied` writing to `/var/lib/oci2gdsd`**
@@ -295,7 +314,7 @@ Use a temp directory instead:
 
 ```bash
 mkdir -p /tmp/oci2gdsd-test
-./oci2gdsd --root /tmp/oci2gdsd-test ensure ...
+./oci2gdsd --registry-config /tmp/oci2gdsd-local.yaml ensure ...
 ```
 
 **`oras` not found**
