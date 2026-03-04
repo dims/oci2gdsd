@@ -88,6 +88,14 @@ spec:
           value: "__LEASE_HOLDER__"
         - name: OCI2GDS_DAEMON_SOCKET
           value: "/run/oci2gdsd/daemon.sock"
+        - name: OCI2GDS_TORCH_ENABLE_NATIVE
+          value: "1"
+        - name: OCI2GDS_NATIVE_CPP_PATH
+          value: "/scripts/oci2gds_torch_native.cpp"
+        - name: CUDA_INCLUDE_DIR
+          value: "/usr/local/cuda/include"
+        - name: CUDA_LIB_DIR
+          value: "/usr/local/cuda/lib64"
         - name: REQUIRE_DIRECT_GDS
           value: "__REQUIRE_DIRECT_GDS__"
         - name: OCI2GDS_STRICT

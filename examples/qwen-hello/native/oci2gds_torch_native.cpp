@@ -9,10 +9,12 @@
 #include <errno.h>
 #include <string.h>
 #include <algorithm>
+#include <limits>
 #include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace py = pybind11;
@@ -256,6 +258,212 @@ static std::vector<unsigned char> decode_b64(const std::string& input) {
   return out;
 }
 
+struct ImportedIPCAllocation {
+  CUdeviceptr ptr{0};
+  int device{-1};
+  int refs{0};
+};
+
+static std::mutex g_ipc_mu;
+static std::unordered_map<std::string, ImportedIPCAllocation> g_ipc_allocs;
+
+static std::string ipc_key(int device, const std::string& handle_b64) {
+  return std::to_string(device) + ":" + handle_b64;
+}
+
+static ImportedIPCAllocation open_imported_allocation(int device, const std::string& handle_b64) {
+  auto bytes = decode_b64(handle_b64);
+  if (bytes.size() != sizeof(CUipcMemHandle)) {
+    throw std::runtime_error("invalid CUDA IPC handle payload size");
+  }
+  CUipcMemHandle handle{};
+  memcpy(&handle, bytes.data(), sizeof(CUipcMemHandle));
+
+  CUresult cu = cuInit(0);
+  if (cu != CUDA_SUCCESS) {
+    throw std::runtime_error("cuInit failed");
+  }
+  CUdevice dev;
+  cu = cuDeviceGet(&dev, device);
+  if (cu != CUDA_SUCCESS) {
+    throw std::runtime_error("cuDeviceGet failed");
+  }
+  CUcontext retained = nullptr;
+  cu = cuDevicePrimaryCtxRetain(&retained, dev);
+  if (cu != CUDA_SUCCESS) {
+    throw std::runtime_error("cuDevicePrimaryCtxRetain failed");
+  }
+  CUcontext prev = nullptr;
+  cu = cuCtxPushCurrent(retained);
+  if (cu != CUDA_SUCCESS) {
+    (void)cuDevicePrimaryCtxRelease(dev);
+    throw std::runtime_error("cuCtxPushCurrent failed");
+  }
+
+  CUdeviceptr imported = 0;
+  cu = cuIpcOpenMemHandle(&imported, handle, CU_IPC_MEM_LAZY_ENABLE_PEER_ACCESS);
+  (void)cuCtxPopCurrent(&prev);
+  (void)cuDevicePrimaryCtxRelease(dev);
+  if (cu != CUDA_SUCCESS) {
+    throw std::runtime_error("cuIpcOpenMemHandle failed");
+  }
+
+  ImportedIPCAllocation alloc;
+  alloc.ptr = imported;
+  alloc.device = device;
+  alloc.refs = 1;
+  return alloc;
+}
+
+static void close_imported_allocation(const ImportedIPCAllocation& alloc) {
+  if (alloc.ptr == 0 || alloc.device < 0) return;
+  CUresult cu = cuInit(0);
+  if (cu != CUDA_SUCCESS) return;
+  CUdevice dev;
+  cu = cuDeviceGet(&dev, alloc.device);
+  if (cu != CUDA_SUCCESS) return;
+  CUcontext retained = nullptr;
+  cu = cuDevicePrimaryCtxRetain(&retained, dev);
+  if (cu != CUDA_SUCCESS) return;
+  CUcontext prev = nullptr;
+  cu = cuCtxPushCurrent(retained);
+  if (cu != CUDA_SUCCESS) {
+    (void)cuDevicePrimaryCtxRelease(dev);
+    return;
+  }
+  (void)cuIpcCloseMemHandle(alloc.ptr);
+  (void)cuCtxPopCurrent(&prev);
+  (void)cuDevicePrimaryCtxRelease(dev);
+}
+
+static ImportedIPCAllocation acquire_imported_allocation(int device, const std::string& handle_b64) {
+  const std::string key = ipc_key(device, handle_b64);
+  {
+    std::lock_guard<std::mutex> lock(g_ipc_mu);
+    auto it = g_ipc_allocs.find(key);
+    if (it != g_ipc_allocs.end()) {
+      it->second.refs += 1;
+      return it->second;
+    }
+  }
+
+  ImportedIPCAllocation opened = open_imported_allocation(device, handle_b64);
+  {
+    std::lock_guard<std::mutex> lock(g_ipc_mu);
+    auto it = g_ipc_allocs.find(key);
+    if (it != g_ipc_allocs.end()) {
+      it->second.refs += 1;
+      close_imported_allocation(opened);
+      return it->second;
+    }
+    g_ipc_allocs.emplace(key, opened);
+  }
+  return opened;
+}
+
+static void release_imported_allocation(int device, const std::string& handle_b64) {
+  const std::string key = ipc_key(device, handle_b64);
+  ImportedIPCAllocation to_close;
+  bool should_close = false;
+  {
+    std::lock_guard<std::mutex> lock(g_ipc_mu);
+    auto it = g_ipc_allocs.find(key);
+    if (it == g_ipc_allocs.end()) {
+      return;
+    }
+    it->second.refs -= 1;
+    if (it->second.refs <= 0) {
+      to_close = it->second;
+      g_ipc_allocs.erase(it);
+      should_close = true;
+    }
+  }
+  if (should_close) {
+    close_imported_allocation(to_close);
+  }
+}
+
+struct DTypeInfo {
+  at::ScalarType scalar_type;
+  int element_bytes;
+};
+
+static DTypeInfo safetensors_dtype(const std::string& code) {
+  if (code == "BF16") return {at::ScalarType::BFloat16, 2};
+  if (code == "F16") return {at::ScalarType::Half, 2};
+  if (code == "F32") return {at::ScalarType::Float, 4};
+  if (code == "F64") return {at::ScalarType::Double, 8};
+  if (code == "I64") return {at::ScalarType::Long, 8};
+  if (code == "I32") return {at::ScalarType::Int, 4};
+  if (code == "I16") return {at::ScalarType::Short, 2};
+  if (code == "I8") return {at::ScalarType::Char, 1};
+  if (code == "U8") return {at::ScalarType::Byte, 1};
+  if (code == "BOOL") return {at::ScalarType::Bool, 1};
+  throw std::runtime_error("unsupported safetensors dtype: " + code);
+}
+
+static int64_t checked_numel(const std::vector<int64_t>& shape) {
+  int64_t n = 1;
+  for (int64_t dim : shape) {
+    if (dim < 0) throw std::runtime_error("shape contains negative dimension");
+    if (dim == 0) return 0;
+    if (n > (std::numeric_limits<int64_t>::max() / dim)) {
+      throw std::runtime_error("shape size overflow");
+    }
+    n *= dim;
+  }
+  return n;
+}
+
+static torch::Tensor import_ipc_tensor_view(
+    const std::string& handle_b64,
+    int64_t byte_offset,
+    const std::vector<int64_t>& shape,
+    const std::string& dtype_code,
+    int64_t device) {
+  if (device < 0) {
+    throw std::runtime_error("device must be >= 0");
+  }
+  if (byte_offset < 0) {
+    throw std::runtime_error("byte_offset must be >= 0");
+  }
+  if (shape.empty()) {
+    throw std::runtime_error("shape must not be empty");
+  }
+
+  DTypeInfo info = safetensors_dtype(dtype_code);
+  int64_t numel = checked_numel(shape);
+  if (numel < 0) {
+    throw std::runtime_error("invalid tensor shape");
+  }
+  if ((byte_offset % info.element_bytes) != 0) {
+    throw std::runtime_error("byte_offset is not aligned to tensor element size");
+  }
+  if (numel > 0 && numel > (std::numeric_limits<int64_t>::max() / info.element_bytes)) {
+    throw std::runtime_error("tensor byte size overflow");
+  }
+
+  ImportedIPCAllocation alloc = acquire_imported_allocation((int)device, handle_b64);
+  uintptr_t base = static_cast<uintptr_t>(alloc.ptr);
+  uintptr_t ptr_value = base + static_cast<uintptr_t>(byte_offset);
+  const std::string handle_key = handle_b64;
+  const int alloc_device = alloc.device;
+
+  auto options = torch::TensorOptions()
+      .dtype(info.scalar_type)
+      .device(torch::kCUDA, (int)device)
+      .requires_grad(false);
+
+  auto tensor = torch::from_blob(
+      reinterpret_cast<void*>(ptr_value),
+      shape,
+      [handle_key, alloc_device](void* /*unused*/) {
+        release_imported_allocation(alloc_device, handle_key);
+      },
+      options);
+  return tensor;
+}
+
 static torch::Tensor import_ipc_copy_to_tensor(const std::string& handle_b64, int64_t length, int64_t device) {
   if (length <= 0) {
     throw std::runtime_error("length must be > 0");
@@ -316,4 +524,5 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("init_native", &init_native, "initialize native cufile path");
   m.def("read_into_tensor_native", &read_into_tensor_native, "read path into CUDA tensor via cuFile");
   m.def("import_ipc_copy_to_tensor", &import_ipc_copy_to_tensor, "import CUDA IPC handle and copy bytes into a CUDA tensor");
+  m.def("import_ipc_tensor_view", &import_ipc_tensor_view, "import CUDA IPC handle and create a tensor view without copying");
 }

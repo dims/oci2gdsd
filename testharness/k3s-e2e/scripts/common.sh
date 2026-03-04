@@ -314,6 +314,7 @@ validate_deploy_assets() {
   [[ -f "${OCI2GDSD_DAEMON_TEMPLATE}" ]] || die "missing daemonset template: ${OCI2GDSD_DAEMON_TEMPLATE}"
   [[ -f "${PYTORCH_DAEMON_CLIENT_TEMPLATE}" ]] || die "missing daemonset workload template: ${PYTORCH_DAEMON_CLIENT_TEMPLATE}"
   [[ -f "${PYTORCH_DAEMON_CLIENT_SCRIPT}" ]] || die "missing daemon client script: ${PYTORCH_DAEMON_CLIENT_SCRIPT}"
+  [[ -f "${PYTORCH_DAEMON_NATIVE_CPP}" ]] || die "missing daemon native source: ${PYTORCH_DAEMON_NATIVE_CPP}"
 }
 
 kube() {
@@ -384,6 +385,7 @@ fi
 OCI2GDSD_DAEMON_TEMPLATE="${OCI2GDSD_DAEMON_TEMPLATE:-${REPO_ROOT}/examples/daemonset/oci2gdsd-daemonset.yaml.tpl}"
 PYTORCH_DAEMON_CLIENT_TEMPLATE="${PYTORCH_DAEMON_CLIENT_TEMPLATE:-${REPO_ROOT}/examples/daemonset/pytorch-daemon-client-job.yaml.tpl}"
 PYTORCH_DAEMON_CLIENT_SCRIPT="${PYTORCH_DAEMON_CLIENT_SCRIPT:-${REPO_ROOT}/examples/daemonset/pytorch_daemon_client.py}"
+PYTORCH_DAEMON_NATIVE_CPP="${PYTORCH_DAEMON_NATIVE_CPP:-${REPO_ROOT}/examples/qwen-hello/native/oci2gds_torch_native.cpp}"
 validate_deploy_assets
 enforce_strict_gds_policy
 

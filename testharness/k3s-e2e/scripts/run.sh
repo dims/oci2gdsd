@@ -65,7 +65,8 @@ deploy_inline_workload_job() {
 deploy_daemonset_workload_job() {
   apply_daemonset_stack
   apply_configmap_from_files "${E2E_NAMESPACE}" "pytorch-daemon-client-script" \
-    --from-file=pytorch_daemon_client.py="${PYTORCH_DAEMON_CLIENT_SCRIPT}"
+    --from-file=pytorch_daemon_client.py="${PYTORCH_DAEMON_CLIENT_SCRIPT}" \
+    --from-file=oci2gds_torch_native.cpp="${PYTORCH_DAEMON_NATIVE_CPP}"
 
   render_template "${PYTORCH_DAEMON_CLIENT_TEMPLATE}" "${WORK_DIR}/rendered/pytorch-daemon-client-job.yaml" \
     "E2E_NAMESPACE=${E2E_NAMESPACE}" \
@@ -126,6 +127,7 @@ wait_for_workload_and_collect() {
     "DAEMON_GPU_LOAD_READY" \
     "DAEMON_GPU_EXPORT_OK" \
     "DAEMON_GPU_STATUS_OK" \
+    "DAEMON_QWEN_IPC_BIND_OK" \
     "DAEMON_GPU_UNLOAD_OK" \
     "PYTORCH_DAEMON_CLIENT_SUCCESS"; do
     if ! grep -q "${marker}" "${WORKLOAD_RESULT_LOG}"; then
