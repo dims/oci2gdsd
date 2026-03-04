@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HARNESS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${HARNESS_DIR}/../.." && pwd)"
 WORK_DIR="${HARNESS_DIR}/work"
 RESULTS_DIR="${WORK_DIR}/results"
 mkdir -p "${RESULTS_DIR}"
@@ -15,6 +16,7 @@ OCI2GDSD_ROOT_PATH="${OCI2GDSD_ROOT_PATH:-/mnt/nvme/oci2gdsd}"
 MIN_FREE_GB_DOCKER="${MIN_FREE_GB_DOCKER:-80}"
 MIN_FREE_GB_MODEL_ROOT="${MIN_FREE_GB_MODEL_ROOT:-20}"
 AUTO_CONFIGURE_STORAGE="${AUTO_CONFIGURE_STORAGE:-true}"
+VALIDATE_QUICK_EXAMPLE="${VALIDATE_QUICK_EXAMPLE:-true}"
 
 APT_UPDATED=0
 
@@ -57,7 +59,9 @@ maybe_sudo() {
 }
 
 is_true() {
-  case "${1,,}" in
+  local v
+  v="$(printf '%s' "${1}" | tr '[:upper:]' '[:lower:]')"
+  case "${v}" in
     1|true|yes|on) return 0 ;;
     *) return 1 ;;
   esac
@@ -308,6 +312,26 @@ check_nvfs_stats_state() {
   fi
 }
 
+check_quick_example_cli_prereq() {
+  if ! is_true "${VALIDATE_QUICK_EXAMPLE}"; then
+    return 0
+  fi
+  if [[ -n "${OCI2GDSD_BIN:-}" ]]; then
+    [[ -x "${OCI2GDSD_BIN}" ]] || die "OCI2GDSD_BIN is not executable: ${OCI2GDSD_BIN}"
+    return 0
+  fi
+  if command -v oci2gdsd >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ -x "${REPO_ROOT}/oci2gdsd" ]]; then
+    return 0
+  fi
+  if command -v go >/dev/null 2>&1; then
+    return 0
+  fi
+  die "VALIDATE_QUICK_EXAMPLE=true requires oci2gdsd CLI or Go toolchain (set VALIDATE_QUICK_EXAMPLE=false to skip lifecycle validation)"
+}
+
 log "running host-e2e prerequisite checks"
 log "assumption: probe containers run with --privileged"
 
@@ -345,5 +369,6 @@ fi
 
 check_runtime_image_toolchain "${PYTORCH_RUNTIME_IMAGE}"
 check_nvfs_stats_state
+check_quick_example_cli_prereq
 
 log "host-e2e prerequisites are satisfied"

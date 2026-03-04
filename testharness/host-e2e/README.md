@@ -29,8 +29,8 @@ make host-e2e-prereq
 make host-e2e-qwen-quick
 ```
 
-The `host-e2e-prereq` script will run `oci2gdsd ensure` directly on the host to
-download the model before the GDS probe runs.
+When `MODEL_REF_OVERRIDE` is set, `host-e2e-qwen-quick` runs an idempotent
+`oci2gdsd ensure` + `release` cycle as part of quick-example lifecycle validation.
 
 **Option C — model is already on disk:**
 
@@ -46,6 +46,8 @@ The prereq script auto-detects the newest `READY` entry for `MODEL_ID` under
 
 Defaults are strict direct-GDS. On hosts where `gdscheck -p` reports
 `NVMe : compat/Unsupported`, the target intentionally fails fast.
+By default, `host-e2e-qwen-quick` also validates CLI quick-example operations
+(`status`, `verify`, and optionally `ensure`/`release`).
 
 ## Run
 
@@ -65,6 +67,9 @@ Defaults:
 - `OCI2GDSD_ROOT_PATH=/mnt/nvme/oci2gdsd`
 - `MODEL_ID=qwen3-0.6b`
 - `MODEL_DIGEST` auto-detected from newest `READY` entry for `MODEL_ID` when unset
+- `MODEL_REF_OVERRIDE` optional; when set, enables `ensure`/`release` quick-example checks
+- `VALIDATE_QUICK_EXAMPLE=true` (run CLI lifecycle assertions before probe)
+- `QUICK_EXAMPLE_LEASE_HOLDER=host-e2e-qwen-quick`
 - `PYTORCH_RUNTIME_IMAGE=nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1`
 - `OCI2GDS_STRICT=true`
 - `REQUIRE_DIRECT_GDS=true`
@@ -92,6 +97,12 @@ Runtime dependency behavior:
 # Probe a specific model digest
 MODEL_ID=qwen3-0.6b MODEL_DIGEST=sha256:... make host-e2e-qwen-quick
 
+# Validate full quick-example lifecycle (ensure/status/verify/release)
+MODEL_ID=qwen3-0.6b \
+MODEL_DIGEST=sha256:... \
+MODEL_REF_OVERRIDE=registry.example.com/models/qwen3-0.6b@sha256:... \
+make host-e2e-qwen-quick
+
 # Use a different model root
 OCI2GDSD_ROOT_PATH=/var/lib/oci2gdsd make host-e2e-qwen-quick
 
@@ -104,6 +115,9 @@ OCI2GDS_FORCE_EXIT_AFTER_SUMMARY=true make host-e2e-qwen-quick
 # Tighten nvfs counter requirement explicitly (optional)
 REQUIRE_NVFS_STATS_DELTA=true make host-e2e-qwen-quick
 
+# Skip CLI quick-example lifecycle validation
+VALIDATE_QUICK_EXAMPLE=false make host-e2e-qwen-quick
+
 # Override storage gates (GiB) if your model/image footprint differs
 MIN_FREE_GB_DOCKER=120 MIN_FREE_GB_MODEL_ROOT=40 make host-e2e-prereq
 ```
@@ -111,6 +125,10 @@ MIN_FREE_GB_DOCKER=120 MIN_FREE_GB_MODEL_ROOT=40 make host-e2e-prereq
 ## Output
 
 - `testharness/host-e2e/work/results/gdscheck-host.txt` (when `REQUIRE_DIRECT_GDS=true`)
+- `testharness/host-e2e/work/results/quick-example-status.json`
+- `testharness/host-e2e/work/results/quick-example-verify.json`
+- `testharness/host-e2e/work/results/quick-example-ensure.json` (only when `MODEL_REF_OVERRIDE` is set)
+- `testharness/host-e2e/work/results/quick-example-release.json` (only when `MODEL_REF_OVERRIDE` is set)
 - `testharness/host-e2e/work/results/host-qwen-gds.log`
 
 The probe prints a structured summary line:
