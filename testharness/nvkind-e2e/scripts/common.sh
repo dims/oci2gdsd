@@ -76,6 +76,7 @@ KIND_VERSION="${KIND_VERSION:-0.31.0}"
 KUBECTL_VERSION="${KUBECTL_VERSION:-1.32.0}"
 HELM_VERSION="${HELM_VERSION:-3.17.3}"
 GO_VERSION="${GO_VERSION:-1.23.6}"
+K3S_VERSION="${K3S_VERSION:-v1.32.0+k3s1}"
 CUDA_INCLUDE_DIR="${CUDA_INCLUDE_DIR:-/usr/local/cuda/include}"
 CUDA_LIB_DIR="${CUDA_LIB_DIR:-/usr/local/cuda/lib64}"
 
@@ -96,6 +97,19 @@ warn() {
 die() {
   echo "[$(_ts)] ERROR: $*" >&2
   exit 1
+}
+
+emit_direct_gds_remediation() {
+  cat >&2 <<'EOF'
+Direct-GDS remediation options:
+1. Use a host with local NVMe and GDS direct-path support (gdscheck must report "NVMe : Supported").
+2. Ensure GDS tools are installed and verify with:
+   sudo gdscheck -p
+3. Keep strict mode (default) for real validation:
+   REQUIRE_DIRECT_GDS=true OCI2GDS_STRICT=true OCI2GDS_FORCE_NO_COMPAT=true
+4. For non-direct smoke only (not a true GDS pass), relax gates:
+   REQUIRE_DIRECT_GDS=false OCI2GDS_STRICT=false
+EOF
 }
 
 ensure_cmd() {
@@ -198,7 +212,9 @@ configure_k3s_data_dir() {
   else
     echo "data-dir: ${target}" | maybe_sudo tee -a "${cfg}" >/dev/null
   fi
-  maybe_sudo systemctl restart k3s
+  if maybe_sudo systemctl list-unit-files | grep -q '^k3s\.service'; then
+    maybe_sudo systemctl restart k3s
+  fi
 }
 
 maybe_auto_configure_storage() {
@@ -501,8 +517,8 @@ install_docker_if_missing() {
   fi
   ensure_apt_available
   log "installing docker.io"
-  maybe_sudo apt-get update -y >/dev/null
-  maybe_sudo apt-get install -y docker.io >/dev/null
+  maybe_sudo apt-get update -y
+  maybe_sudo apt-get install -y docker.io
   maybe_sudo systemctl enable --now docker
   maybe_sudo usermod -aG docker "$(id -un)" || true
 }
@@ -532,15 +548,60 @@ install_nvidia_ctk_if_missing() {
   fi
   ensure_apt_available
   log "installing nvidia-container-toolkit"
-  maybe_sudo apt-get update -y >/dev/null
-  maybe_sudo apt-get install -y curl gnupg >/dev/null
+  maybe_sudo apt-get update -y
+  maybe_sudo apt-get install -y curl gnupg
   curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | \
     maybe_sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
   curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
     gsed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
     maybe_sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null
-  maybe_sudo apt-get update -y >/dev/null
-  maybe_sudo apt-get install -y nvidia-container-toolkit >/dev/null
+  maybe_sudo apt-get update -y
+  maybe_sudo apt-get install -y nvidia-container-toolkit
+}
+
+install_k3s_if_missing() {
+  if command -v k3s >/dev/null 2>&1; then
+    return
+  fi
+  log "installing k3s ${K3S_VERSION}"
+  local install_exec
+  install_exec="server --write-kubeconfig-mode=644 --disable=traefik --node-name=$(hostname)"
+  if [[ -r /etc/rancher/k3s/config.yaml ]] && grep -Eq '^[[:space:]]*data-dir[[:space:]]*:' /etc/rancher/k3s/config.yaml; then
+    install_exec="${install_exec} --config /etc/rancher/k3s/config.yaml"
+  fi
+  curl -sfL https://get.k3s.io | \
+    INSTALL_K3S_VERSION="${K3S_VERSION}" \
+    INSTALL_K3S_EXEC="${install_exec}" \
+    maybe_sudo sh -
+}
+
+install_gds_tools_if_missing() {
+  if gdscheck_binary >/dev/null 2>&1; then
+    return
+  fi
+  ensure_apt_available
+  log "installing GPUDirect Storage user-space tools (gdscheck)"
+
+  local repo_list="/etc/apt/sources.list.d/cuda-ubuntu2204-x86_64.list"
+  if ! maybe_sudo test -f "${repo_list}"; then
+    local keyring="/tmp/cuda-keyring_1.1-1_all.deb"
+    curl -fsSL -o "${keyring}" \
+      "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb"
+    maybe_sudo dpkg -i "${keyring}" >/dev/null
+  fi
+
+  maybe_sudo apt-get update -y
+
+  local pkg
+  for pkg in nvidia-gds gds-tools-12-8 gds-tools-12-6 gds-tools-12-5; do
+    if maybe_sudo apt-get install -y "${pkg}"; then
+      if gdscheck_binary >/dev/null 2>&1; then
+        return
+      fi
+    fi
+  done
+
+  die "failed to install gdscheck automatically; install nvidia-gds (or gds-tools) manually"
 }
 
 install_nvkind_if_missing() {
@@ -566,15 +627,24 @@ bootstrap_tools() {
   require_linux_host
   install_go_if_missing
   ensure_go_path
-  install_kind_if_missing
-  install_kubectl_if_missing
+  if [[ "${CLUSTER_MODE}" == "kind" ]]; then
+    install_kind_if_missing
+    install_kubectl_if_missing
+  fi
   install_helm_if_missing
   install_jq_if_missing
   install_gsed_if_missing
   install_docker_if_missing
   ensure_docker_access
   install_nvidia_ctk_if_missing
-  install_nvkind_if_missing
+  if [[ "${REQUIRE_DIRECT_GDS}" == "true" ]]; then
+    install_gds_tools_if_missing
+  fi
+  if [[ "${CLUSTER_MODE}" == "k3s" ]]; then
+    install_k3s_if_missing
+  else
+    install_nvkind_if_missing
+  fi
   ensure_cmd nvidia-smi
 }
 
@@ -627,6 +697,14 @@ gdscheck_binary() {
     echo "/usr/local/cuda/gds/tools/gdscheck"
     return 0
   fi
+  if [[ -x /usr/local/cuda-12.8/gds/tools/gdscheck ]]; then
+    echo "/usr/local/cuda-12.8/gds/tools/gdscheck"
+    return 0
+  fi
+  if [[ -x /usr/local/cuda-12.6/gds/tools/gdscheck ]]; then
+    echo "/usr/local/cuda-12.6/gds/tools/gdscheck"
+    return 0
+  fi
   return 1
 }
 
@@ -634,6 +712,7 @@ check_direct_gds_platform_support() {
   local gdscheck
   if ! gdscheck="$(gdscheck_binary)"; then
     warn "gdscheck not found; cannot verify direct GDS platform support"
+    emit_direct_gds_remediation
     return 1
   fi
   mkdir -p "${WORK_DIR}/results"
@@ -645,12 +724,14 @@ check_direct_gds_platform_support() {
     cat "${tmp_report}" >"${report}" 2>/dev/null || true
     rm -f "${tmp_report}"
     warn "gdscheck failed; see ${report}"
+    emit_direct_gds_remediation
     return 1
   fi
   cat "${tmp_report}" >"${report}"
   rm -f "${tmp_report}"
   if ! grep -Eq 'NVMe[[:space:]]*:[[:space:]]*Supported' "${report}"; then
     warn "gdscheck reports NVMe unsupported for GDS direct path; see ${report}"
+    emit_direct_gds_remediation
     return 1
   fi
   return 0

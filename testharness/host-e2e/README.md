@@ -6,6 +6,9 @@ It does not require Kubernetes.
 For a fresh A100, run `make nvkind-e2e-qwen-quick` first so the model is preloaded to
 `OCI2GDSD_ROOT_PATH`, then run this host probe target.
 
+Defaults are strict direct-GDS. On hosts where `gdscheck -p` reports
+`NVMe : compat/Unsupported`, the target intentionally fails fast.
+
 ## Run
 
 From repo root:
@@ -16,6 +19,7 @@ make host-e2e-qwen-quick
 ```
 
 `make host-e2e-prereq` auto-installs host prerequisites by default on Ubuntu/Debian (`INSTALL_MISSING_PREREQS=true`).
+When `REQUIRE_DIRECT_GDS=true`, it also attempts to install GDS user-space tools (`gdscheck`) if missing.
 Set `INSTALL_MISSING_PREREQS=false` to run checks only.
 
 Defaults:

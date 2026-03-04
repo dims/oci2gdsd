@@ -48,12 +48,18 @@ make host-e2e-qwen-quick
 `make nvkind-e2e-qwen-quick` now auto-handles the common first-run setup:
 
 - checks/installs prerequisites
+- installs host k3s automatically when `CLUSTER_MODE=k3s` and `k3s` is missing
+- installs GDS user-space tools (`gdscheck`) when `REQUIRE_DIRECT_GDS=true` and missing
 - auto-configures storage to `/mnt/nvme` when root disk is too small (unless `AUTO_CONFIGURE_STORAGE=false`)
 - builds and loads `oci2gdsd` image into cluster (unless `AUTO_BUILD_OCI2GDSD_IMAGE=false`)
 - installs GPU Operator if `nvidia.com/gpu` is not allocatable (unless `AUTO_INSTALL_GPU_OPERATOR=false`)
 - auto-seeds model identity + in-cluster registry packaging if missing (unless `AUTO_SEED_MODEL_IDENTITY=false`)
 
 After that, `make host-e2e-qwen-quick` validates host direct-GDS with the model now present under `OCI2GDSD_ROOT_PATH`.
+
+By default this harness is strict (`REQUIRE_DIRECT_GDS=true`). If the host is not
+direct-GDS capable (`gdscheck -p` reports `NVMe : compat/Unsupported`), the target
+fails fast with remediation hints.
 
 If you prefer explicit staged runs:
 

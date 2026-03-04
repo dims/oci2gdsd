@@ -35,6 +35,19 @@ die() {
   exit 1
 }
 
+emit_direct_gds_remediation() {
+  cat >&2 <<'EOF'
+Direct-GDS remediation options:
+1. Use a host with local NVMe and GDS direct-path support (gdscheck must report "NVMe : Supported").
+2. Verify platform capability:
+   sudo gdscheck -p
+3. Keep strict mode (default) for real validation:
+   REQUIRE_DIRECT_GDS=true OCI2GDS_STRICT=true OCI2GDS_FORCE_NO_COMPAT=true
+4. For non-direct smoke only (not a true GDS pass), relax gates:
+   REQUIRE_DIRECT_GDS=false OCI2GDS_STRICT=false
+EOF
+}
+
 maybe_sudo() {
   if [[ "$(id -u)" -eq 0 ]]; then
     "$@"
@@ -220,6 +233,38 @@ gdscheck_binary() {
   return 1
 }
 
+install_gds_tools_if_missing() {
+  if gdscheck_binary >/dev/null 2>&1; then
+    return
+  fi
+  ensure_apt_available
+  log "installing GPUDirect Storage user-space tools (gdscheck)"
+
+  local repo_list="/etc/apt/sources.list.d/cuda-ubuntu2204-x86_64.list"
+  if ! maybe_sudo test -f "${repo_list}"; then
+    local keyring="/tmp/cuda-keyring_1.1-1_all.deb"
+    curl -fsSL -o "${keyring}" \
+      "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb"
+    maybe_sudo dpkg -i "${keyring}" >/dev/null
+    APT_UPDATED=0
+  fi
+
+  apt_install nvidia-gds || true
+  if gdscheck_binary >/dev/null 2>&1; then
+    return
+  fi
+  apt_install gds-tools-12-8 || true
+  if gdscheck_binary >/dev/null 2>&1; then
+    return
+  fi
+  apt_install gds-tools-12-6 || true
+  if gdscheck_binary >/dev/null 2>&1; then
+    return
+  fi
+
+  die "failed to install gdscheck automatically; install nvidia-gds (or gds-tools) manually"
+}
+
 check_runtime_image_toolchain() {
   local image="$1"
   local probe_log="${RESULTS_DIR}/runtime-image-prereq.log"
@@ -279,13 +324,21 @@ fi
 check_storage_prereqs
 
 if is_true "${REQUIRE_DIRECT_GDS}"; then
+  if is_true "${INSTALL_MISSING_PREREQS}"; then
+    install_gds_tools_if_missing
+  fi
   gdscheck="$(gdscheck_binary || true)"
-  [[ -n "${gdscheck}" ]] || die "gdscheck not found while REQUIRE_DIRECT_GDS=true"
+  if [[ -z "${gdscheck}" ]]; then
+    emit_direct_gds_remediation
+    die "gdscheck not found while REQUIRE_DIRECT_GDS=true"
+  fi
   local_report="${RESULTS_DIR}/gdscheck-prereq.txt"
   if ! maybe_sudo "${gdscheck}" -p >"${local_report}" 2>&1; then
+    emit_direct_gds_remediation
     die "gdscheck -p failed; see ${local_report}"
   fi
   if ! grep -Eq 'NVMe[[:space:]]*:[[:space:]]*Supported' "${local_report}"; then
+    emit_direct_gds_remediation
     die "gdscheck reports NVMe unsupported; see ${local_report}"
   fi
 fi
