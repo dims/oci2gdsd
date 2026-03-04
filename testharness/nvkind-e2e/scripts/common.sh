@@ -37,6 +37,7 @@ OCI2GDS_DAEMON_PROBE_SHARDS="${OCI2GDS_DAEMON_PROBE_SHARDS:-1}"
 MIN_FREE_GB_DOCKER="${MIN_FREE_GB_DOCKER:-100}"
 MIN_FREE_GB_K3S="${MIN_FREE_GB_K3S:-50}"
 MIN_FREE_GB_OCI2GDS_ROOT="${MIN_FREE_GB_OCI2GDS_ROOT:-20}"
+K3S_DATA_DIR="${K3S_DATA_DIR:-}"
 
 OCI2GDSD_IMAGE="${OCI2GDSD_IMAGE:-oci2gdsd:e2e}"
 OCI2GDSD_ENABLE_GDS_IMAGE="${OCI2GDSD_ENABLE_GDS_IMAGE:-false}"
@@ -194,7 +195,17 @@ check_storage_prereqs() {
   check_path_free_gb "oci2gdsd root path" "${OCI2GDSD_ROOT_PATH}" "${MIN_FREE_GB_OCI2GDS_ROOT}"
 
   if [[ "${CLUSTER_MODE}" == "k3s" ]]; then
-    check_path_free_gb "k3s data root" "/var/lib/rancher/k3s" "${MIN_FREE_GB_K3S}"
+    local k3s_dir="/var/lib/rancher/k3s"
+    if [[ -n "${K3S_DATA_DIR}" ]]; then
+      k3s_dir="${K3S_DATA_DIR}"
+    elif [[ -r /etc/rancher/k3s/config.yaml ]]; then
+      local cfg_dir
+      cfg_dir="$(awk -F':' '/^[[:space:]]*data-dir[[:space:]]*:/ {sub(/^[[:space:]]+/, "", $2); sub(/[[:space:]]+$/, "", $2); gsub(/"/, "", $2); print $2; exit}' /etc/rancher/k3s/config.yaml)"
+      if [[ -n "${cfg_dir}" ]]; then
+        k3s_dir="${cfg_dir}"
+      fi
+    fi
+    check_path_free_gb "k3s data root" "${k3s_dir}" "${MIN_FREE_GB_K3S}"
   fi
 }
 

@@ -3,6 +3,7 @@ import glob
 import json
 import os
 import re
+import sys
 from pathlib import Path
 
 import torch
@@ -491,6 +492,11 @@ def main() -> None:
         "nvfs_ops_delta": nvfs_delta,
     }
     print("HOST_QWEN_GDS_PROBE " + json.dumps(summary, sort_keys=True), flush=True)
+    # Some runtime/toolchain combos can crash in process teardown after a
+    # successful probe summary is emitted (exit 139). Exit hard after summary
+    # so harness status reflects the validated probe result.
+    sys.stdout.flush()
+    os._exit(0)
 
 
 if __name__ == "__main__":

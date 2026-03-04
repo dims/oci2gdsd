@@ -31,7 +31,7 @@ Set `INSTALL_MISSING_PREREQS=false` to run checks only.
 Default storage gates enforced by prereq:
 
 - `MIN_FREE_GB_DOCKER=100` on Docker `data-root`
-- `MIN_FREE_GB_K3S=50` on `/var/lib/rancher/k3s` when `CLUSTER_MODE=k3s`
+- `MIN_FREE_GB_K3S=50` on k3s data-dir when `CLUSTER_MODE=k3s` (auto-detected from `/etc/rancher/k3s/config.yaml`, default `/var/lib/rancher/k3s`)
 - `MIN_FREE_GB_OCI2GDS_ROOT=20` on `OCI2GDSD_ROOT_PATH`
 
 If any gate fails, prereq aborts with remediation steps (attach/mount larger disk and move Docker `data-root`).
@@ -158,6 +158,9 @@ CUDA_INCLUDE_DIR=/usr/local/cuda/include CUDA_LIB_DIR=/usr/local/cuda/lib64 make
 
 # Override storage gates (GiB) if needed
 MIN_FREE_GB_DOCKER=150 MIN_FREE_GB_K3S=80 MIN_FREE_GB_OCI2GDS_ROOT=40 make nvkind-e2e-prereq
+
+# Override detected k3s data-dir explicitly (optional)
+K3S_DATA_DIR=/mnt/nvme/k3s make nvkind-e2e-prereq
 ```
 
 ## Cleanup
