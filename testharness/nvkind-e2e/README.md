@@ -71,6 +71,7 @@ make nvkind-e2e-qwen-quick
 This script only:
 
 - re-renders and reapplies `examples/qwen-hello/qwen-nvkind-hello-deployment.yaml.tpl`
+- applies qwen app/native ConfigMaps from standalone files under `examples/qwen-hello/app` and `examples/qwen-hello/native`
 - waits for rollout
 - probes `/healthz` and `/chat`
 - writes logs to `testharness/nvkind-e2e/work/results/qwen-hello.log`

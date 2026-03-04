@@ -40,6 +40,7 @@ Defaults:
 Assumptions:
 
 - Probe container runs with `--privileged` by default in this harness.
+- Probe compiles native extension from shared source file: `examples/qwen-hello/native/oci2gds_torch_native.cpp`.
 
 ## Useful overrides
 

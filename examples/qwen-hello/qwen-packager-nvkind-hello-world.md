@@ -155,6 +155,16 @@ gsed -i "s|__OCI2GDS_FORCE_NO_COMPAT__|${OCI2GDS_FORCE_NO_COMPAT}|g" /tmp/qwen-n
 gsed -i "s|__PYTORCH_RUNTIME_IMAGE__|${PYTORCH_RUNTIME_IMAGE}|g" /tmp/qwen-nvkind-hello.yaml
 gsed -i "s|__LEASE_HOLDER__|${LEASE_HOLDER}|g" /tmp/qwen-nvkind-hello.yaml
 
+# Create qwen app/native ConfigMaps from standalone source files.
+kubectl --context "kind-${CLUSTER_NAME}" create namespace "${QWEN_HELLO_NAMESPACE}" --dry-run=client -o yaml | kubectl --context "kind-${CLUSTER_NAME}" apply -f -
+kubectl --context "kind-${CLUSTER_NAME}" -n "${QWEN_HELLO_NAMESPACE}" create configmap qwen-hello-app \
+  --from-file=qwen_server.py=examples/qwen-hello/app/qwen_server.py \
+  --from-file=deps_bootstrap.py=examples/qwen-hello/app/deps_bootstrap.py \
+  --dry-run=client -o yaml | kubectl --context "kind-${CLUSTER_NAME}" apply -f -
+kubectl --context "kind-${CLUSTER_NAME}" -n "${QWEN_HELLO_NAMESPACE}" create configmap qwen-hello-native \
+  --from-file=oci2gds_torch_native.cpp=examples/qwen-hello/native/oci2gds_torch_native.cpp \
+  --dry-run=client -o yaml | kubectl --context "kind-${CLUSTER_NAME}" apply -f -
+
 kubectl --context "kind-${CLUSTER_NAME}" apply -f /tmp/qwen-nvkind-hello.yaml
 kubectl --context "kind-${CLUSTER_NAME}" -n "${QWEN_HELLO_NAMESPACE}" rollout status deploy/qwen-hello --timeout=1800s
 kubectl --context "kind-${CLUSTER_NAME}" -n "${QWEN_HELLO_NAMESPACE}" port-forward svc/qwen-hello 18080:8000

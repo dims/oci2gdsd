@@ -41,6 +41,9 @@ If CUDA appears unavailable in pods (`torch.cuda.is_available() == False` while 
 - `qwen-nvkind-hello-deployment.yaml.tpl`: Deployment template with:
   - `preload-model` init container (`oci2gdsd ensure`)
   - `pytorch-api` container (runs `oci2gdsd serve` + FastAPI + PyTorch runtime)
+- `app/qwen_server.py`: FastAPI + PyTorch + `torch.ops.oci2gds` startup/runtime logic.
+- `app/deps_bootstrap.py`: runtime dependency bootstrap script used by the pod command.
+- `native/oci2gds_torch_native.cpp`: shared native extension source used by both qwen app and host probe.
 - `Dockerfile.vllm-runtime-gds`: Optional qwen runtime image with `oci2gdsd` + `libcufile` for native probe experiments.
 - `qwen-packager-hello-world.md`: Local packager walkthrough.
 - `qwen-packager-nvkind-hello-world.md`: End-to-end nvkind walkthrough.

@@ -1008,6 +1008,21 @@ render_template() {
   done
 }
 
+ensure_namespace() {
+  local ns="$1"
+  if kube get namespace "${ns}" >/dev/null 2>&1; then
+    return
+  fi
+  kube create namespace "${ns}" >/dev/null
+}
+
+apply_configmap_from_files() {
+  local ns="$1"
+  local name="$2"
+  shift 2
+  kube create configmap "${name}" -n "${ns}" "$@" --dry-run=client -o yaml | kube apply -f -
+}
+
 apply_registry() {
   mkdir -p "${WORK_DIR}/rendered"
   local rendered="${WORK_DIR}/rendered/registry.yaml"
@@ -1086,10 +1101,23 @@ package_model_to_registry() {
 
 validate_qwen_hello_example() {
   local template="${QWEN_HELLO_TEMPLATE}"
+  local app_dir="${REPO_ROOT}/examples/qwen-hello/app"
+  local native_dir="${REPO_ROOT}/examples/qwen-hello/native"
   if [[ ! -f "${template}" ]]; then
     warn "missing example template: ${template}"
     return 1
   fi
+  [[ -f "${app_dir}/qwen_server.py" ]] || die "missing qwen app script: ${app_dir}/qwen_server.py"
+  [[ -f "${app_dir}/deps_bootstrap.py" ]] || die "missing qwen deps script: ${app_dir}/deps_bootstrap.py"
+  [[ -f "${native_dir}/oci2gds_torch_native.cpp" ]] || die "missing native source: ${native_dir}/oci2gds_torch_native.cpp"
+
+  ensure_namespace "${QWEN_HELLO_NAMESPACE}"
+  apply_configmap_from_files "${QWEN_HELLO_NAMESPACE}" "qwen-hello-app" \
+    --from-file=qwen_server.py="${app_dir}/qwen_server.py" \
+    --from-file=deps_bootstrap.py="${app_dir}/deps_bootstrap.py"
+  apply_configmap_from_files "${QWEN_HELLO_NAMESPACE}" "qwen-hello-native" \
+    --from-file=oci2gds_torch_native.cpp="${native_dir}/oci2gds_torch_native.cpp"
+
   if [[ "${QWEN_HELLO_PROFILE}" == "host-direct" && "${CLUSTER_MODE}" == "k3s" ]]; then
     maybe_sudo mkdir -p "${OCI2GDSD_ROOT_PATH}" || true
   fi

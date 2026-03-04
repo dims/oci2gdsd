@@ -148,7 +148,9 @@ check_nvfs_rw_stats_state() {
 run_host_probe() {
   local probe_log="${RESULTS_DIR}/host-qwen-gds.log"
   local probe_script="${SCRIPT_DIR}/host_qwen_probe.py"
+  local native_cpp="${REPO_ROOT}/examples/qwen-hello/native/oci2gds_torch_native.cpp"
   [[ -f "${probe_script}" ]] || die "missing probe script: ${probe_script}"
+  [[ -f "${native_cpp}" ]] || die "missing native source: ${native_cpp}"
 
   log "running host probe image=${PYTORCH_RUNTIME_IMAGE}"
   maybe_sudo docker run --rm --privileged --gpus all --user 0:0 -i \
@@ -163,10 +165,12 @@ run_host_probe() {
     -e OCI2GDS_VALIDATE_SAMPLE_BYTES="${OCI2GDS_VALIDATE_SAMPLE_BYTES}" \
     -e REQUIRE_NVFS_STATS_DELTA="${REQUIRE_NVFS_STATS_DELTA}" \
     -e OCI2GDS_TORCH_NATIVE_VERBOSE="${OCI2GDS_TORCH_NATIVE_VERBOSE:-0}" \
+    -e OCI2GDS_NATIVE_CPP_PATH="/opt/oci2gdsd/native/oci2gds_torch_native.cpp" \
     -v "${OCI2GDSD_ROOT_PATH}:${OCI2GDSD_ROOT_PATH}:ro" \
     -v /run/udev:/run/udev:ro \
     -v /dev:/host-dev:ro \
     -v "${probe_script}:/opt/oci2gdsd/host_qwen_probe.py:ro" \
+    -v "${native_cpp}:/opt/oci2gdsd/native/oci2gds_torch_native.cpp:ro" \
     "${PYTORCH_RUNTIME_IMAGE}" \
     python3 /opt/oci2gdsd/host_qwen_probe.py | tee "${probe_log}"
 

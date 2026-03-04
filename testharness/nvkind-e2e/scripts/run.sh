@@ -35,8 +35,6 @@ render_template "${HARNESS_DIR}/manifests/namespace.yaml.tpl" "${WORK_DIR}/rende
 render_template "${HARNESS_DIR}/manifests/oci2gdsd-configmap.yaml.tpl" "${WORK_DIR}/rendered/oci2gdsd-configmap.yaml" \
   "E2E_NAMESPACE=${E2E_NAMESPACE}" \
   "OCI2GDSD_ROOT_PATH=${OCI2GDSD_ROOT_PATH}"
-render_template "${HARNESS_DIR}/manifests/pytorch-script-configmap.yaml.tpl" "${WORK_DIR}/rendered/pytorch-script-configmap.yaml" \
-  "E2E_NAMESPACE=${E2E_NAMESPACE}"
 render_template "${HARNESS_DIR}/manifests/workload-job.yaml.tpl" "${WORK_DIR}/rendered/workload-job.yaml" \
   "E2E_NAMESPACE=${E2E_NAMESPACE}" \
   "OCI2GDSD_IMAGE=${OCI2GDSD_IMAGE}" \
@@ -50,7 +48,10 @@ render_template "${HARNESS_DIR}/manifests/workload-job.yaml.tpl" "${WORK_DIR}/re
 
 kubectl --context "${KUBECTL_CONTEXT}" apply -f "${WORK_DIR}/rendered/namespace.yaml"
 kubectl --context "${KUBECTL_CONTEXT}" apply -f "${WORK_DIR}/rendered/oci2gdsd-configmap.yaml"
-kubectl --context "${KUBECTL_CONTEXT}" apply -f "${WORK_DIR}/rendered/pytorch-script-configmap.yaml"
+SMOKE_SCRIPT="${HARNESS_DIR}/scripts/pytorch_smoke.py"
+[[ -f "${SMOKE_SCRIPT}" ]] || die "missing pytorch smoke script: ${SMOKE_SCRIPT}"
+apply_configmap_from_files "${E2E_NAMESPACE}" "pytorch-smoke-script" \
+  --from-file=pytorch_smoke.py="${SMOKE_SCRIPT}"
 kubectl --context "${KUBECTL_CONTEXT}" -n "${E2E_NAMESPACE}" delete job/oci2gdsd-pytorch-smoke --ignore-not-found >/dev/null
 kubectl --context "${KUBECTL_CONTEXT}" apply -f "${WORK_DIR}/rendered/workload-job.yaml"
 
