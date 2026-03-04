@@ -1,55 +1,37 @@
 # host direct-GDS quick e2e
 
-This harness runs a host-only strict direct-GDS probe for a preloaded Qwen model.
-It does not require Kubernetes for the probe itself, but it does need a model already
-downloaded to disk.
+This harness runs a host-only strict direct-GDS probe for Qwen.
+It does not require Kubernetes, and can bootstrap model identity itself.
 
-## Getting a model on disk (pick one)
+## Getting a model on disk
 
-**Option A — run the full e2e once first (recommended for first-time setup):**
+**Default path (works from a fresh host):**
 
 ```bash
-make k3s-e2e-prereq
-make k3s-e2e
+make host-e2e-prereq
+make host-e2e-qwen-quick
 ```
 
-This provisions a local k3s cluster, packages Qwen3, and runs `oci2gdsd ensure` to
-download the model to `OCI2GDSD_ROOT_PATH`. After it completes, the model is on disk
-and the host probe can use it.
+`host-e2e-qwen-quick` now auto-seeds identity when needed:
+- starts/creates a local OCI registry container (`oci2gdsd-host-registry`)
+- builds/runs the Qwen packager
+- pushes `localhost:${HOST_LOCAL_REGISTRY_PORT}/models/qwen3-0.6b:v1`
+- reads digest from `testharness/host-e2e/work/packager/output/manifest-descriptor.json`
+- generates a local plain-http registry config and runs `oci2gdsd ensure`/`release`
 
-**Option B — pass model identity explicitly (skips Kubernetes entirely):**
-
-If you already have a model digest and registry ref, pass them directly:
+**Alternative path (explicit identity, skips auto-seed):**
 
 ```bash
 MODEL_ID=qwen3-0.6b \
 MODEL_DIGEST=sha256:... \
 MODEL_REF_OVERRIDE=registry.example.com/models/qwen3-0.6b@sha256:... \
-make host-e2e-prereq
 make host-e2e-qwen-quick
 ```
 
-**Option B.1 — seed identity with quick k3s run (faster than full e2e):**
+**Reuse existing on-disk model:**
 
-```bash
-make k3s-e2e-qwen-quick
-make host-e2e-qwen-quick
-```
-
-When `MODEL_REF_OVERRIDE` is set, `host-e2e-qwen-quick` runs an idempotent
-`oci2gdsd ensure` + `release` cycle as part of quick-example lifecycle validation.
-
-**Option C — model is already on disk:**
-
-If you've previously run the full e2e or manually downloaded the model, just run:
-
-```bash
-make host-e2e-prereq
-make host-e2e-qwen-quick
-```
-
-The prereq script auto-detects the newest `READY` entry for `MODEL_ID` under
-`OCI2GDSD_ROOT_PATH`.
+If `READY` already exists under `OCI2GDSD_ROOT_PATH/models/${MODEL_ID}/sha256-*`,
+the script reuses that digest first.
 
 Defaults are strict direct-GDS. On hosts where `gdscheck -p` reports
 `NVMe : compat/Unsupported`, prereq now attempts non-destructive remediation first
@@ -97,6 +79,12 @@ Defaults:
 - `MODEL_ID=qwen3-0.6b`
 - `MODEL_DIGEST` auto-detected from newest `READY` entry for `MODEL_ID` when unset
 - `MODEL_REF_OVERRIDE` optional; when set, enables `ensure`/`release` quick-example checks
+- `AUTO_SEED_MODEL_IDENTITY=true` (bootstrap digest/ref from local packager+registry when missing)
+- `HOST_LOCAL_REGISTRY_CONTAINER=oci2gdsd-host-registry`
+- `HOST_LOCAL_REGISTRY_PORT=5003`
+- `HOST_LOCAL_REGISTRY_IMAGE=registry:2`
+- `PACKAGER_IMAGE=oci2gdsd-qwen3-packager:local`
+- `HF_REPO=Qwen/Qwen3-0.6B`, `HF_REVISION=main`, `MODEL_REPO=models/qwen3-0.6b`, `MODEL_TAG=v1`
 - `VALIDATE_QUICK_EXAMPLE=true` (run CLI lifecycle assertions before probe)
 - `QUICK_EXAMPLE_LEASE_HOLDER=host-e2e-qwen-quick`
 - `PYTORCH_RUNTIME_IMAGE=nvcr.io/nvidia/ai-dynamo/vllm-runtime@sha256:de8ac9afb52711b08169e0f58388528c091efae6fb367a6fcfa119edef4bb233`

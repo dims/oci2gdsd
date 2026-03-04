@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HARNESS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${HARNESS_DIR}/../.." && pwd)"
+# shellcheck source=./common.sh
+source "${SCRIPT_DIR}/common.sh"
 WORK_DIR="${HARNESS_DIR}/work"
 RESULTS_DIR="${WORK_DIR}/results"
 mkdir -p "${RESULTS_DIR}"
@@ -27,23 +29,6 @@ VALIDATE_QUICK_EXAMPLE="${VALIDATE_QUICK_EXAMPLE:-true}"
 APT_UPDATED=0
 NVFS_STATS_MODE=""
 
-_ts() {
-  date -u +"%Y-%m-%dT%H:%M:%SZ"
-}
-
-log() {
-  echo "[$(_ts)] $*"
-}
-
-warn() {
-  echo "[$(_ts)] WARN: $*" >&2
-}
-
-die() {
-  echo "[$(_ts)] ERROR: $*" >&2
-  exit 1
-}
-
 emit_direct_gds_remediation() {
   cat >&2 <<'EOF'
 Direct-GDS remediation options:
@@ -62,84 +47,6 @@ Direct-GDS remediation options:
 EOF
 }
 
-maybe_sudo() {
-  if [[ "$(id -u)" -eq 0 ]]; then
-    "$@"
-  else
-    sudo "$@"
-  fi
-}
-
-is_true() {
-  local v
-  v="$(printf '%s' "${1}" | tr '[:upper:]' '[:lower:]')"
-  case "${v}" in
-    1|true|yes|on) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-enforce_strict_gds_policy() {
-  if is_true "${ALLOW_RELAXED_GDS}"; then
-    warn "ALLOW_RELAXED_GDS=true: strict direct-GDS policy checks are relaxed for debugging"
-    return 0
-  fi
-  local violations=()
-  [[ "${REQUIRE_DIRECT_GDS}" == "true" ]] || violations+=("REQUIRE_DIRECT_GDS=${REQUIRE_DIRECT_GDS}")
-  [[ "${OCI2GDS_STRICT}" == "true" ]] || violations+=("OCI2GDS_STRICT=${OCI2GDS_STRICT}")
-  [[ "${OCI2GDS_FORCE_NO_COMPAT}" == "true" ]] || violations+=("OCI2GDS_FORCE_NO_COMPAT=${OCI2GDS_FORCE_NO_COMPAT}")
-  [[ "${REQUIRE_STRICT_PROBE_EVIDENCE}" == "true" ]] || violations+=("REQUIRE_STRICT_PROBE_EVIDENCE=${REQUIRE_STRICT_PROBE_EVIDENCE}")
-  if ((${#violations[@]} > 0)); then
-    die "strict GDS policy violation: ${violations[*]} (set ALLOW_RELAXED_GDS=true only for temporary debugging)"
-  fi
-}
-
-resolve_nvfs_stats_mode() {
-  if [[ -n "${REQUIRE_NVFS_STATS_DELTA_SET}" ]]; then
-    if is_true "${REQUIRE_NVFS_STATS_DELTA}"; then
-      NVFS_STATS_MODE="required"
-    else
-      NVFS_STATS_MODE="off"
-    fi
-  else
-    NVFS_STATS_MODE="$(printf '%s' "${REQUIRE_NVFS_STATS_DELTA_MODE}" | tr '[:upper:]' '[:lower:]')"
-  fi
-  case "${NVFS_STATS_MODE}" in
-    auto|required|off) ;;
-    *) die "invalid REQUIRE_NVFS_STATS_DELTA_MODE=${NVFS_STATS_MODE} (expected auto|required|off)" ;;
-  esac
-}
-
-is_uint() {
-  [[ "${1}" =~ ^[0-9]+$ ]]
-}
-
-nearest_existing_path() {
-  local p="$1"
-  while [[ ! -e "${p}" ]]; do
-    local parent
-    parent="$(dirname "${p}")"
-    if [[ "${parent}" == "${p}" ]]; then
-      break
-    fi
-    p="${parent}"
-  done
-  echo "${p}"
-}
-
-path_available_kb() {
-  local p="$1"
-  local existing
-  existing="$(nearest_existing_path "${p}")"
-  df -Pk "${existing}" | awk 'NR==2 {print $4}'
-}
-
-path_mountpoint() {
-  local p="$1"
-  local existing
-  existing="$(nearest_existing_path "${p}")"
-  df -Pk "${existing}" | awk 'NR==2 {print $6}'
-}
 
 configure_docker_data_root() {
   local target="${1:-/mnt/nvme/docker}"
@@ -274,22 +181,6 @@ ensure_cmd_or_install() {
   log "installing missing prerequisite: ${pkg}"
   apt_install "${pkg}"
   command -v "${cmd}" >/dev/null 2>&1 || die "failed to install ${cmd} via package ${pkg}"
-}
-
-gdscheck_binary() {
-  if command -v gdscheck >/dev/null 2>&1; then
-    command -v gdscheck
-    return 0
-  fi
-  if [[ -x /usr/local/cuda/gds/tools/gdscheck ]]; then
-    echo "/usr/local/cuda/gds/tools/gdscheck"
-    return 0
-  fi
-  if [[ -x /usr/local/cuda-12.6/gds/tools/gdscheck ]]; then
-    echo "/usr/local/cuda-12.6/gds/tools/gdscheck"
-    return 0
-  fi
-  return 1
 }
 
 install_gds_tools_if_missing() {
@@ -508,6 +399,7 @@ resolve_nvfs_stats_mode
 
 ensure_cmd_or_install python3 python3
 ensure_cmd_or_install jq jq
+ensure_cmd_or_install curl curl
 ensure_cmd_or_install docker docker.io
 
 command -v nvidia-smi >/dev/null 2>&1 || die "nvidia-smi not found; GPU runtime not available"

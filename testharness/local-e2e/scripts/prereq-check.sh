@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HARNESS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${HARNESS_DIR}/../.." && pwd)"
+# shellcheck source=../../lib/common.sh
+source "${SCRIPT_DIR}/../../lib/common.sh"
 WORK_DIR="${HARNESS_DIR}/work"
 RESULTS_DIR="${WORK_DIR}/results"
 MIN_FREE_GB_DOCKER="${MIN_FREE_GB_DOCKER:-10}"
@@ -17,38 +19,8 @@ if [[ -d /mnt/nvme && -w /mnt/nvme ]]; then
 fi
 LOCAL_E2E_ROOT="${LOCAL_E2E_ROOT:-${DEFAULT_LOCAL_E2E_ROOT}}"
 
-_ts() {
-  date -u +"%Y-%m-%dT%H:%M:%SZ"
-}
-
-log() {
-  echo "[$(_ts)] $*"
-}
-
-warn() {
-  echo "[$(_ts)] WARN: $*" >&2
-}
-
-die() {
-  echo "[$(_ts)] ERROR: $*" >&2
-  exit 1
-}
-
-ensure_cmd() {
-  local cmd="$1"
-  command -v "${cmd}" >/dev/null 2>&1 || die "missing required command: ${cmd}"
-}
-
 ensure_apt_available() {
   command -v apt-get >/dev/null 2>&1 || die "apt-get not found; install missing prerequisites manually"
-}
-
-maybe_sudo() {
-  if [[ "$(id -u)" -eq 0 ]]; then
-    "$@"
-  else
-    sudo "$@"
-  fi
 }
 
 install_docker_if_missing() {
@@ -99,26 +71,6 @@ docker_info() {
   return 1
 }
 
-path_available_kb() {
-  local p="$1"
-  local existing
-  existing="$(nearest_existing_path "${p}")"
-  df -Pk "${existing}" | awk 'NR==2 {print $4}'
-}
-
-nearest_existing_path() {
-  local p="$1"
-  while [[ ! -e "${p}" ]]; do
-    local parent
-    parent="$(dirname "${p}")"
-    if [[ "${parent}" == "${p}" ]]; then
-      break
-    fi
-    p="${parent}"
-  done
-  echo "${p}"
-}
-
 check_path_free_gb() {
   local label="$1"
   local path="$2"
@@ -129,7 +81,7 @@ check_path_free_gb() {
   avail_kb="$(path_available_kb "${path}")"
   required_kb=$((min_gb * 1024 * 1024))
   avail_gb=$((avail_kb / 1024 / 1024))
-  mountpoint="$(df -Pk "$(nearest_existing_path "${path}")" | awk 'NR==2 {print $6}')"
+  mountpoint="$(path_mountpoint "${path}")"
 
   log "${label}: path=${path} mount=${mountpoint} available=${avail_gb}GiB required=${min_gb}GiB"
   if (( avail_kb < required_kb )); then

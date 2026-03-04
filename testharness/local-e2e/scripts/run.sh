@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HARNESS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${HARNESS_DIR}/../.." && pwd)"
+# shellcheck source=./common.sh
+source "${SCRIPT_DIR}/common.sh"
 WORK_DIR="${HARNESS_DIR}/work"
 RESULTS_DIR="${WORK_DIR}/results"
 PAYLOAD_DIR="${WORK_DIR}/payload"
@@ -23,26 +25,9 @@ SECOND_MODEL_REPO="${SECOND_MODEL_REPO:-models/test-model-b}"
 SECOND_MODEL_TAG="${SECOND_MODEL_TAG:-v1}"
 SECOND_LEASE_HOLDER="${SECOND_LEASE_HOLDER:-local-e2e-b}"
 OCI2GDSD_BIN="${OCI2GDSD_BIN:-}"
+CONFIG_PATH="${WORK_DIR}/local-config.yaml"
 
 mkdir -p "${RESULTS_DIR}" "${PAYLOAD_DIR}/shards" "${PAYLOAD_DIR}/metadata" "${ROOT_DIR}"
-
-_ts() {
-  date -u +"%Y-%m-%dT%H:%M:%SZ"
-}
-
-log() {
-  echo "[$(_ts)] $*"
-}
-
-die() {
-  echo "[$(_ts)] ERROR: $*" >&2
-  exit 1
-}
-
-ensure_cmd() {
-  local cmd="$1"
-  command -v "${cmd}" >/dev/null 2>&1 || die "missing required command: ${cmd}"
-}
 
 detect_docker_access() {
   if docker info >/dev/null 2>&1; then
@@ -66,25 +51,6 @@ cleanup() {
 
 trap cleanup EXIT
 
-resolve_oci2gdsd_bin() {
-  if [[ -n "${OCI2GDSD_BIN}" ]]; then
-    [[ -x "${OCI2GDSD_BIN}" ]] || die "OCI2GDSD_BIN is not executable: ${OCI2GDSD_BIN}"
-    return
-  fi
-  if [[ -x "${REPO_ROOT}/oci2gdsd" ]]; then
-    OCI2GDSD_BIN="${REPO_ROOT}/oci2gdsd"
-    return
-  fi
-  if command -v oci2gdsd >/dev/null 2>&1; then
-    OCI2GDSD_BIN="$(command -v oci2gdsd)"
-    return
-  fi
-  ensure_cmd go
-  OCI2GDSD_BIN="${WORK_DIR}/oci2gdsd"
-  log "building oci2gdsd binary for local e2e"
-  (cd "${REPO_ROOT}" && go build -o "${OCI2GDSD_BIN}" ./cmd/oci2gdsd)
-}
-
 wait_for_registry() {
   local deadline=$((SECONDS + 30))
   while (( SECONDS < deadline )); do
@@ -94,10 +60,6 @@ wait_for_registry() {
     sleep 1
   done
   return 1
-}
-
-run_cli() {
-  "${OCI2GDSD_BIN}" --registry-config "${WORK_DIR}/local-config.yaml" "$@"
 }
 
 sha256_file() {
@@ -252,7 +214,7 @@ SECOND_MODEL_REF="localhost:${REGISTRY_PORT}/${SECOND_MODEL_REPO}@${SECOND_MODEL
 SECOND_MODEL_KEY="${SECOND_MODEL_ID}@${SECOND_MODEL_DIGEST}"
 log "resolved second model digest: ${SECOND_MODEL_DIGEST}"
 
-cat > "${WORK_DIR}/local-config.yaml" <<EOF
+cat > "${CONFIG_PATH}" <<EOF
 root: ${ROOT_DIR}
 model_root: ${ROOT_DIR}/models
 tmp_root: ${ROOT_DIR}/tmp

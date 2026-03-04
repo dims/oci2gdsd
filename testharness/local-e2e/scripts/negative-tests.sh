@@ -3,6 +3,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HARNESS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${HARNESS_DIR}/../.." && pwd)"
+# shellcheck source=./common.sh
+source "${SCRIPT_DIR}/common.sh"
 WORK_DIR="${HARNESS_DIR}/work"
 RESULTS_DIR="${WORK_DIR}/results"
 CONFIG_PATH="${WORK_DIR}/local-config.yaml"
@@ -11,54 +14,32 @@ MODEL_ID="${MODEL_ID:-test-model}"
 MODEL_REPO="${MODEL_REPO:-models/test-model}"
 MODEL_TAG="${MODEL_TAG:-v1}"
 REGISTRY_PORT="${REGISTRY_PORT:-5004}"
+DEFAULT_LOCAL_E2E_ROOT="${WORK_DIR}/state"
+if [[ -d /mnt/nvme && -w /mnt/nvme ]]; then
+  DEFAULT_LOCAL_E2E_ROOT="/mnt/nvme/oci2gdsd-local-e2e"
+fi
+LOCAL_E2E_ROOT="${LOCAL_E2E_ROOT:-${DEFAULT_LOCAL_E2E_ROOT}}"
 
 mkdir -p "${RESULTS_DIR}"
 
-_ts() {
-  date -u +"%Y-%m-%dT%H:%M:%SZ"
-}
-
-log() {
-  echo "[$(_ts)] $*"
-}
-
-die() {
-  echo "[$(_ts)] ERROR: $*" >&2
-  exit 1
-}
-
-ensure_cmd() {
-  local cmd="$1"
-  command -v "${cmd}" >/dev/null 2>&1 || die "missing required command: ${cmd}"
-}
-
-resolve_oci2gdsd_bin() {
-  if [[ -n "${OCI2GDSD_BIN}" ]]; then
-    [[ -x "${OCI2GDSD_BIN}" ]] || die "OCI2GDSD_BIN is not executable: ${OCI2GDSD_BIN}"
-    return
+ensure_local_config() {
+  if [[ -f "${CONFIG_PATH}" ]]; then
+    return 0
   fi
-  if [[ -x "${WORK_DIR}/oci2gdsd" ]]; then
-    OCI2GDSD_BIN="${WORK_DIR}/oci2gdsd"
-    return
-  fi
-  if [[ -x "${HARNESS_DIR}/../../oci2gdsd" ]]; then
-    OCI2GDSD_BIN="${HARNESS_DIR}/../../oci2gdsd"
-    return
-  fi
-  if command -v oci2gdsd >/dev/null 2>&1; then
-    OCI2GDSD_BIN="$(command -v oci2gdsd)"
-    return
-  fi
-  if command -v go >/dev/null 2>&1; then
-    OCI2GDSD_BIN="${WORK_DIR}/oci2gdsd"
-    (cd "${HARNESS_DIR}/../.." && go build -o "${OCI2GDSD_BIN}" ./cmd/oci2gdsd)
-    return
-  fi
-  die "cannot locate oci2gdsd binary"
-}
-
-run_cli() {
-  "${OCI2GDSD_BIN}" --registry-config "${CONFIG_PATH}" "$@"
+  log "missing local-e2e config; creating minimal standalone config at ${CONFIG_PATH}"
+  mkdir -p "${WORK_DIR}" "${LOCAL_E2E_ROOT}"
+  cat > "${CONFIG_PATH}" <<EOF
+root: ${LOCAL_E2E_ROOT}
+model_root: ${LOCAL_E2E_ROOT}/models
+tmp_root: ${LOCAL_E2E_ROOT}/tmp
+locks_root: ${LOCAL_E2E_ROOT}/locks
+journal_dir: ${LOCAL_E2E_ROOT}/journal
+state_db: ${LOCAL_E2E_ROOT}/state.db
+registry:
+  plain_http: true
+retention:
+  min_free_bytes: 0
+EOF
 }
 
 extract_error_json() {
@@ -155,7 +136,7 @@ EOF
 
 log "starting local-e2e negative tests"
 ensure_cmd jq
-[[ -f "${CONFIG_PATH}" ]] || die "missing ${CONFIG_PATH}; run make local-e2e first"
+ensure_local_config
 resolve_oci2gdsd_bin
 
 expect_reason "VALIDATION_FAILED" "negative-status-missing-digest" \

@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HARNESS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${HARNESS_DIR}/../.." && pwd)"
+# shellcheck source=../../lib/common.sh
+source "${SCRIPT_DIR}/../../lib/common.sh"
 WORK_DIR="${HARNESS_DIR}/work"
 LOG_DIR="${WORK_DIR}/logs"
 mkdir -p "${WORK_DIR}" "${LOG_DIR}"
@@ -88,23 +90,6 @@ CUDA_LIB_DIR="${CUDA_LIB_DIR:-/usr/local/cuda/lib64}"
 
 PF_PID_FILE="${WORK_DIR}/registry-port-forward.pid"
 
-_ts() {
-  date -u +"%Y-%m-%dT%H:%M:%SZ"
-}
-
-log() {
-  echo "[$(_ts)] $*"
-}
-
-warn() {
-  echo "[$(_ts)] WARN: $*" >&2
-}
-
-die() {
-  echo "[$(_ts)] ERROR: $*" >&2
-  exit 1
-}
-
 emit_direct_gds_remediation() {
   cat >&2 <<'EOF'
 Direct-GDS remediation options:
@@ -123,26 +108,6 @@ Direct-GDS remediation options:
 EOF
 }
 
-ensure_cmd() {
-  local cmd="$1"
-  command -v "${cmd}" >/dev/null 2>&1 || die "missing required command: ${cmd}"
-}
-
-maybe_sudo() {
-  if [[ "$(id -u)" -eq 0 ]]; then
-    "$@"
-  else
-    sudo "$@"
-  fi
-}
-
-is_true() {
-  case "${1,,}" in
-    1|true|yes|on) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
 enforce_strict_gds_policy() {
   if is_true "${ALLOW_RELAXED_GDS}"; then
     warn "ALLOW_RELAXED_GDS=true: strict direct-GDS policy checks are relaxed for debugging"
@@ -159,37 +124,6 @@ enforce_strict_gds_policy() {
   if ((${#violations[@]} > 0)); then
     die "strict GDS policy violation: ${violations[*]} (set ALLOW_RELAXED_GDS=true only for temporary debugging)"
   fi
-}
-
-is_uint() {
-  [[ "${1}" =~ ^[0-9]+$ ]]
-}
-
-nearest_existing_path() {
-  local p="$1"
-  while [[ ! -e "${p}" ]]; do
-    local parent
-    parent="$(dirname "${p}")"
-    if [[ "${parent}" == "${p}" ]]; then
-      break
-    fi
-    p="${parent}"
-  done
-  echo "${p}"
-}
-
-path_available_kb() {
-  local p="$1"
-  local existing
-  existing="$(nearest_existing_path "${p}")"
-  df -Pk "${existing}" | awk 'NR==2 {print $4}'
-}
-
-path_mountpoint() {
-  local p="$1"
-  local existing
-  existing="$(nearest_existing_path "${p}")"
-  df -Pk "${existing}" | awk 'NR==2 {print $6}'
 }
 
 k3s_data_dir() {
@@ -435,9 +369,9 @@ install_go_if_missing() {
   else
     log "installing Go ${GO_VERSION}"
   fi
-  curl -fsSL -o /tmp/go${GO_VERSION}.linux-amd64.tar.gz "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
+  curl -fsSL -o "/tmp/go${GO_VERSION}.linux-amd64.tar.gz" "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
   maybe_sudo rm -rf /usr/local/go
-  maybe_sudo tar -C /usr/local -xzf /tmp/go${GO_VERSION}.linux-amd64.tar.gz
+  maybe_sudo tar -C /usr/local -xzf "/tmp/go${GO_VERSION}.linux-amd64.tar.gz"
   export PATH="/usr/local/go/bin:${PATH}"
 }
 
@@ -652,26 +586,6 @@ ensure_k3s_nvidia_runtime_prereqs() {
     fi
     sleep 3
   done
-}
-
-gdscheck_binary() {
-  if command -v gdscheck >/dev/null 2>&1; then
-    command -v gdscheck
-    return 0
-  fi
-  if [[ -x /usr/local/cuda/gds/tools/gdscheck ]]; then
-    echo "/usr/local/cuda/gds/tools/gdscheck"
-    return 0
-  fi
-  if [[ -x /usr/local/cuda-12.8/gds/tools/gdscheck ]]; then
-    echo "/usr/local/cuda-12.8/gds/tools/gdscheck"
-    return 0
-  fi
-  if [[ -x /usr/local/cuda-12.6/gds/tools/gdscheck ]]; then
-    echo "/usr/local/cuda-12.6/gds/tools/gdscheck"
-    return 0
-  fi
-  return 1
 }
 
 has_guest_nvme() {

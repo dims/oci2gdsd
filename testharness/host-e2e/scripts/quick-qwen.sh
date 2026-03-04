@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HARNESS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${HARNESS_DIR}/../.." && pwd)"
+# shellcheck source=./common.sh
+source "${SCRIPT_DIR}/common.sh"
 WORK_DIR="${HARNESS_DIR}/work"
 RESULTS_DIR="${WORK_DIR}/results"
 mkdir -p "${RESULTS_DIR}"
@@ -11,6 +13,15 @@ mkdir -p "${RESULTS_DIR}"
 MODEL_ID="${MODEL_ID:-qwen3-0.6b}"
 MODEL_DIGEST="${MODEL_DIGEST:-}"
 MODEL_REF_OVERRIDE="${MODEL_REF_OVERRIDE:-}"
+AUTO_SEED_MODEL_IDENTITY="${AUTO_SEED_MODEL_IDENTITY:-true}"
+PACKAGER_IMAGE="${PACKAGER_IMAGE:-oci2gdsd-qwen3-packager:local}"
+HF_REPO="${HF_REPO:-Qwen/Qwen3-0.6B}"
+HF_REVISION="${HF_REVISION:-main}"
+MODEL_REPO="${MODEL_REPO:-models/qwen3-0.6b}"
+MODEL_TAG="${MODEL_TAG:-v1}"
+HOST_LOCAL_REGISTRY_CONTAINER="${HOST_LOCAL_REGISTRY_CONTAINER:-oci2gdsd-host-registry}"
+HOST_LOCAL_REGISTRY_IMAGE="${HOST_LOCAL_REGISTRY_IMAGE:-registry:2}"
+HOST_LOCAL_REGISTRY_PORT="${HOST_LOCAL_REGISTRY_PORT:-5003}"
 OCI2GDSD_ROOT_PATH="${OCI2GDSD_ROOT_PATH:-/mnt/nvme/oci2gdsd}"
 OCI2GDSD_BIN="${OCI2GDSD_BIN:-}"
 OCI2GDSD_REGISTRY_CONFIG="${OCI2GDSD_REGISTRY_CONFIG:-}"
@@ -39,76 +50,6 @@ OCI2GDSD_BIN_MODE=""
 declare -a OCI2GDSD_CMD=()
 declare -a OCI2GDSD_GLOBAL_ARGS=()
 NVFS_STATS_MODE=""
-
-_ts() {
-  date -u +"%Y-%m-%dT%H:%M:%SZ"
-}
-
-log() {
-  echo "[$(_ts)] $*"
-}
-
-warn() {
-  echo "[$(_ts)] WARN: $*" >&2
-}
-
-die() {
-  echo "[$(_ts)] ERROR: $*" >&2
-  exit 1
-}
-
-ensure_cmd() {
-  local cmd="$1"
-  command -v "${cmd}" >/dev/null 2>&1 || die "missing required command: ${cmd}"
-}
-
-maybe_sudo() {
-  if [[ "$(id -u)" -eq 0 ]]; then
-    "$@"
-  else
-    sudo "$@"
-  fi
-}
-
-is_true() {
-  local v
-  v="$(printf '%s' "${1}" | tr '[:upper:]' '[:lower:]')"
-  case "${v}" in
-    1|true|yes|on) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-enforce_strict_gds_policy() {
-  if is_true "${ALLOW_RELAXED_GDS}"; then
-    warn "ALLOW_RELAXED_GDS=true: strict direct-GDS policy checks are relaxed for debugging"
-    return 0
-  fi
-  local violations=()
-  [[ "${OCI2GDS_STRICT}" == "true" ]] || violations+=("OCI2GDS_STRICT=${OCI2GDS_STRICT}")
-  [[ "${REQUIRE_DIRECT_GDS}" == "true" ]] || violations+=("REQUIRE_DIRECT_GDS=${REQUIRE_DIRECT_GDS}")
-  [[ "${OCI2GDS_FORCE_NO_COMPAT}" == "true" ]] || violations+=("OCI2GDS_FORCE_NO_COMPAT=${OCI2GDS_FORCE_NO_COMPAT}")
-  [[ "${REQUIRE_STRICT_PROBE_EVIDENCE}" == "true" ]] || violations+=("REQUIRE_STRICT_PROBE_EVIDENCE=${REQUIRE_STRICT_PROBE_EVIDENCE}")
-  if ((${#violations[@]} > 0)); then
-    die "strict GDS policy violation: ${violations[*]} (set ALLOW_RELAXED_GDS=true only for temporary debugging)"
-  fi
-}
-
-resolve_nvfs_stats_mode() {
-  if [[ -n "${REQUIRE_NVFS_STATS_DELTA_SET}" ]]; then
-    if is_true "${REQUIRE_NVFS_STATS_DELTA}"; then
-      NVFS_STATS_MODE="required"
-    else
-      NVFS_STATS_MODE="off"
-    fi
-  else
-    NVFS_STATS_MODE="$(printf '%s' "${REQUIRE_NVFS_STATS_DELTA_MODE}" | tr '[:upper:]' '[:lower:]')"
-  fi
-  case "${NVFS_STATS_MODE}" in
-    auto|required|off) ;;
-    *) die "invalid REQUIRE_NVFS_STATS_DELTA_MODE=${NVFS_STATS_MODE} (expected auto|required|off)" ;;
-  esac
-}
 
 resolve_oci2gdsd_cmd() {
   if [[ -n "${OCI2GDSD_BIN}" ]]; then
@@ -171,6 +112,126 @@ auto_detect_model_digest_from_ready() {
   return 0
 }
 
+manifest_descriptor_path() {
+  echo "${WORK_DIR}/packager/output/manifest-descriptor.json"
+}
+
+ensure_plain_http_registry_config() {
+  if [[ -n "${OCI2GDSD_REGISTRY_CONFIG}" ]]; then
+    return 0
+  fi
+  local cfg="${WORK_DIR}/generated-host-registry-config.yaml"
+  cat > "${cfg}" <<EOF
+root: ${OCI2GDSD_ROOT_PATH}
+registry:
+  plain_http: true
+EOF
+  OCI2GDSD_REGISTRY_CONFIG="${cfg}"
+  export OCI2GDSD_REGISTRY_CONFIG
+}
+
+local_registry_ready() {
+  curl --max-time 2 -fsS "http://127.0.0.1:${HOST_LOCAL_REGISTRY_PORT}/v2/" >/dev/null 2>&1
+}
+
+ensure_local_registry_running() {
+  if maybe_sudo docker ps --format '{{.Names}}' | grep -Fxq "${HOST_LOCAL_REGISTRY_CONTAINER}"; then
+    :
+  elif maybe_sudo docker ps -a --format '{{.Names}}' | grep -Fxq "${HOST_LOCAL_REGISTRY_CONTAINER}"; then
+    log "starting local registry container ${HOST_LOCAL_REGISTRY_CONTAINER}"
+    maybe_sudo docker start "${HOST_LOCAL_REGISTRY_CONTAINER}" >/dev/null
+  else
+    log "creating local registry container ${HOST_LOCAL_REGISTRY_CONTAINER} on 127.0.0.1:${HOST_LOCAL_REGISTRY_PORT}"
+    maybe_sudo docker run -d --restart unless-stopped \
+      --name "${HOST_LOCAL_REGISTRY_CONTAINER}" \
+      -p "${HOST_LOCAL_REGISTRY_PORT}:5000" \
+      "${HOST_LOCAL_REGISTRY_IMAGE}" >/dev/null
+  fi
+
+  local attempts=60
+  local delay=1
+  local i
+  for ((i=1; i<=attempts; i++)); do
+    if local_registry_ready; then
+      log "local registry is ready on 127.0.0.1:${HOST_LOCAL_REGISTRY_PORT}"
+      return 0
+    fi
+    sleep "${delay}"
+  done
+  die "local registry readiness check failed on 127.0.0.1:${HOST_LOCAL_REGISTRY_PORT}"
+}
+
+build_packager_image() {
+  log "building packager image ${PACKAGER_IMAGE}"
+  maybe_sudo docker build -t "${PACKAGER_IMAGE}" "${REPO_ROOT}/packaging/qwen3-oci-modelprofile-v1"
+}
+
+seed_from_packager_to_local_registry() {
+  local packager_work="${WORK_DIR}/packager"
+  local descriptor
+  descriptor="$(manifest_descriptor_path)"
+  mkdir -p "${packager_work}" "${packager_work}/.cache/huggingface"
+  log "packaging model ${HF_REPO}@${HF_REVISION} to localhost:${HOST_LOCAL_REGISTRY_PORT}/${MODEL_REPO}:${MODEL_TAG}"
+  maybe_sudo docker run --rm --network host \
+    -u "$(id -u):$(id -g)" \
+    -e HF_TOKEN="${HF_TOKEN:-}" \
+    -e HOME="/work" \
+    -e HF_HOME="/work/.cache/huggingface" \
+    -e XDG_CACHE_HOME="/work/.cache" \
+    -v "${packager_work}:/work" \
+    "${PACKAGER_IMAGE}" \
+    --hf-repo "${HF_REPO}" \
+    --hf-revision "${HF_REVISION}" \
+    --model-id "${MODEL_ID}" \
+    --oci-ref "localhost:${HOST_LOCAL_REGISTRY_PORT}/${MODEL_REPO}:${MODEL_TAG}" \
+    --plain-http
+  [[ -f "${descriptor}" ]] || die "manifest descriptor missing after packaging: ${descriptor}"
+  MODEL_DIGEST="$(jq -r '.digest // empty' "${descriptor}")"
+  [[ -n "${MODEL_DIGEST}" ]] || die "packager digest is empty in ${descriptor}"
+  MODEL_REF_OVERRIDE="localhost:${HOST_LOCAL_REGISTRY_PORT}/${MODEL_REPO}@${MODEL_DIGEST}"
+  export MODEL_DIGEST MODEL_REF_OVERRIDE
+  ensure_plain_http_registry_config
+}
+
+adopt_manifest_descriptor_if_present() {
+  local descriptor
+  descriptor="$(manifest_descriptor_path)"
+  [[ -f "${descriptor}" ]] || return 1
+  local digest
+  digest="$(jq -r '.digest // empty' "${descriptor}")"
+  [[ -n "${digest}" ]] || return 1
+  MODEL_DIGEST="${digest}"
+  MODEL_REF_OVERRIDE="localhost:${HOST_LOCAL_REGISTRY_PORT}/${MODEL_REPO}@${MODEL_DIGEST}"
+  export MODEL_DIGEST MODEL_REF_OVERRIDE
+  ensure_plain_http_registry_config
+  log "using existing manifest descriptor identity digest=${MODEL_DIGEST}"
+  return 0
+}
+
+seed_model_identity_if_needed() {
+  if [[ -n "${MODEL_DIGEST}" ]]; then
+    return 0
+  fi
+  if [[ "${MODEL_REF_OVERRIDE}" == *@sha256:* ]]; then
+    MODEL_DIGEST="${MODEL_REF_OVERRIDE##*@}"
+    return 0
+  fi
+  if auto_detect_model_digest_from_ready; then
+    log "using READY model digest from local cache: ${MODEL_DIGEST}"
+    return 0
+  fi
+  if adopt_manifest_descriptor_if_present; then
+    return 0
+  fi
+  if ! is_true "${AUTO_SEED_MODEL_IDENTITY}"; then
+    return 0
+  fi
+  log "model identity is missing; auto-seeding local registry + packager output"
+  ensure_local_registry_running
+  build_packager_image
+  seed_from_packager_to_local_registry
+}
+
 resolve_model_digest() {
   if [[ -n "${MODEL_DIGEST}" ]]; then
     return 0
@@ -182,22 +243,6 @@ resolve_model_digest() {
     auto_detect_model_digest_from_ready || true
   fi
   [[ -n "${MODEL_DIGEST}" ]] || die "MODEL_DIGEST is required (or provide MODEL_REF_OVERRIDE with @sha256:<digest>)"
-}
-
-gdscheck_binary() {
-  if command -v gdscheck >/dev/null 2>&1; then
-    command -v gdscheck
-    return 0
-  fi
-  if [[ -x /usr/local/cuda/gds/tools/gdscheck ]]; then
-    echo "/usr/local/cuda/gds/tools/gdscheck"
-    return 0
-  fi
-  if [[ -x /usr/local/cuda-12.6/gds/tools/gdscheck ]]; then
-    echo "/usr/local/cuda-12.6/gds/tools/gdscheck"
-    return 0
-  fi
-  return 1
 }
 
 resolve_model_root() {
@@ -510,11 +555,13 @@ log "starting host-only qwen direct-GDS quick e2e"
 ensure_cmd docker
 ensure_cmd jq
 ensure_cmd python3
+ensure_cmd curl
 resolve_nvfs_stats_mode
 enforce_strict_gds_policy
 resolve_oci2gdsd_cmd
-resolve_oci2gdsd_global_args
+seed_model_identity_if_needed
 resolve_model_digest
+resolve_oci2gdsd_global_args
 write_environment_report
 
 log "model_digest=${MODEL_DIGEST}"
@@ -523,6 +570,9 @@ log "strict=${OCI2GDS_STRICT} require_direct_gds=${REQUIRE_DIRECT_GDS}"
 log "force_no_compat=${OCI2GDS_FORCE_NO_COMPAT} force_exit_after_summary=${OCI2GDS_FORCE_EXIT_AFTER_SUMMARY} validate_sample_bytes=${OCI2GDS_VALIDATE_SAMPLE_BYTES} nvfs_stats_mode=${NVFS_STATS_MODE}"
 if [[ -n "${MODEL_REF_OVERRIDE}" ]]; then
   log "model_ref_override=${MODEL_REF_OVERRIDE}"
+fi
+if [[ -n "${OCI2GDSD_REGISTRY_CONFIG}" ]]; then
+  log "registry_config=${OCI2GDSD_REGISTRY_CONFIG}"
 fi
 
 validate_quick_example_cli
