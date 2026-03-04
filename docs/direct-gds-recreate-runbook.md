@@ -131,7 +131,7 @@ Run:
 
 ```bash
 cd /path/to/oci2gdsd
-QWEN_HELLO_PROFILE=host-direct REQUIRE_DIRECT_GDS=true make k3s-e2e-qwen-quick
+QWEN_HELLO_PROFILE=host-direct REQUIRE_DIRECT_GDS=true make verify-k3s-qwen-smoke
 ```
 
 ## 5) Capture Artifacts Every Time

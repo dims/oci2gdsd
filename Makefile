@@ -6,19 +6,18 @@ help:
 	@echo "  build                  Build oci2gdsd CLI"
 	@echo "  install                Install oci2gdsd to \$$GOPATH/bin"
 	@echo "  clean                  Remove local build and test harness artifacts"
-	@echo "  test                   Run Go tests (no GPU required)"
-	@echo "  demo-local             Self-contained local demo (no GPU, no k8s)"
-	@echo "  local-e2e-prereq       Stage 0 prereq: local/base tooling + storage"
-	@echo "  local-e2e              Run local CLI lifecycle e2e (ensure/status/verify/release/gc)"
-	@echo "  local-e2e-negative     Run local CLI negative/failure-path assertions"
-	@echo "  host-e2e-prereq        Stage 1 prereq: host direct-GDS (extends local-e2e-prereq)"
-	@echo "  k3s-e2e-prereq         Stage 2 prereq: k3s harness (extends host-e2e-prereq)"
-	@echo "  k3s-e2e                Run k3s Kubernetes GPU e2e harness"
-	@echo "  k3s-e2e-daemonset-manifest Run k3s e2e using raw daemonset manifests"
-	@echo "  k3s-e2e-qwen-quick     Fast qwen-hello redeploy/probe loop"
-	@echo "  host-e2e-qwen-quick    Run host-only strict direct-GDS qwen probe"
-	@echo "  doctor                 Run all prerequisite checks (local/host/k3s)"
-	@echo "  k3s-e2e-clean          Delete k3s e2e local harness artifacts"
+	@echo "  prereq-local           Stage 0 prereq: local/base tooling + storage"
+	@echo "  prereq-host-gds        Stage 1 prereq: host strict direct-GDS (extends prereq-local)"
+	@echo "  prereq-k3s             Stage 2 prereq: k3s harness checks (extends prereq-host-gds)"
+	@echo "  prereq-all             Run full prereq chain (local -> host -> k3s)"
+	@echo "  verify-unit            Run Go tests (no GPU required)"
+	@echo "  verify-local           Local CLI lifecycle e2e (positive + negative checks)"
+	@echo "  verify-host-qwen-smoke Host-only strict direct-GDS qwen probe"
+	@echo "  verify-k3s-qwen-smoke  Fast qwen-hello redeploy/probe loop on k3s"
+	@echo "  verify-k3s-qwen-e2e-inline Full k3s e2e in inline mode"
+	@echo "  verify-k3s-qwen-e2e-daemonset Full k3s e2e in daemonset mode"
+	@echo "  clean-k3s              Delete k3s e2e local harness artifacts"
+	@echo "  demo-local-registry    Self-contained local demo (no GPU, no k8s)"
 
 .PHONY: build
 build:
@@ -37,12 +36,12 @@ clean:
 	@find . -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
 	@echo "==> Done"
 
-.PHONY: test
-test:
+.PHONY: verify-unit
+verify-unit:
 	go test ./...
 
-.PHONY: demo-local
-demo-local: build
+.PHONY: demo-local-registry
+demo-local-registry: build
 	@echo "==> Starting local OCI registry (requires Docker)..."
 	@docker inspect local-registry >/dev/null 2>&1 && echo "(registry already running)" || \
 	  docker run -d --rm -p 5000:5000 --name local-registry registry:2
@@ -58,46 +57,42 @@ demo-local: build
 	@echo "==> To stop the registry when done:"
 	@echo "    docker stop local-registry"
 
-.PHONY: local-e2e-prereq
-local-e2e-prereq:
+.PHONY: prereq-local
+prereq-local:
 	./testharness/local-e2e/scripts/prereq-check.sh
 
-.PHONY: local-e2e
-local-e2e: local-e2e-prereq
+.PHONY: verify-local
+verify-local: prereq-local
 	./testharness/local-e2e/scripts/run.sh
 	./testharness/local-e2e/scripts/negative-tests.sh
 
-.PHONY: local-e2e-negative
-local-e2e-negative:
-	./testharness/local-e2e/scripts/negative-tests.sh
-
-.PHONY: k3s-e2e-prereq
-k3s-e2e-prereq: host-e2e-prereq
-	./testharness/k3s-e2e/scripts/prereq-check.sh
-
-.PHONY: k3s-e2e
-k3s-e2e: k3s-e2e-prereq
-	./testharness/k3s-e2e/scripts/run.sh
-
-.PHONY: k3s-e2e-daemonset-manifest
-k3s-e2e-daemonset-manifest: k3s-e2e-prereq
-	E2E_DEPLOY_MODE=daemonset-manifest ./testharness/k3s-e2e/scripts/run.sh
-
-.PHONY: k3s-e2e-qwen-quick
-k3s-e2e-qwen-quick: k3s-e2e-prereq
-	./testharness/k3s-e2e/scripts/quick-qwen.sh
-
-.PHONY: host-e2e-prereq
-host-e2e-prereq: local-e2e-prereq
+.PHONY: prereq-host-gds
+prereq-host-gds: prereq-local
 	./testharness/host-e2e/scripts/prereq-check.sh
 
-.PHONY: host-e2e-qwen-quick
-host-e2e-qwen-quick: host-e2e-prereq
+.PHONY: prereq-k3s
+prereq-k3s: prereq-host-gds
+	./testharness/k3s-e2e/scripts/prereq-check.sh
+
+.PHONY: prereq-all
+prereq-all: prereq-local prereq-host-gds prereq-k3s
+
+.PHONY: verify-host-qwen-smoke
+verify-host-qwen-smoke: prereq-host-gds
 	./testharness/host-e2e/scripts/quick-qwen.sh
 
-.PHONY: doctor
-doctor: local-e2e-prereq host-e2e-prereq k3s-e2e-prereq
+.PHONY: verify-k3s-qwen-smoke
+verify-k3s-qwen-smoke: prereq-k3s
+	./testharness/k3s-e2e/scripts/quick-qwen.sh
 
-.PHONY: k3s-e2e-clean
-k3s-e2e-clean:
+.PHONY: verify-k3s-qwen-e2e-inline
+verify-k3s-qwen-e2e-inline: prereq-k3s
+	./testharness/k3s-e2e/scripts/run.sh
+
+.PHONY: verify-k3s-qwen-e2e-daemonset
+verify-k3s-qwen-e2e-daemonset: prereq-k3s
+	E2E_DEPLOY_MODE=daemonset-manifest ./testharness/k3s-e2e/scripts/run.sh
+
+.PHONY: clean-k3s
+clean-k3s:
 	./testharness/k3s-e2e/scripts/cleanup.sh

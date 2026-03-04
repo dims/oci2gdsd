@@ -1,14 +1,14 @@
 # Troubleshooting Guide
 
-> **New here?** Before anything else, run `make k3s-e2e-prereq` (or `make host-e2e-prereq`
+> **New here?** Before anything else, run `make prereq-k3s` (or `make prereq-host-gds`
 > for host-only). That single step auto-installs missing tools and catches the most common
 > setup problems. If you're on a machine without an A100 + NVMe, see §4 and §14 first —
 > strict direct-GDS requires specific hardware.
 
 This guide is for failures we repeatedly observed while running:
 
-- `make k3s-e2e-qwen-quick`
-- `make host-e2e-qwen-quick`
+- `make verify-k3s-qwen-smoke`
+- `make verify-host-qwen-smoke`
 
 Use it together with:
 
@@ -26,7 +26,7 @@ Use it together with:
 | Runtime image precheck fails with `missing: c++` | Selected runtime image cannot build native extension path | Use `PYTORCH_RUNTIME_IMAGE=nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1` |
 | Space errors during pull/build/apply | Docker/k3s/model root on small boot disk | Move Docker data-root and k3s/model paths to `/mnt/nvme` |
 | Direct probe says ok but NVFS counters stay zero | `nvidia-fs` IO stats disabled | Enable `rw_stats_enabled=1` or keep counter gate disabled |
-| qwen quick fails with missing model digest/ref | Quick mode does not have model identity yet | Run full `make k3s-e2e` once or pass explicit `MODEL_*_OVERRIDE` |
+| qwen quick fails with missing model digest/ref | Quick mode does not have model identity yet | Run full `make verify-k3s-qwen-e2e-inline` once or pass explicit `MODEL_*_OVERRIDE` |
 | No `nvidia.com/gpu` allocatable | GPU operator/device plugin not ready | Install/repair GPU operator, then re-check node allocatable |
 | `error: failed to initialize state lock: open ... state.db.lock: permission denied` | Model root path contains root-owned files from init-container flow | `sudo chown -R $USER:$USER /mnt/nvme/oci2gdsd` (or your `OCI2GDSD_ROOT_PATH`) |
 | Docker free-space gates fail unexpectedly after reboot | `/mnt/nvme` was not remounted, so Docker data-root path resolves on `/` | Remount NVMe first, then confirm `docker info --format '{{.DockerRootDir}}'` |
@@ -36,8 +36,8 @@ Use it together with:
 Before any quick run on a fresh host:
 
 ```bash
-make k3s-e2e-prereq
-make host-e2e-prereq
+make prereq-k3s
+make prereq-host-gds
 ```
 
 The prereq scripts already check and/or auto-fix common issues:
@@ -55,7 +55,7 @@ These were the most common missing pieces in repeated bring-up runs.
 
 | Missing item | Why it matters | What to set/install |
 |---|---|---|
-| Base dev toolchain (`go`, `make`, `c++`) | `make test` and source-based builds fail fast (`go: command not found`) | Install `golang-go`, `make`, `build-essential` (or equivalent toolchain) |
+| Base dev toolchain (`go`, `make`, `c++`) | `make verify-unit` and source-based builds fail fast (`go: command not found`) | Install `golang-go`, `make`, `build-essential` (or equivalent toolchain) |
 | NVIDIA container toolkit too old | Pods fail at startup with `No help topic for 'enable-cuda-compat'` | Upgrade to `nvidia-container-toolkit>=1.18.2` + restart `docker` and `k3s` |
 | GDS userspace tools (`gdscheck`) | Strict direct gate cannot validate platform | Install `nvidia-gds` or `gds-tools-*` packages |
 | Direct-path capable kernel/driver alignment | `gdscheck -p` stays unsupported | Use validated NVIDIA stack (driver + `nvidia-fs` + compatible kernel); reboot and re-verify |
@@ -221,10 +221,10 @@ sudo /usr/libexec/gds/tools/gdsio -D /mnt/nvme -d 0 -w 1 -s 1G -i 1M -x 0
 7. Re-run harness prereqs and quick tests:
 
 ```bash
-make host-e2e-prereq
-make k3s-e2e-prereq
-make host-e2e-qwen-quick
-make k3s-e2e-qwen-quick
+make prereq-host-gds
+make prereq-k3s
+make verify-host-qwen-smoke
+make verify-k3s-qwen-smoke
 ```
 
 #### 4.3 Exit criteria
@@ -361,17 +361,17 @@ Repo default now uses `REQUIRE_NVFS_STATS_DELTA_MODE=auto` to avoid false negati
 
 ## 11) Quick Target Fails Due To Model Identity
 
-`make k3s-e2e-qwen-quick` needs model digest and registry ref.
+`make verify-k3s-qwen-smoke` needs model digest and registry ref.
 
 Ways to satisfy:
 
-1. Run `make k3s-e2e` once to seed identity artifacts.
+1. Run `make verify-k3s-qwen-e2e-inline` once to seed identity artifacts.
 2. Set explicit overrides:
 
 ```bash
 MODEL_DIGEST_OVERRIDE=sha256:... \
 MODEL_REF_OVERRIDE=oci-model-registry.oci-model-registry.svc.cluster.local:5000/models/qwen3-0.6b@sha256:... \
-make k3s-e2e-qwen-quick
+make verify-k3s-qwen-smoke
 ```
 
 ## 12) Recommended Recovery Sequence (Fresh A100)
@@ -379,15 +379,15 @@ make k3s-e2e-qwen-quick
 1. Run prereq:
 
 ```bash
-make k3s-e2e-prereq
+make prereq-k3s
 ```
 
 2. If toolkit hook error appears, upgrade toolkit/runtime and restart services.
 3. Re-run:
 
 ```bash
-make k3s-e2e-qwen-quick
-make host-e2e-qwen-quick
+make verify-k3s-qwen-smoke
+make verify-host-qwen-smoke
 ```
 
 4. If direct gate still fails:

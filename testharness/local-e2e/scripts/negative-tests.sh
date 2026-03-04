@@ -161,7 +161,7 @@ expect_reason_any "REGISTRY_UNREACHABLE,REGISTRY_TIMEOUT,MANIFEST_NOT_FOUND" "ne
 expect_lint_invalid
 
 cat > "${RESULTS_DIR}/negative-summary.txt" <<EOF
-local-e2e-negative: success
+verify-local: negative-suite-success
 checked_reasons=VALIDATION_FAILED(status-missing-digest),VALIDATION_FAILED(profile-lint-missing-source),VALIDATION_FAILED(profile-inspect-missing-config),REGISTRY_UNREACHABLE|REGISTRY_TIMEOUT|MANIFEST_NOT_FOUND,PROFILE_LINT_FAILED-via-lint-result
 EOF
 

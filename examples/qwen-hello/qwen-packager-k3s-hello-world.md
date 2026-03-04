@@ -8,7 +8,7 @@ This walkthrough packages `Qwen/Qwen3-0.6B` as an OCI artifact and deploys the
 From repo root:
 
 ```bash
-make k3s-e2e
+make verify-k3s-qwen-e2e-inline
 ```
 
 That flow already performs packaging, preload, workload validation, and lifecycle checks.
@@ -146,5 +146,5 @@ docker rm -f oci-model-registry 2>/dev/null || true
 For repeated iteration after first successful run, use:
 
 ```bash
-make k3s-e2e-qwen-quick
+make verify-k3s-qwen-smoke
 ```

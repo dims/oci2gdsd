@@ -21,19 +21,19 @@ semantics:
 From repo root:
 
 ```bash
-make local-e2e-prereq
-make local-e2e
+make prereq-local
+make verify-local
 ```
 
-`local-e2e-prereq` is stage 0 in the prereq hierarchy and is reused by host/k3s prereq targets.
+`prereq-local` is stage 0 in the prereq hierarchy and is reused by host/k3s prereq targets.
 
 For a one-liner:
 
 ```bash
-make local-e2e
+make verify-local
 ```
 
-`make local-e2e` now runs both:
+`make verify-local` now runs both:
 - positive lifecycle/concurrency/idempotency checks (`run.sh`)
 - negative/failure-path checks (`negative-tests.sh`)
 
@@ -53,13 +53,13 @@ make local-e2e
 
 ```bash
 # Use a custom binary
-OCI2GDSD_BIN=/path/to/oci2gdsd make local-e2e
+OCI2GDSD_BIN=/path/to/oci2gdsd make verify-local
 
 # Use a different local registry port
-REGISTRY_PORT=5008 make local-e2e
+REGISTRY_PORT=5008 make verify-local
 
 # Tighten prereq storage gates (GiB)
-MIN_FREE_GB_DOCKER=20 MIN_FREE_GB_WORK=5 MIN_FREE_GB_LOCAL_ROOT=40 make local-e2e-prereq
+MIN_FREE_GB_DOCKER=20 MIN_FREE_GB_WORK=5 MIN_FREE_GB_LOCAL_ROOT=40 make prereq-local
 ```
 
 ## Artifacts

@@ -20,7 +20,7 @@ garbage collection so your serving code doesn't have to.
 
 | Requirement | Version | Notes |
 |-------------|---------|-------|
-| Go | 1.23+ | Required for `make test`, local source builds, and `make local-e2e` when binary is not prebuilt |
+| Go | 1.23+ | Required for `make verify-unit`, local source builds, and `make verify-local` when binary is not prebuilt |
 | `make` | any recent | Used by all top-level test/e2e targets |
 | C/C++ toolchain (`c++`, headers) | any recent | Needed for native probe/extension builds in qwen host/k3s e2e paths |
 | Docker or Podman | any recent | For local registry and packaging workflows |
@@ -53,7 +53,7 @@ build the binary, spin up a local registry, push a tiny test artifact, and run t
 For an automated version of that lifecycle:
 
 ```bash
-make local-e2e
+make verify-local
 ```
 
 This now includes:
@@ -158,7 +158,7 @@ Run the local lifecycle e2e, then the GPU/k3s harness:
 
 ```bash
 # Local no-GPU/no-k8s lifecycle e2e
-make local-e2e
+make verify-local
 ```
 
 ```bash
@@ -166,19 +166,19 @@ make local-e2e
 # Stage 0: base/local prerequisites
 # Stage 1: host direct-GDS prerequisites (extends stage 0)
 # Stage 2: k3s prerequisites (extends stage 1)
-make k3s-e2e-prereq
+make prereq-k3s
 
-# One-shot prerequisite doctor (local + host + k3s)
-make doctor
+# One-shot full prerequisite chain (local -> host -> k3s)
+make prereq-all
 
 # Full e2e: package Qwen3, push to in-cluster registry, preload, run PyTorch smoke test
-make k3s-e2e
+make verify-k3s-qwen-e2e-inline
 
 # Full e2e with raw daemonset manifests (node-level oci2gdsd serve)
-make k3s-e2e-daemonset-manifest
+make verify-k3s-qwen-e2e-daemonset
 
 # Fast iteration after first run (reuse existing cluster and model artifact)
-make k3s-e2e-qwen-quick
+make verify-k3s-qwen-smoke
 ```
 
 Notes:

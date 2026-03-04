@@ -10,7 +10,7 @@ Time: about 10 minutes.
 If you prefer an automated run, use:
 
 ```bash
-make local-e2e
+make verify-local
 ```
 
 ---

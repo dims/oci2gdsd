@@ -24,13 +24,13 @@ as a node-level daemon and validating GPU load/export lifecycle from a workload 
 ## Harness entrypoint (recommended)
 
 ```bash
-make k3s-e2e-daemonset-manifest
+make verify-k3s-qwen-e2e-daemonset
 ```
 
 Equivalent explicit mode toggle:
 
 ```bash
-E2E_DEPLOY_MODE=daemonset-manifest make k3s-e2e
+E2E_DEPLOY_MODE=daemonset-manifest make verify-k3s-qwen-e2e-inline
 ```
 
 ## Key environment variables
