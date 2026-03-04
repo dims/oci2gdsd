@@ -1,6 +1,6 @@
 # k3s local integration harness
 
-This harness targets host-native `k3s` (works on Brev GPU instances), preloads an OCI model with `oci2gdsd` in an init container, runs a GPU-backed PyTorch smoke workload, and validates model lifecycle transitions (`READY` -> `RELEASED`).
+This harness targets host-native `k3s` (works on Brev GPU instances), preloads an OCI model with `oci2gdsd` in an init container, runs a GPU-backed workload (PyTorch or TensorRT-LLM daemon-client mode), and validates model lifecycle transitions (`READY` -> `RELEASED`).
 It is designed to run directly by an operator on a machine and does not require GitHub Actions.
 
 For host/provider qualification and strict direct-GDS recreate steps, see [`docs/direct-gds-recreate-runbook.md`](../../docs/direct-gds-recreate-runbook.md).
@@ -36,6 +36,7 @@ Raw-manifest DaemonSet path (no Helm):
 
 ```bash
 make verify-k3s-qwen-e2e-daemonset
+make verify-k3s-tensor-e2e-daemonset
 ```
 
 `make prereq-k3s` validates cluster/runtime/image prerequisites and auto-installs host packages by default (`INSTALL_MISSING_PREREQS=true`) after running stages 0 and 1.
@@ -194,6 +195,9 @@ make verify-k3s-qwen-e2e-inline
 # Run full e2e in raw-manifest daemonset mode
 make verify-k3s-qwen-e2e-daemonset
 
+# Run full e2e in raw-manifest daemonset mode with TensorRT-LLM workload
+make verify-k3s-tensor-e2e-daemonset
+
 # Equivalent via explicit mode toggle
 E2E_DEPLOY_MODE=daemonset-manifest make verify-k3s-qwen-e2e-inline
 
@@ -208,6 +212,9 @@ PRELOAD_WORKLOAD_IMAGE=true make verify-k3s-qwen-e2e-inline
 
 # Optional: pre-load the qwen-hello PyTorch runtime image into k3s containerd (default true)
 PRELOAD_PYTORCH_RUNTIME_IMAGE=true make verify-k3s-qwen-e2e-inline
+
+# Optional: pre-load TensorRT-LLM runtime image (default true for TensorRT runtime)
+PRELOAD_TENSORRTLLM_RUNTIME_IMAGE=true make verify-k3s-tensor-e2e-daemonset
 
 # Optional: require daemon IPC probe to report status=ok
 # (default: true when OCI2GDSD_ENABLE_GDS_IMAGE=true, otherwise false)
@@ -288,6 +295,7 @@ Logs are written under:
 - `testharness/k3s-e2e/work/results/preload.log`
 - `testharness/k3s-e2e/work/results/pytorch.log`
 - `testharness/k3s-e2e/work/results/pytorch-daemon-client.log` (daemonset-manifest mode)
+- `testharness/k3s-e2e/work/results/tensorrt-daemon-client.log` (daemonset-manifest mode with `WORKLOAD_RUNTIME=tensorrt`)
 - `testharness/k3s-e2e/work/results/daemonset.log` (daemonset-manifest mode)
 - `testharness/k3s-e2e/work/results/qwen-hello.log`
 - `testharness/k3s-e2e/work/results/release-gc.log`

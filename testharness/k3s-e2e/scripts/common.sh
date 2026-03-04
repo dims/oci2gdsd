@@ -63,6 +63,10 @@ PYTORCH_RUNTIME_IMAGE="${PYTORCH_RUNTIME_IMAGE:-${VLLM_RUNTIME_IMAGE}}"
 PRELOAD_PYTORCH_RUNTIME_IMAGE="${PRELOAD_PYTORCH_RUNTIME_IMAGE:-${PRELOAD_VLLM_RUNTIME_IMAGE:-true}}"
 PRELOAD_WORKLOAD_IMAGE="${PRELOAD_WORKLOAD_IMAGE:-true}"
 PYTORCH_IMAGE="${PYTORCH_IMAGE:-${PYTORCH_RUNTIME_IMAGE}}"
+TENSORRTLLM_RUNTIME_IMAGE="${TENSORRTLLM_RUNTIME_IMAGE:-nvcr.io/nvidia/tensorrt-llm/release:latest}"
+PRELOAD_TENSORRTLLM_RUNTIME_IMAGE="${PRELOAD_TENSORRTLLM_RUNTIME_IMAGE:-true}"
+TENSORRTLLM_IMAGE="${TENSORRTLLM_IMAGE:-${TENSORRTLLM_RUNTIME_IMAGE}}"
+WORKLOAD_RUNTIME="${WORKLOAD_RUNTIME:-pytorch}"
 QWEN_GDS_RUNTIME_IMAGE="${QWEN_GDS_RUNTIME_IMAGE:-oci2gdsd-qwen-runtime-gds:e2e}"
 BUILD_QWEN_GDS_RUNTIME_IMAGE="${BUILD_QWEN_GDS_RUNTIME_IMAGE:-false}"
 QWEN_GDS_RUNTIME_DOCKERFILE="${QWEN_GDS_RUNTIME_DOCKERFILE:-${REPO_ROOT}/examples/qwen-hello/Dockerfile.vllm-runtime-gds}"
@@ -312,9 +316,46 @@ validate_deploy_assets() {
     return 0
   fi
   [[ -f "${OCI2GDSD_DAEMON_TEMPLATE}" ]] || die "missing daemonset template: ${OCI2GDSD_DAEMON_TEMPLATE}"
-  [[ -f "${PYTORCH_DAEMON_CLIENT_TEMPLATE}" ]] || die "missing daemonset workload template: ${PYTORCH_DAEMON_CLIENT_TEMPLATE}"
-  [[ -f "${PYTORCH_DAEMON_CLIENT_SCRIPT}" ]] || die "missing daemon client script: ${PYTORCH_DAEMON_CLIENT_SCRIPT}"
-  [[ -f "${PYTORCH_DAEMON_NATIVE_CPP}" ]] || die "missing daemon native source: ${PYTORCH_DAEMON_NATIVE_CPP}"
+  [[ -f "${WORKLOAD_DAEMON_TEMPLATE}" ]] || die "missing daemonset workload template: ${WORKLOAD_DAEMON_TEMPLATE}"
+  [[ -f "${WORKLOAD_DAEMON_SCRIPT}" ]] || die "missing daemon client script: ${WORKLOAD_DAEMON_SCRIPT}"
+  if [[ "${WORKLOAD_RUNTIME}" == "pytorch" ]]; then
+    [[ -f "${PYTORCH_DAEMON_NATIVE_CPP}" ]] || die "missing daemon native source: ${PYTORCH_DAEMON_NATIVE_CPP}"
+  fi
+}
+
+validate_workload_runtime() {
+  case "${WORKLOAD_RUNTIME}" in
+    pytorch|tensorrt)
+      ;;
+    *)
+      die "unsupported WORKLOAD_RUNTIME=${WORKLOAD_RUNTIME} (expected pytorch|tensorrt)"
+      ;;
+  esac
+}
+
+configure_workload_runtime() {
+  case "${WORKLOAD_RUNTIME}" in
+    pytorch)
+      WORKLOAD_IMAGE="${PYTORCH_IMAGE}"
+      WORKLOAD_RUNTIME_IMAGE="${PYTORCH_RUNTIME_IMAGE}"
+      WORKLOAD_DAEMON_TEMPLATE="${PYTORCH_DAEMON_CLIENT_TEMPLATE}"
+      WORKLOAD_DAEMON_SCRIPT="${PYTORCH_DAEMON_CLIENT_SCRIPT}"
+      WORKLOAD_DAEMON_CONFIGMAP="pytorch-daemon-client-script"
+      WORKLOAD_DAEMON_JOB_NAME="oci2gdsd-pytorch-daemon-client"
+      WORKLOAD_DAEMON_CONTAINER_NAME="pytorch-daemon-client"
+      ;;
+    tensorrt)
+      WORKLOAD_IMAGE="${TENSORRTLLM_IMAGE}"
+      WORKLOAD_RUNTIME_IMAGE="${TENSORRTLLM_RUNTIME_IMAGE}"
+      WORKLOAD_DAEMON_TEMPLATE="${TENSORRT_DAEMON_CLIENT_TEMPLATE}"
+      WORKLOAD_DAEMON_SCRIPT="${TENSORRT_DAEMON_CLIENT_SCRIPT}"
+      WORKLOAD_DAEMON_CONFIGMAP="tensorrt-daemon-client-script"
+      WORKLOAD_DAEMON_JOB_NAME="oci2gdsd-tensorrt-daemon-client"
+      WORKLOAD_DAEMON_CONTAINER_NAME="tensorrt-daemon-client"
+      ;;
+  esac
+  export WORKLOAD_IMAGE WORKLOAD_RUNTIME_IMAGE WORKLOAD_DAEMON_TEMPLATE WORKLOAD_DAEMON_SCRIPT \
+    WORKLOAD_DAEMON_CONFIGMAP WORKLOAD_DAEMON_JOB_NAME WORKLOAD_DAEMON_CONTAINER_NAME
 }
 
 kube() {
@@ -385,7 +426,11 @@ fi
 OCI2GDSD_DAEMON_TEMPLATE="${OCI2GDSD_DAEMON_TEMPLATE:-${REPO_ROOT}/examples/daemonset/oci2gdsd-daemonset.yaml.tpl}"
 PYTORCH_DAEMON_CLIENT_TEMPLATE="${PYTORCH_DAEMON_CLIENT_TEMPLATE:-${REPO_ROOT}/examples/daemonset/pytorch-daemon-client-job.yaml.tpl}"
 PYTORCH_DAEMON_CLIENT_SCRIPT="${PYTORCH_DAEMON_CLIENT_SCRIPT:-${REPO_ROOT}/examples/daemonset/pytorch_daemon_client.py}"
+TENSORRT_DAEMON_CLIENT_TEMPLATE="${TENSORRT_DAEMON_CLIENT_TEMPLATE:-${REPO_ROOT}/examples/daemonset/tensorrt-daemon-client-job.yaml.tpl}"
+TENSORRT_DAEMON_CLIENT_SCRIPT="${TENSORRT_DAEMON_CLIENT_SCRIPT:-${REPO_ROOT}/examples/daemonset/tensorrt_daemon_client.py}"
 PYTORCH_DAEMON_NATIVE_CPP="${PYTORCH_DAEMON_NATIVE_CPP:-${REPO_ROOT}/examples/qwen-hello/native/oci2gds_torch_native.cpp}"
+validate_workload_runtime
+configure_workload_runtime
 validate_deploy_assets
 enforce_strict_gds_policy
 
@@ -873,9 +918,11 @@ write_environment_report() {
   {
     echo "# k3s-e2e environment $(date -u +%Y-%m-%dT%H:%M:%SZ)"
     echo "cluster_mode=${CLUSTER_MODE}"
+    echo "workload_runtime=${WORKLOAD_RUNTIME}"
     echo "model_id=${MODEL_ID}"
     echo "model_digest=${MODEL_DIGEST:-}"
-    echo "runtime_image=${PYTORCH_RUNTIME_IMAGE}"
+    echo "runtime_image=${WORKLOAD_RUNTIME_IMAGE}"
+    echo "workload_image=${WORKLOAD_IMAGE}"
     echo "oci2gdsd_image=${OCI2GDSD_IMAGE}"
     echo "strict=${OCI2GDS_STRICT}"
     echo "probe_strict=${OCI2GDS_PROBE_STRICT}"
@@ -895,7 +942,7 @@ write_environment_report() {
     echo "---- node gpu allocatable ----"
     kube get nodes -o custom-columns=NAME:.metadata.name,ALLOC:.status.allocatable.nvidia\\.com/gpu,CAP:.status.capacity.nvidia\\.com/gpu || true
     echo "---- runtime image digest ----"
-    docker image inspect "${PYTORCH_RUNTIME_IMAGE}" --format '{{json .RepoDigests}}' 2>/dev/null || true
+    docker image inspect "${WORKLOAD_RUNTIME_IMAGE}" --format '{{json .RepoDigests}}' 2>/dev/null || true
     echo "---- gdscheck -p ----"
     local gdscheck
     gdscheck="$(gdscheck_binary || true)"
@@ -1078,18 +1125,30 @@ build_and_load_qwen_gds_runtime_image() {
 
 preload_workload_image() {
   if [[ "${PRELOAD_WORKLOAD_IMAGE}" != "true" ]]; then
-    log "skipping pre-load for ${PYTORCH_IMAGE}; cluster will pull image on demand"
+    log "skipping pre-load for ${WORKLOAD_IMAGE}; cluster will pull image on demand"
     return
   fi
   local max_tries=3
-  ensure_image_local_or_pull "${PYTORCH_IMAGE}" "${max_tries}"
-  cluster_load_image "${PYTORCH_IMAGE}"
-  if [[ "${PRELOAD_PYTORCH_RUNTIME_IMAGE}" == "true" ]]; then
-    ensure_image_local_or_pull "${PYTORCH_RUNTIME_IMAGE}" "${max_tries}"
-    cluster_load_image "${PYTORCH_RUNTIME_IMAGE}"
-  else
-    log "skipping pre-load for ${PYTORCH_RUNTIME_IMAGE}; cluster will pull image on demand"
-  fi
+  ensure_image_local_or_pull "${WORKLOAD_IMAGE}" "${max_tries}"
+  cluster_load_image "${WORKLOAD_IMAGE}"
+  case "${WORKLOAD_RUNTIME}" in
+    pytorch)
+      if [[ "${PRELOAD_PYTORCH_RUNTIME_IMAGE}" == "true" ]]; then
+        ensure_image_local_or_pull "${PYTORCH_RUNTIME_IMAGE}" "${max_tries}"
+        cluster_load_image "${PYTORCH_RUNTIME_IMAGE}"
+      else
+        log "skipping pre-load for ${PYTORCH_RUNTIME_IMAGE}; cluster will pull image on demand"
+      fi
+      ;;
+    tensorrt)
+      if [[ "${PRELOAD_TENSORRTLLM_RUNTIME_IMAGE}" == "true" ]]; then
+        ensure_image_local_or_pull "${TENSORRTLLM_RUNTIME_IMAGE}" "${max_tries}"
+        cluster_load_image "${TENSORRTLLM_RUNTIME_IMAGE}"
+      else
+        log "skipping pre-load for ${TENSORRTLLM_RUNTIME_IMAGE}; cluster will pull image on demand"
+      fi
+      ;;
+  esac
 }
 
 cluster_load_image() {

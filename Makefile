@@ -16,6 +16,7 @@ help:
 	@echo "  verify-k3s-qwen-smoke  Fast qwen-hello redeploy/probe loop on k3s"
 	@echo "  verify-k3s-qwen-e2e-inline Full k3s e2e in inline mode"
 	@echo "  verify-k3s-qwen-e2e-daemonset Full k3s e2e in daemonset mode"
+	@echo "  verify-k3s-tensor-e2e-daemonset Full k3s e2e in daemonset mode with TensorRT-LLM workload"
 	@echo "  clean-k3s              Delete k3s e2e local harness artifacts"
 	@echo "  demo-local-registry    Self-contained local demo (no GPU, no k8s)"
 
@@ -92,6 +93,10 @@ verify-k3s-qwen-e2e-inline: prereq-k3s
 .PHONY: verify-k3s-qwen-e2e-daemonset
 verify-k3s-qwen-e2e-daemonset: prereq-k3s
 	E2E_DEPLOY_MODE=daemonset-manifest ./testharness/k3s-e2e/scripts/run.sh
+
+.PHONY: verify-k3s-tensor-e2e-daemonset
+verify-k3s-tensor-e2e-daemonset: prereq-k3s
+	E2E_DEPLOY_MODE=daemonset-manifest WORKLOAD_RUNTIME=tensorrt ./testharness/k3s-e2e/scripts/run.sh
 
 .PHONY: clean-k3s
 clean-k3s:

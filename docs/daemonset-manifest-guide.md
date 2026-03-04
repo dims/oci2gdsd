@@ -8,6 +8,8 @@ as a node-level daemon and validating GPU load/export lifecycle from a workload 
 - `examples/daemonset/oci2gdsd-daemonset.yaml.tpl`
 - `examples/daemonset/pytorch-daemon-client-job.yaml.tpl`
 - `examples/daemonset/pytorch_daemon_client.py`
+- `examples/daemonset/tensorrt-daemon-client-job.yaml.tpl`
+- `examples/daemonset/tensorrt_daemon_client.py`
 
 ## What this mode does
 
@@ -25,10 +27,24 @@ as a node-level daemon and validating GPU load/export lifecycle from a workload 
    - `POST /v1/gpu/unload`
 5. Rebinds model parameter storage to daemon-exported CUDA IPC tensor views before generation.
 
+For TensorRT-LLM daemon-client mode, the workload:
+
+- Builds a TensorRT engine from the ensured local model files.
+- Runs `ModelRunnerCpp.from_dir(..., use_gpu_direct_storage=True)`.
+- Verifies daemon `gpu/load` + `gpu/status` + `gpu/unload` lifecycle.
+- Mounts host `/run/udev` and `/etc/cufile.json` so cuFile device registration
+  can succeed for strict direct-GDS engine loading.
+
 ## Harness entrypoint (recommended)
 
 ```bash
 make verify-k3s-qwen-e2e-daemonset
+```
+
+TensorRT-LLM daemon-client run:
+
+```bash
+make verify-k3s-tensor-e2e-daemonset
 ```
 
 Equivalent explicit mode toggle:
@@ -43,6 +59,7 @@ E2E_DEPLOY_MODE=daemonset-manifest make verify-k3s-qwen-e2e-inline
 - `OCI2GDSD_SOCKET_HOST_PATH` (default `/var/run/oci2gdsd`)
 - `OCI2GDSD_ROOT_PATH` (default `/mnt/nvme/oci2gdsd` in host-direct profile)
 - `REQUIRE_DIRECT_GDS` (default `true`)
+- `WORKLOAD_RUNTIME` (`pytorch` or `tensorrt`, default `pytorch`)
 
 ## Success markers
 
@@ -57,5 +74,15 @@ The daemon-client workload log (`testharness/k3s-e2e/work/results/pytorch-daemon
 - `DAEMON_GPU_DETACH_OK`
 - `DAEMON_GPU_UNLOAD_OK`
 - `PYTORCH_DAEMON_CLIENT_SUCCESS`
+
+TensorRT daemon-client log (`testharness/k3s-e2e/work/results/tensorrt-daemon-client.log`) must include:
+
+- `DAEMON_GPU_LOAD_READY`
+- `DAEMON_GPU_STATUS_OK`
+- `TENSORRT_ENGINE_BUILD_OK`
+- `TENSORRT_GDS_RUNNER_READY`
+- `TENSORRT_QWEN_INFER_OK`
+- `DAEMON_GPU_UNLOAD_OK`
+- `TENSORRT_DAEMON_CLIENT_SUCCESS`
 
 The harness also checks preload readiness (`"status": "READY"`) and runs release/gc validation.

@@ -177,6 +177,9 @@ make verify-k3s-qwen-e2e-inline
 # Full e2e with raw daemonset manifests (node-level oci2gdsd serve)
 make verify-k3s-qwen-e2e-daemonset
 
+# Full e2e with raw daemonset manifests + TensorRT-LLM daemon client
+make verify-k3s-tensor-e2e-daemonset
+
 # Fast iteration after first run (reuse existing cluster and model artifact)
 make verify-k3s-qwen-smoke
 ```

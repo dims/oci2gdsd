@@ -64,30 +64,54 @@ deploy_inline_workload_job() {
 
 deploy_daemonset_workload_job() {
   apply_daemonset_stack
-  apply_configmap_from_files "${E2E_NAMESPACE}" "pytorch-daemon-client-script" \
-    --from-file=pytorch_daemon_client.py="${PYTORCH_DAEMON_CLIENT_SCRIPT}" \
-    --from-file=oci2gds_torch_native.cpp="${PYTORCH_DAEMON_NATIVE_CPP}"
-
-  render_template "${PYTORCH_DAEMON_CLIENT_TEMPLATE}" "${WORK_DIR}/rendered/pytorch-daemon-client-job.yaml" \
-    "E2E_NAMESPACE=${E2E_NAMESPACE}" \
-    "OCI2GDSD_IMAGE=${OCI2GDSD_CLI_IMAGE}" \
-    "PYTORCH_IMAGE=${PYTORCH_IMAGE}" \
-    "MODEL_REF=${MODEL_REF}" \
-    "MODEL_ID=${MODEL_ID}" \
-    "MODEL_DIGEST=${MODEL_DIGEST}" \
-    "MODEL_ROOT_PATH=${MODEL_ROOT_PATH}" \
-    "LEASE_HOLDER=${LEASE_HOLDER}" \
-    "OCI2GDSD_ROOT_PATH=${OCI2GDSD_ROOT_PATH}" \
-    "OCI2GDSD_SOCKET_HOST_PATH=${OCI2GDSD_SOCKET_HOST_PATH}" \
-    "REQUIRE_DIRECT_GDS=${REQUIRE_DIRECT_GDS}" \
-    "OCI2GDS_STRICT=${OCI2GDS_STRICT}"
-
-  kube -n "${E2E_NAMESPACE}" delete job/oci2gdsd-pytorch-daemon-client --ignore-not-found >/dev/null
-  kube apply -f "${WORK_DIR}/rendered/pytorch-daemon-client-job.yaml"
-
-  WORKLOAD_JOB_NAME="oci2gdsd-pytorch-daemon-client"
-  WORKLOAD_CONTAINER_NAME="pytorch-daemon-client"
-  WORKLOAD_RESULT_LOG="${WORK_DIR}/results/pytorch-daemon-client.log"
+  case "${WORKLOAD_RUNTIME}" in
+    pytorch)
+      apply_configmap_from_files "${E2E_NAMESPACE}" "${WORKLOAD_DAEMON_CONFIGMAP}" \
+        --from-file=pytorch_daemon_client.py="${PYTORCH_DAEMON_CLIENT_SCRIPT}" \
+        --from-file=oci2gds_torch_native.cpp="${PYTORCH_DAEMON_NATIVE_CPP}"
+      render_template "${WORKLOAD_DAEMON_TEMPLATE}" "${WORK_DIR}/rendered/pytorch-daemon-client-job.yaml" \
+        "E2E_NAMESPACE=${E2E_NAMESPACE}" \
+        "OCI2GDSD_IMAGE=${OCI2GDSD_CLI_IMAGE}" \
+        "PYTORCH_IMAGE=${PYTORCH_IMAGE}" \
+        "MODEL_REF=${MODEL_REF}" \
+        "MODEL_ID=${MODEL_ID}" \
+        "MODEL_DIGEST=${MODEL_DIGEST}" \
+        "MODEL_ROOT_PATH=${MODEL_ROOT_PATH}" \
+        "LEASE_HOLDER=${LEASE_HOLDER}" \
+        "OCI2GDSD_ROOT_PATH=${OCI2GDSD_ROOT_PATH}" \
+        "OCI2GDSD_SOCKET_HOST_PATH=${OCI2GDSD_SOCKET_HOST_PATH}" \
+        "REQUIRE_DIRECT_GDS=${REQUIRE_DIRECT_GDS}" \
+        "OCI2GDS_STRICT=${OCI2GDS_STRICT}"
+      kube -n "${E2E_NAMESPACE}" delete "job/${WORKLOAD_DAEMON_JOB_NAME}" --ignore-not-found >/dev/null
+      kube apply -f "${WORK_DIR}/rendered/pytorch-daemon-client-job.yaml"
+      WORKLOAD_RESULT_LOG="${WORK_DIR}/results/pytorch-daemon-client.log"
+      ;;
+    tensorrt)
+      apply_configmap_from_files "${E2E_NAMESPACE}" "${WORKLOAD_DAEMON_CONFIGMAP}" \
+        --from-file=tensorrt_daemon_client.py="${TENSORRT_DAEMON_CLIENT_SCRIPT}"
+      render_template "${WORKLOAD_DAEMON_TEMPLATE}" "${WORK_DIR}/rendered/tensorrt-daemon-client-job.yaml" \
+        "E2E_NAMESPACE=${E2E_NAMESPACE}" \
+        "OCI2GDSD_IMAGE=${OCI2GDSD_CLI_IMAGE}" \
+        "TENSORRTLLM_IMAGE=${TENSORRTLLM_IMAGE}" \
+        "MODEL_REF=${MODEL_REF}" \
+        "MODEL_ID=${MODEL_ID}" \
+        "MODEL_DIGEST=${MODEL_DIGEST}" \
+        "MODEL_ROOT_PATH=${MODEL_ROOT_PATH}" \
+        "LEASE_HOLDER=${LEASE_HOLDER}" \
+        "OCI2GDSD_ROOT_PATH=${OCI2GDSD_ROOT_PATH}" \
+        "OCI2GDSD_SOCKET_HOST_PATH=${OCI2GDSD_SOCKET_HOST_PATH}" \
+        "REQUIRE_DIRECT_GDS=${REQUIRE_DIRECT_GDS}" \
+        "OCI2GDS_STRICT=${OCI2GDS_STRICT}"
+      kube -n "${E2E_NAMESPACE}" delete "job/${WORKLOAD_DAEMON_JOB_NAME}" --ignore-not-found >/dev/null
+      kube apply -f "${WORK_DIR}/rendered/tensorrt-daemon-client-job.yaml"
+      WORKLOAD_RESULT_LOG="${WORK_DIR}/results/tensorrt-daemon-client.log"
+      ;;
+    *)
+      die "unsupported WORKLOAD_RUNTIME=${WORKLOAD_RUNTIME}"
+      ;;
+  esac
+  WORKLOAD_JOB_NAME="${WORKLOAD_DAEMON_JOB_NAME}"
+  WORKLOAD_CONTAINER_NAME="${WORKLOAD_DAEMON_CONTAINER_NAME}"
 }
 
 wait_for_workload_and_collect() {
@@ -123,16 +147,37 @@ wait_for_workload_and_collect() {
   fi
 
   local marker
-  for marker in \
-    "DAEMON_GPU_LOAD_READY" \
-    "DAEMON_GPU_EXPORT_OK" \
-    "DAEMON_GPU_ATTACH_OK" \
-    "DAEMON_GPU_HEARTBEAT_OK" \
-    "DAEMON_GPU_STATUS_OK" \
-    "DAEMON_QWEN_IPC_BIND_OK" \
-    "DAEMON_GPU_DETACH_OK" \
-    "DAEMON_GPU_UNLOAD_OK" \
-    "PYTORCH_DAEMON_CLIENT_SUCCESS"; do
+  local -a required_markers=()
+  case "${WORKLOAD_RUNTIME}" in
+    pytorch)
+      required_markers=(
+        "DAEMON_GPU_LOAD_READY"
+        "DAEMON_GPU_EXPORT_OK"
+        "DAEMON_GPU_ATTACH_OK"
+        "DAEMON_GPU_HEARTBEAT_OK"
+        "DAEMON_GPU_STATUS_OK"
+        "DAEMON_QWEN_IPC_BIND_OK"
+        "DAEMON_GPU_DETACH_OK"
+        "DAEMON_GPU_UNLOAD_OK"
+        "PYTORCH_DAEMON_CLIENT_SUCCESS"
+      )
+      ;;
+    tensorrt)
+      required_markers=(
+        "DAEMON_GPU_LOAD_READY"
+        "DAEMON_GPU_STATUS_OK"
+        "TENSORRT_ENGINE_BUILD_OK"
+        "TENSORRT_GDS_RUNNER_READY"
+        "TENSORRT_QWEN_INFER_OK"
+        "DAEMON_GPU_UNLOAD_OK"
+        "TENSORRT_DAEMON_CLIENT_SUCCESS"
+      )
+      ;;
+    *)
+      die "unsupported WORKLOAD_RUNTIME=${WORKLOAD_RUNTIME}"
+      ;;
+  esac
+  for marker in "${required_markers[@]}"; do
     if ! grep -q "${marker}" "${WORKLOAD_RESULT_LOG}"; then
       die "daemon-client workload log is missing marker: ${marker}"
     fi
