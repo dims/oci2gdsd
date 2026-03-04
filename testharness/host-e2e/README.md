@@ -3,6 +3,9 @@
 This harness runs a host-only strict direct-GDS probe for a preloaded Qwen model.
 It does not require Kubernetes.
 
+For a fresh A100, run `make nvkind-e2e-qwen-quick` first so the model is preloaded to
+`OCI2GDSD_ROOT_PATH`, then run this host probe target.
+
 ## Run
 
 From repo root:
@@ -28,6 +31,7 @@ Defaults:
 - `REQUIRE_NVFS_STATS_DELTA=false` (default relaxed because some direct-path environments still report zero `Ops` counters)
 - `MIN_FREE_GB_DOCKER=80` (fails fast when Docker data-root free space is below 80 GiB)
 - `MIN_FREE_GB_MODEL_ROOT=20` (fails fast when `OCI2GDSD_ROOT_PATH` free space is below 20 GiB)
+- `AUTO_CONFIGURE_STORAGE=true` (auto-migrates Docker `data-root` to `/mnt/nvme/docker` when root disk is too small and `/mnt/nvme` has capacity)
 
 Assumptions:
 

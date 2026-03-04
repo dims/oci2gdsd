@@ -38,7 +38,24 @@ If any gate fails, prereq aborts with remediation steps (attach/mount larger dis
 
 ## Quick iteration loop
 
-After one full `make nvkind-e2e` run has already created the cluster and packaged/pushed the model, use:
+Fresh A100 minimum path (intern-friendly):
+
+```bash
+make nvkind-e2e-qwen-quick
+make host-e2e-qwen-quick
+```
+
+`make nvkind-e2e-qwen-quick` now auto-handles the common first-run setup:
+
+- checks/installs prerequisites
+- auto-configures storage to `/mnt/nvme` when root disk is too small (unless `AUTO_CONFIGURE_STORAGE=false`)
+- builds and loads `oci2gdsd` image into cluster (unless `AUTO_BUILD_OCI2GDSD_IMAGE=false`)
+- installs GPU Operator if `nvidia.com/gpu` is not allocatable (unless `AUTO_INSTALL_GPU_OPERATOR=false`)
+- auto-seeds model identity + in-cluster registry packaging if missing (unless `AUTO_SEED_MODEL_IDENTITY=false`)
+
+After that, `make host-e2e-qwen-quick` validates host direct-GDS with the model now present under `OCI2GDSD_ROOT_PATH`.
+
+If you prefer explicit staged runs:
 
 ```bash
 make nvkind-e2e-prereq
@@ -70,6 +87,7 @@ make nvkind-e2e-qwen-quick
 ## Model Identity For Quick Runs
 
 `make nvkind-e2e-qwen-quick` needs a model digest and in-cluster OCI ref.
+By default, missing identity is auto-seeded (`AUTO_SEED_MODEL_IDENTITY=true`).
 There are three supported ways to provide this:
 
 1. Run `make nvkind-e2e` once on the same host.
@@ -191,6 +209,9 @@ MIN_FREE_GB_DOCKER=150 MIN_FREE_GB_K3S=80 MIN_FREE_GB_OCI2GDS_ROOT=40 make nvkin
 
 # Override detected k3s data-dir explicitly (optional)
 K3S_DATA_DIR=/mnt/nvme/k3s make nvkind-e2e-prereq
+
+# Disable automatic storage/runtime/model bootstrap helpers (debug only)
+AUTO_CONFIGURE_STORAGE=false AUTO_INSTALL_GPU_OPERATOR=false AUTO_SEED_MODEL_IDENTITY=false make nvkind-e2e-qwen-quick
 ```
 
 ## Cleanup

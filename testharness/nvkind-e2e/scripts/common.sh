@@ -38,12 +38,15 @@ MIN_FREE_GB_DOCKER="${MIN_FREE_GB_DOCKER:-100}"
 MIN_FREE_GB_K3S="${MIN_FREE_GB_K3S:-50}"
 MIN_FREE_GB_OCI2GDS_ROOT="${MIN_FREE_GB_OCI2GDS_ROOT:-20}"
 K3S_DATA_DIR="${K3S_DATA_DIR:-}"
+AUTO_CONFIGURE_STORAGE="${AUTO_CONFIGURE_STORAGE:-true}"
+AUTO_INSTALL_GPU_OPERATOR="${AUTO_INSTALL_GPU_OPERATOR:-true}"
 
 OCI2GDSD_IMAGE="${OCI2GDSD_IMAGE:-oci2gdsd:e2e}"
 OCI2GDSD_ENABLE_GDS_IMAGE="${OCI2GDSD_ENABLE_GDS_IMAGE:-false}"
 OCI2GDSD_DOCKERFILE="${OCI2GDSD_DOCKERFILE:-}"
 SKIP_OCI2GDSD_IMAGE_BUILD="${SKIP_OCI2GDSD_IMAGE_BUILD:-false}"
 SKIP_OCI2GDSD_IMAGE_LOAD="${SKIP_OCI2GDSD_IMAGE_LOAD:-false}"
+FORCE_OCI2GDSD_IMAGE_REBUILD="${FORCE_OCI2GDSD_IMAGE_REBUILD:-false}"
 PACKAGER_IMAGE="${PACKAGER_IMAGE:-oci2gdsd-qwen3-packager:local}"
 VLLM_RUNTIME_IMAGE="${VLLM_RUNTIME_IMAGE:-nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1}"
 PYTORCH_RUNTIME_IMAGE="${PYTORCH_RUNTIME_IMAGE:-nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1}"
@@ -108,6 +111,13 @@ maybe_sudo() {
   fi
 }
 
+is_true() {
+  case "${1,,}" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 is_uint() {
   [[ "${1}" =~ ^[0-9]+$ ]]
 }
@@ -137,6 +147,90 @@ path_mountpoint() {
   local existing
   existing="$(nearest_existing_path "${p}")"
   df -Pk "${existing}" | awk 'NR==2 {print $6}'
+}
+
+k3s_data_dir() {
+  local dir="/var/lib/rancher/k3s"
+  if [[ -n "${K3S_DATA_DIR}" ]]; then
+    dir="${K3S_DATA_DIR}"
+  elif [[ -r /etc/rancher/k3s/config.yaml ]]; then
+    local cfg_dir
+    cfg_dir="$(awk -F':' '/^[[:space:]]*data-dir[[:space:]]*:/ {sub(/^[[:space:]]+/, "", $2); sub(/[[:space:]]+$/, "", $2); gsub(/"/, "", $2); print $2; exit}' /etc/rancher/k3s/config.yaml)"
+    if [[ -n "${cfg_dir}" ]]; then
+      dir="${cfg_dir}"
+    fi
+  fi
+  echo "${dir}"
+}
+
+configure_docker_data_root() {
+  local target="${1:-/mnt/nvme/docker}"
+  log "auto-configuring docker data-root=${target}"
+  maybe_sudo mkdir -p "${target}"
+  local tmp
+  tmp="$(mktemp)"
+  if maybe_sudo test -f /etc/docker/daemon.json; then
+    maybe_sudo cat /etc/docker/daemon.json | jq \
+      --arg root "${target}" \
+      '. + {"data-root":$root,"default-runtime":"nvidia","features":((.features // {}) + {"cdi":true}),"runtimes":((.runtimes // {}) + {"nvidia":{"path":"nvidia-container-runtime","args":[]}})}' \
+      > "${tmp}"
+  else
+    cat > "${tmp}" <<EOF
+{
+  "data-root": "${target}",
+  "default-runtime": "nvidia",
+  "features": { "cdi": true },
+  "runtimes": { "nvidia": { "path": "nvidia-container-runtime", "args": [] } }
+}
+EOF
+  fi
+  maybe_sudo mv "${tmp}" /etc/docker/daemon.json
+  maybe_sudo systemctl restart docker
+}
+
+configure_k3s_data_dir() {
+  local target="${1:-/mnt/nvme/k3s}"
+  log "auto-configuring k3s data-dir=${target}"
+  maybe_sudo mkdir -p "${target}" /etc/rancher/k3s
+  local cfg="/etc/rancher/k3s/config.yaml"
+  if maybe_sudo test -f "${cfg}" && maybe_sudo grep -q '^[[:space:]]*data-dir[[:space:]]*:' "${cfg}"; then
+    maybe_sudo gsed -i "s|^[[:space:]]*data-dir[[:space:]]*:.*$|data-dir: ${target}|" "${cfg}"
+  else
+    echo "data-dir: ${target}" | maybe_sudo tee -a "${cfg}" >/dev/null
+  fi
+  maybe_sudo systemctl restart k3s
+}
+
+maybe_auto_configure_storage() {
+  if ! is_true "${AUTO_CONFIGURE_STORAGE}"; then
+    return 0
+  fi
+  if [[ ! -d /mnt/nvme ]]; then
+    return 0
+  fi
+
+  local docker_root
+  docker_root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)"
+  if [[ -n "${docker_root}" ]]; then
+    local docker_need docker_avail nvme_avail
+    docker_need=$((MIN_FREE_GB_DOCKER * 1024 * 1024))
+    docker_avail="$(path_available_kb "${docker_root}")"
+    nvme_avail="$(path_available_kb "/mnt/nvme")"
+    if (( docker_avail < docker_need )) && [[ "${docker_root}" != /mnt/nvme/* ]] && (( nvme_avail >= docker_need )); then
+      configure_docker_data_root "/mnt/nvme/docker"
+    fi
+  fi
+
+  if [[ "${CLUSTER_MODE}" == "k3s" ]]; then
+    local k3s_dir k3s_need k3s_avail nvme_avail
+    k3s_dir="$(k3s_data_dir)"
+    k3s_need=$((MIN_FREE_GB_K3S * 1024 * 1024))
+    k3s_avail="$(path_available_kb "${k3s_dir}")"
+    nvme_avail="$(path_available_kb "/mnt/nvme")"
+    if (( k3s_avail < k3s_need )) && [[ "${k3s_dir}" != /mnt/nvme/* ]] && (( nvme_avail >= k3s_need )); then
+      configure_k3s_data_dir "/mnt/nvme/k3s"
+    fi
+  fi
 }
 
 emit_storage_remediation() {
@@ -180,6 +274,8 @@ check_path_free_gb() {
 }
 
 check_storage_prereqs() {
+  maybe_auto_configure_storage
+
   mkdir -p "${WORK_DIR}/results"
   local report="${WORK_DIR}/results/storage-prereq.txt"
   {
@@ -195,16 +291,8 @@ check_storage_prereqs() {
   check_path_free_gb "oci2gdsd root path" "${OCI2GDSD_ROOT_PATH}" "${MIN_FREE_GB_OCI2GDS_ROOT}"
 
   if [[ "${CLUSTER_MODE}" == "k3s" ]]; then
-    local k3s_dir="/var/lib/rancher/k3s"
-    if [[ -n "${K3S_DATA_DIR}" ]]; then
-      k3s_dir="${K3S_DATA_DIR}"
-    elif [[ -r /etc/rancher/k3s/config.yaml ]]; then
-      local cfg_dir
-      cfg_dir="$(awk -F':' '/^[[:space:]]*data-dir[[:space:]]*:/ {sub(/^[[:space:]]+/, "", $2); sub(/[[:space:]]+$/, "", $2); gsub(/"/, "", $2); print $2; exit}' /etc/rancher/k3s/config.yaml)"
-      if [[ -n "${cfg_dir}" ]]; then
-        k3s_dir="${cfg_dir}"
-      fi
-    fi
+    local k3s_dir
+    k3s_dir="$(k3s_data_dir)"
     check_path_free_gb "k3s data root" "${k3s_dir}" "${MIN_FREE_GB_K3S}"
   fi
 }
@@ -245,6 +333,18 @@ kube() {
     fi
   else
     kubectl --context "${KUBECTL_CONTEXT}" "$@"
+  fi
+}
+
+helm_kube() {
+  if [[ "${CLUSTER_MODE}" == "k3s" ]]; then
+    if [[ "${K3S_USE_SUDO}" == "true" && "$(id -u)" -ne 0 ]]; then
+      sudo helm --kubeconfig /etc/rancher/k3s/k3s.yaml "$@"
+    else
+      helm --kubeconfig /etc/rancher/k3s/k3s.yaml "$@"
+    fi
+  else
+    helm --kube-context "${KUBECTL_CONTEXT}" "$@"
   fi
 }
 
@@ -580,10 +680,9 @@ create_nvkind_cluster() {
 
 install_gpu_operator() {
   log "installing GPU Operator (helm)"
-  helm repo add nvidia https://helm.ngc.nvidia.com/nvidia >/dev/null 2>&1 || true
-  helm repo update >/dev/null
-  helm upgrade -i \
-    --kube-context="${KUBECTL_CONTEXT}" \
+  helm_kube repo add nvidia https://helm.ngc.nvidia.com/nvidia >/dev/null 2>&1 || true
+  helm_kube repo update >/dev/null
+  helm_kube upgrade -i \
     --namespace gpu-operator \
     --create-namespace \
     --set driver.enabled=false \
@@ -592,14 +691,13 @@ install_gpu_operator() {
     --set nfd.enabled=true \
     --wait --timeout=600s \
     gpu-operator nvidia/gpu-operator
-  kubectl --context "${KUBECTL_CONTEXT}" -n gpu-operator \
-    rollout status daemonset -l app=nvidia-device-plugin-daemonset --timeout=300s || true
-  kubectl --context "${KUBECTL_CONTEXT}" -n gpu-operator get pods
+  kube -n gpu-operator rollout status daemonset -l app=nvidia-device-plugin-daemonset --timeout=300s || true
+  kube -n gpu-operator get pods || true
 }
 
 verify_gpu_pod() {
   log "verifying GPU in a pod"
-  cat <<EOF | kubectl --context "${KUBECTL_CONTEXT}" apply -f -
+  cat <<EOF | kube apply -f -
 apiVersion: v1
 kind: Pod
 metadata:
@@ -619,9 +717,37 @@ spec:
       limits:
         nvidia.com/gpu: 1
 EOF
-  kubectl --context "${KUBECTL_CONTEXT}" -n kube-system wait pod/gpu-smoke --for=jsonpath='{.status.phase}'=Succeeded --timeout=180s
-  kubectl --context "${KUBECTL_CONTEXT}" -n kube-system logs pod/gpu-smoke
-  kubectl --context "${KUBECTL_CONTEXT}" -n kube-system delete pod/gpu-smoke --ignore-not-found >/dev/null
+  kube -n kube-system wait pod/gpu-smoke --for=jsonpath='{.status.phase}'=Succeeded --timeout=180s
+  kube -n kube-system logs pod/gpu-smoke
+  kube -n kube-system delete pod/gpu-smoke --ignore-not-found >/dev/null
+}
+
+node_has_allocatable_gpu() {
+  local values
+  values="$(kube get nodes -o jsonpath='{range .items[*]}{.status.allocatable.nvidia\.com/gpu}{"\n"}{end}' 2>/dev/null || true)"
+  printf '%s\n' "${values}" | grep -Eq '^[1-9][0-9]*$'
+}
+
+ensure_gpu_capacity() {
+  if node_has_allocatable_gpu; then
+    return 0
+  fi
+  if ! is_true "${AUTO_INSTALL_GPU_OPERATOR}"; then
+    die "nvidia.com/gpu is not allocatable and AUTO_INSTALL_GPU_OPERATOR=false"
+  fi
+  log "nvidia.com/gpu allocatable is missing; installing GPU Operator"
+  install_gpu_operator
+  local tries=0
+  local max_tries=30
+  until node_has_allocatable_gpu; do
+    tries=$((tries + 1))
+    if [[ "${tries}" -ge "${max_tries}" ]]; then
+      kube get nodes -o wide || true
+      kube -n gpu-operator get pods -o wide || true
+      die "GPU allocatable did not appear after GPU Operator install"
+    fi
+    sleep 4
+  done
 }
 
 validate_local_gds_loader() {
@@ -700,15 +826,19 @@ build_and_load_oci2gdsd_image() {
   fi
   if [[ "${SKIP_OCI2GDSD_IMAGE_BUILD}" != "true" ]]; then
     [[ -f "${dockerfile}" ]] || die "oci2gdsd dockerfile not found: ${dockerfile}"
-    log "building oci2gdsd image ${OCI2GDSD_IMAGE} using ${dockerfile}"
-    docker build -f "${dockerfile}" -t "${OCI2GDSD_IMAGE}" "${REPO_ROOT}"
+    if docker image inspect "${OCI2GDSD_IMAGE}" >/dev/null 2>&1 && ! is_true "${FORCE_OCI2GDSD_IMAGE_REBUILD}"; then
+      log "reusing existing oci2gdsd image ${OCI2GDSD_IMAGE}"
+    else
+      log "building oci2gdsd image ${OCI2GDSD_IMAGE} using ${dockerfile}"
+      docker build -f "${dockerfile}" -t "${OCI2GDSD_IMAGE}" "${REPO_ROOT}"
+    fi
   else
     log "skipping oci2gdsd image build for ${OCI2GDSD_IMAGE}"
   fi
   if [[ "${SKIP_OCI2GDSD_IMAGE_LOAD}" != "true" ]]; then
     kind_load_image "${OCI2GDSD_IMAGE}"
   else
-    log "skipping kind image load for ${OCI2GDSD_IMAGE}"
+    log "skipping cluster image load for ${OCI2GDSD_IMAGE}"
   fi
 }
 
@@ -761,6 +891,14 @@ preload_workload_image() {
 
 kind_load_image() {
   local image="$1"
+  if [[ "${CLUSTER_MODE}" == "k3s" ]]; then
+    log "importing image into k3s containerd: ${image}"
+    docker save "${image}" | maybe_sudo k3s ctr -n k8s.io images import -
+    if [[ "${image}" != */* ]]; then
+      maybe_sudo k3s ctr -n k8s.io images tag "${image}" "docker.io/library/${image}" || true
+    fi
+    return
+  fi
   if kind load docker-image "${image}" --name "${CLUSTER_NAME}"; then
     return
   fi
@@ -795,8 +933,8 @@ apply_registry() {
   render_template "${HARNESS_DIR}/manifests/registry.yaml.tpl" "${rendered}" \
     "REGISTRY_NAMESPACE=${REGISTRY_NAMESPACE}" \
     "REGISTRY_SERVICE=${REGISTRY_SERVICE}"
-  kubectl --context "${KUBECTL_CONTEXT}" apply -f "${rendered}"
-  kubectl --context "${KUBECTL_CONTEXT}" -n "${REGISTRY_NAMESPACE}" rollout status deploy/"${REGISTRY_SERVICE}" --timeout=180s
+  kube apply -f "${rendered}"
+  kube -n "${REGISTRY_NAMESPACE}" rollout status deploy/"${REGISTRY_SERVICE}" --timeout=180s
 }
 
 start_registry_port_forward() {
@@ -809,7 +947,7 @@ start_registry_port_forward() {
     rm -f "${PF_PID_FILE}"
   fi
 
-  kubectl --context "${KUBECTL_CONTEXT}" -n "${REGISTRY_NAMESPACE}" \
+  kube -n "${REGISTRY_NAMESPACE}" \
     port-forward svc/"${REGISTRY_SERVICE}" "${LOCAL_REGISTRY_PORT}:5000" \
     > "${LOG_DIR}/registry-port-forward.log" 2>&1 &
   echo $! > "${PF_PID_FILE}"

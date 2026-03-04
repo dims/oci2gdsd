@@ -5,6 +5,26 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./common.sh
 source "${SCRIPT_DIR}/common.sh"
 
+AUTO_SEED_MODEL_IDENTITY="${AUTO_SEED_MODEL_IDENTITY:-true}"
+AUTO_BUILD_OCI2GDSD_IMAGE="${AUTO_BUILD_OCI2GDSD_IMAGE:-true}"
+
+seed_model_identity_if_needed() {
+  if [[ -n "${MODEL_REF_OVERRIDE}" && -n "${MODEL_DIGEST_OVERRIDE}" ]]; then
+    return 0
+  fi
+  if [[ -f "${WORK_DIR}/packager/output/manifest-descriptor.json" ]]; then
+    return 0
+  fi
+  if ! is_true "${AUTO_SEED_MODEL_IDENTITY}"; then
+    return 0
+  fi
+  log "model identity is missing; auto-seeding packager output and in-cluster registry"
+  build_packager_image
+  apply_registry
+  start_registry_port_forward
+  package_model_to_registry
+}
+
 resolve_model_identity() {
   if [[ -n "${MODEL_REF_OVERRIDE}" && -n "${MODEL_DIGEST_OVERRIDE}" ]]; then
     MODEL_REF="${MODEL_REF_OVERRIDE}"
@@ -25,6 +45,7 @@ Example:
 }
 
 log "starting qwen-hello quick iterate run"
+trap 'stop_registry_port_forward' EXIT
 if [[ "${CLUSTER_MODE}" == "k3s" ]]; then
   ensure_cmd k3s
 else
@@ -42,6 +63,11 @@ if ! kube get nodes >/dev/null 2>&1; then
   die "cluster ${CLUSTER_MODE} is not reachable ($(cluster_hint)); run setup first"
 fi
 
+ensure_gpu_capacity
+if is_true "${AUTO_BUILD_OCI2GDSD_IMAGE}"; then
+  build_and_load_oci2gdsd_image
+fi
+seed_model_identity_if_needed
 resolve_model_identity
 log "model_ref=${MODEL_REF}"
 log "model_digest=${MODEL_DIGEST}"

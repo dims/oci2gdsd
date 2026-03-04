@@ -14,6 +14,7 @@ INSTALL_MISSING_PREREQS="${INSTALL_MISSING_PREREQS:-true}"
 OCI2GDSD_ROOT_PATH="${OCI2GDSD_ROOT_PATH:-/mnt/nvme/oci2gdsd}"
 MIN_FREE_GB_DOCKER="${MIN_FREE_GB_DOCKER:-80}"
 MIN_FREE_GB_MODEL_ROOT="${MIN_FREE_GB_MODEL_ROOT:-20}"
+AUTO_CONFIGURE_STORAGE="${AUTO_CONFIGURE_STORAGE:-true}"
 
 APT_UPDATED=0
 
@@ -80,6 +81,50 @@ path_mountpoint() {
   df -Pk "${existing}" | awk 'NR==2 {print $6}'
 }
 
+configure_docker_data_root() {
+  local target="${1:-/mnt/nvme/docker}"
+  log "auto-configuring docker data-root=${target}"
+  maybe_sudo mkdir -p "${target}"
+  local tmp
+  tmp="$(mktemp)"
+  if maybe_sudo test -f /etc/docker/daemon.json; then
+    maybe_sudo cat /etc/docker/daemon.json | jq \
+      --arg root "${target}" \
+      '. + {"data-root":$root,"default-runtime":"nvidia","features":((.features // {}) + {"cdi":true}),"runtimes":((.runtimes // {}) + {"nvidia":{"path":"nvidia-container-runtime","args":[]}})}' \
+      > "${tmp}"
+  else
+    cat > "${tmp}" <<EOF
+{
+  "data-root": "${target}",
+  "default-runtime": "nvidia",
+  "features": { "cdi": true },
+  "runtimes": { "nvidia": { "path": "nvidia-container-runtime", "args": [] } }
+}
+EOF
+  fi
+  maybe_sudo mv "${tmp}" /etc/docker/daemon.json
+  maybe_sudo systemctl restart docker
+}
+
+maybe_auto_configure_storage() {
+  if ! is_true "${AUTO_CONFIGURE_STORAGE}"; then
+    return 0
+  fi
+  if [[ ! -d /mnt/nvme ]]; then
+    return 0
+  fi
+
+  local docker_root docker_need docker_avail nvme_avail
+  docker_root="$(maybe_sudo docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)"
+  [[ -n "${docker_root}" ]] || return 0
+  docker_need=$((MIN_FREE_GB_DOCKER * 1024 * 1024))
+  docker_avail="$(path_available_kb "${docker_root}")"
+  nvme_avail="$(path_available_kb "/mnt/nvme")"
+  if (( docker_avail < docker_need )) && [[ "${docker_root}" != /mnt/nvme/* ]] && (( nvme_avail >= docker_need )); then
+    configure_docker_data_root "/mnt/nvme/docker"
+  fi
+}
+
 emit_storage_remediation() {
   cat >&2 <<'EOF'
 Storage remediation options:
@@ -122,6 +167,8 @@ check_path_free_gb() {
 }
 
 check_storage_prereqs() {
+  maybe_auto_configure_storage
+
   local docker_root
   docker_root="$(maybe_sudo docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)"
   [[ -n "${docker_root}" ]] || die "failed to detect DockerRootDir from docker info"
