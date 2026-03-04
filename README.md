@@ -20,7 +20,9 @@ garbage collection so your serving code doesn't have to.
 
 | Requirement | Version | Notes |
 |-------------|---------|-------|
-| Go | 1.23+ | For building from source |
+| Go | 1.23+ | Required for `make test`, local source builds, and `make local-e2e` when binary is not prebuilt |
+| `make` | any recent | Used by all top-level test/e2e targets |
+| C/C++ toolchain (`c++`, headers) | any recent | Needed for native probe/extension builds in qwen host/k3s e2e paths |
 | Docker or Podman | any recent | For local registry and packaging workflows |
 | `oras` CLI | v1.2+ | For pushing OCI artifacts; see [oras.land](https://oras.land) |
 | Linux host with A100 + NVMe | — | **Only for GPU/GDS workflows** (see [GPU section](#gpu--gds-acceleration)) |

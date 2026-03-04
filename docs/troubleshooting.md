@@ -28,6 +28,8 @@ Use it together with:
 | Direct probe says ok but NVFS counters stay zero | `nvidia-fs` IO stats disabled | Enable `rw_stats_enabled=1` or keep counter gate disabled |
 | qwen quick fails with missing model digest/ref | Quick mode does not have model identity yet | Run full `make k3s-e2e` once or pass explicit `MODEL_*_OVERRIDE` |
 | No `nvidia.com/gpu` allocatable | GPU operator/device plugin not ready | Install/repair GPU operator, then re-check node allocatable |
+| `error: failed to initialize state lock: open ... state.db.lock: permission denied` | Model root path contains root-owned files from init-container flow | `sudo chown -R $USER:$USER /mnt/nvme/oci2gdsd` (or your `OCI2GDSD_ROOT_PATH`) |
+| Docker free-space gates fail unexpectedly after reboot | `/mnt/nvme` was not remounted, so Docker data-root path resolves on `/` | Remount NVMe first, then confirm `docker info --format '{{.DockerRootDir}}'` |
 
 ## 2) Preflight First, Always
 
@@ -52,6 +54,7 @@ These were the most common missing pieces in repeated bring-up runs.
 
 | Missing item | Why it matters | What to set/install |
 |---|---|---|
+| Base dev toolchain (`go`, `make`, `c++`) | `make test` and source-based builds fail fast (`go: command not found`) | Install `golang-go`, `make`, `build-essential` (or equivalent toolchain) |
 | NVIDIA container toolkit too old | Pods fail at startup with `No help topic for 'enable-cuda-compat'` | Upgrade to `nvidia-container-toolkit>=1.18.2` + restart `docker` and `k3s` |
 | GDS userspace tools (`gdscheck`) | Strict direct gate cannot validate platform | Install `nvidia-gds` or `gds-tools-*` packages |
 | Direct-path capable kernel/driver alignment | `gdscheck -p` stays unsupported | Use validated NVIDIA stack (driver + `nvidia-fs` + compatible kernel); reboot and re-verify |
@@ -68,6 +71,9 @@ One-time bootstrap (Ubuntu-based hosts, representative):
 ```bash
 sudo apt-get update -y
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+  golang-go \
+  make \
+  build-essential \
   nvidia-container-toolkit=1.18.2-1 \
   nvidia-container-toolkit-base=1.18.2-1 \
   nvidia-container-runtime=3.14.0-1 \
@@ -94,6 +100,17 @@ JSON
 sudo systemctl restart docker
 ```
 
+If you hit broken/deadlocked NVIDIA package state first (unconfigured meta-packages), clean it before the bootstrap:
+
+```bash
+sudo apt-get purge -y \
+  cuda-drivers-565 cuda-drivers-fabricmanager-565 \
+  nvidia-driver-565-server nvidia-fs nvidia-fs-dkms nvidia-prime
+sudo dpkg --configure -a
+sudo apt-get -f install -y
+sudo apt-get -s check
+```
+
 Validate after setup:
 
 ```bash
@@ -101,6 +118,14 @@ nvidia-ctk --version
 sudo gdscheck -p | grep -E 'NVMe|IOMMU'
 docker info --format '{{.DockerRootDir}}'
 df -h
+```
+
+After reboot, always verify mount persistence before running e2e:
+
+```bash
+mountpoint -q /mnt/nvme || sudo mount -t ext4 -o rw,noatime,data=ordered /dev/nvme0n1p1 /mnt/nvme
+df -h /mnt/nvme /
+docker info --format '{{.DockerRootDir}}'
 ```
 
 ## 4) Direct GDS Not Available

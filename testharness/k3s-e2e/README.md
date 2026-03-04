@@ -46,6 +46,20 @@ make k3s-e2e-qwen-quick
 make host-e2e-qwen-quick
 ```
 
+After any host reboot, verify NVMe mount persistence before running quick targets:
+
+```bash
+mountpoint -q /mnt/nvme || sudo mount -t ext4 -o rw,noatime,data=ordered /dev/nvme0n1p1 /mnt/nvme
+docker info --format '{{.DockerRootDir}}'
+df -h /mnt/nvme /
+```
+
+Base dev toolchain expected on the host for full repo workflows:
+
+- `go` (for `make test` and source builds)
+- `make`
+- `c++`/build headers (native extension/probe compilation path)
+
 `make k3s-e2e-qwen-quick` now auto-handles the common first-run setup:
 
 - checks/installs prerequisites
@@ -55,6 +69,20 @@ make host-e2e-qwen-quick
 - builds and loads `oci2gdsd` image into cluster (unless `AUTO_BUILD_OCI2GDSD_IMAGE=false`)
 - installs GPU Operator if `nvidia.com/gpu` is not allocatable (unless `AUTO_INSTALL_GPU_OPERATOR=false`)
 - auto-seeds model identity + in-cluster registry packaging if missing (unless `AUTO_SEED_MODEL_IDENTITY=false`)
+
+If pods fail with `No help topic for 'enable-cuda-compat'`, upgrade container toolkit and restart runtimes:
+
+```bash
+sudo apt-get update -y
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+  nvidia-container-toolkit=1.18.2-1 \
+  nvidia-container-toolkit-base=1.18.2-1 \
+  nvidia-container-runtime=3.14.0-1 \
+  libnvidia-container-tools=1.18.2-1 \
+  libnvidia-container1=1.18.2-1
+sudo systemctl restart docker
+sudo systemctl restart k3s
+```
 
 After that, `make host-e2e-qwen-quick` validates host direct-GDS with the model now present under `OCI2GDSD_ROOT_PATH`.
 

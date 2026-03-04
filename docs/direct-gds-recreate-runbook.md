@@ -56,6 +56,18 @@ sudo apt-get install -y nvidia-driver-570-open nvidia-fs nvidia-gds-12-6 linux-i
 sudo reboot
 ```
 
+If `apt` is stuck in a broken half-configured NVIDIA state (common after interrupted installs),
+clean it first, then run the alignment install:
+
+```bash
+sudo apt-get purge -y \
+  cuda-drivers-565 cuda-drivers-fabricmanager-565 \
+  nvidia-driver-565-server nvidia-fs nvidia-fs-dkms nvidia-prime
+sudo dpkg --configure -a
+sudo apt-get -f install -y
+sudo apt-get -s check
+```
+
 Post-reboot verify:
 
 ```bash
@@ -89,6 +101,17 @@ JSON
 sudo systemctl restart docker
 docker info --format '{{.DockerRootDir}}'
 ```
+
+After any reboot, re-check that `/mnt/nvme` is actually mounted before running harness targets:
+
+```bash
+mountpoint -q /mnt/nvme || sudo mount -t ext4 -o rw,noatime,data=ordered /dev/nvme0n1p1 /mnt/nvme
+df -h /mnt/nvme /
+docker info --format '{{.DockerRootDir}}'
+```
+
+If `/mnt/nvme` is not mounted, Docker may silently fall back to root-disk backed `/mnt/nvme/docker`
+and fail storage gates later.
 
 Strict gdsio probe:
 

@@ -29,6 +29,13 @@ make host-e2e-prereq
 make host-e2e-qwen-quick
 ```
 
+**Option B.1 — seed identity with quick k3s run (faster than full e2e):**
+
+```bash
+make k3s-e2e-qwen-quick
+make host-e2e-qwen-quick
+```
+
 When `MODEL_REF_OVERRIDE` is set, `host-e2e-qwen-quick` runs an idempotent
 `oci2gdsd ensure` + `release` cycle as part of quick-example lifecycle validation.
 
@@ -48,6 +55,18 @@ Defaults are strict direct-GDS. On hosts where `gdscheck -p` reports
 `NVMe : compat/Unsupported`, prereq now attempts non-destructive remediation first
 (GDS tooling/modules + NVMe mount/data-path alignment), then fails if direct path is
 still unavailable.
+
+If host quick fails with:
+
+```text
+error: failed to initialize state lock: open .../state.db.lock: permission denied
+```
+
+fix ownership of model root and rerun:
+
+```bash
+sudo chown -R "$(id -u):$(id -g)" "${OCI2GDSD_ROOT_PATH:-/mnt/nvme/oci2gdsd}"
+```
 By default, `host-e2e-qwen-quick` also validates CLI quick-example operations
 (`status`, `verify`, and optionally `ensure`/`release`).
 
@@ -59,6 +78,12 @@ From repo root:
 make host-e2e-prereq
 make host-e2e-qwen-quick
 ```
+
+Base dev toolchain expected on the host for full repo workflows:
+
+- `go` (for `make test` and source builds)
+- `make`
+- `c++`/build headers (native extension/probe compilation path)
 
 `make host-e2e-prereq` auto-installs host prerequisites by default on Ubuntu/Debian (`INSTALL_MISSING_PREREQS=true`).
 When `REQUIRE_DIRECT_GDS=true`, it also installs GDS user-space tools (`gdscheck`) if missing and
