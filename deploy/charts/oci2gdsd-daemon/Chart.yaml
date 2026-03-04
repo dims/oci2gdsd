@@ -1,0 +1,6 @@
+apiVersion: v2
+name: oci2gdsd-daemon
+description: Deploy oci2gdsd as a node-level DaemonSet for strict GDS model workflows
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -1,0 +1,78 @@
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: oci2gdsd
+  tag: e2e
+  pullPolicy: IfNotPresent
+
+daemon:
+  runtimeClassName: nvidia
+  socketPath: /run/oci2gdsd/daemon.sock
+  socketPerms: "0660"
+  extraEnv:
+    - name: NVIDIA_VISIBLE_DEVICES
+      value: all
+    - name: NVIDIA_DRIVER_CAPABILITIES
+      value: compute,utility
+  extraArgs: []
+
+hostPaths:
+  root: /mnt/nvme/oci2gdsd
+  rootType: DirectoryOrCreate
+  socketDir: /var/run/oci2gdsd
+  socketDirType: DirectoryOrCreate
+  runUdev: /run/udev
+  runUdevType: Directory
+  dev: /dev
+  devType: Directory
+
+securityContext:
+  privileged: true
+  runAsUser: 0
+  runAsGroup: 0
+
+serviceAccount:
+  create: true
+  name: ""
+
+podSecurityContext: {}
+podAnnotations: {}
+resources: {}
+
+tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+    effect: NoSchedule
+
+nodeSelector: {}
+affinity: {}
+
+config:
+  registry:
+    plain_http: true
+    request_timeout_seconds: 600
+    timeout_seconds: 600
+    retries: 6
+  transfer:
+    max_models_concurrent: 2
+    max_shards_concurrent_per_model: 8
+    max_connections_per_registry: 32
+    stream_buffer_bytes: 4194304
+    max_resume_attempts: 2
+  integrity:
+    strict_digest: true
+    strict_signature: false
+    allow_unsigned_in_dev: true
+  publish:
+    require_ready_marker: true
+    fsync_files: false
+    fsync_directory: false
+    atomic_publish: true
+    deny_partial_reads: true
+  retention:
+    policy: lru_no_lease
+    min_free_bytes: 0
+    max_models: 64
+    ttl_hours: 168
+    emergency_low_space_mode: true

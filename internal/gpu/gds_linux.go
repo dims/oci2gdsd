@@ -145,10 +145,6 @@ static int gds_read_file(const char* path, int device, long long chunk_bytes, in
 		goto cleanup;
 	}
 	file_size = st.st_size;
-	if ((file_size % 4096) != 0) {
-		rc = 3005;
-		goto cleanup;
-	}
 
 	CUfileDescr_t desc;
 	memset(&desc, 0, sizeof(desc));
@@ -182,9 +178,18 @@ static int gds_read_file(const char* path, int device, long long chunk_bytes, in
 	}
 
 	while (file_off < file_size) {
+		off_t remaining = file_size - file_off;
 		size_t to_read = chunk;
-		if ((off_t)to_read > (file_size - file_off)) {
-			to_read = (size_t)(file_size - file_off);
+		if ((off_t)to_read > remaining) {
+			if (remaining < 4096) {
+				to_read = 4096;
+			} else {
+				size_t rem = (size_t)remaining;
+				to_read = (rem / 4096) * 4096;
+				if (to_read == 0) {
+					to_read = 4096;
+				}
+			}
 		}
 		ssize_t n = cuFileRead(cfh, (void*)(uintptr_t)dptr, to_read, file_off, 0);
 		if (n < 0) {
@@ -192,7 +197,8 @@ static int gds_read_file(const char* path, int device, long long chunk_bytes, in
 			goto cleanup;
 		}
 		if (n == 0) {
-			break;
+			rc = 4005;
+			goto cleanup;
 		}
 		if ((n % 4096) != 0 && ((file_off + (off_t)n) < file_size)) {
 			rc = 4005;
@@ -238,6 +244,7 @@ static int gds_load_persistent(const char* path, int device, long long chunk_byt
 	CUdeviceptr dptr = 0;
 	int handle_registered = 0;
 	int buf_registered = 0;
+	int tail_buf_registered = 0;
 	int ctx_pushed = 0;
 	void* host_buf = NULL;
 	size_t chunk = (size_t)chunk_bytes;
@@ -245,6 +252,7 @@ static int gds_load_persistent(const char* path, int device, long long chunk_byt
 	off_t direct_size = 0;
 	off_t file_off = 0;
 	int direct_only = 1;
+	CUdeviceptr tail_dptr = 0;
 	struct timespec t0;
 	struct timespec t1;
 
@@ -305,7 +313,7 @@ static int gds_load_persistent(const char* path, int device, long long chunk_byt
 	}
 
 	direct_size = (off_t)((file_size / 4096) * 4096);
-	if (direct_only && direct_size > 0) {
+	if (direct_only) {
 		CUfileDescr_t desc;
 		memset(&desc, 0, sizeof(desc));
 		desc.handle.fd = fd;
@@ -320,6 +328,8 @@ static int gds_load_persistent(const char* path, int device, long long chunk_byt
 			direct_only = 0;
 		} else {
 			handle_registered = 1;
+		}
+		if (direct_only && direct_size > 0) {
 			ferr = cuFileBufRegister((void*)(uintptr_t)dptr, (size_t)direct_size, 0);
 			if (ferr.err == CU_FILE_SUCCESS) {
 				buf_registered = 1;
@@ -330,8 +340,7 @@ static int gds_load_persistent(const char* path, int device, long long chunk_byt
 				direct_only = 0;
 			}
 		}
-
-		if (!direct_only) {
+		if (!strict && !direct_only) {
 			if (buf_registered) {
 				(void)cuFileBufDeregister((void*)(uintptr_t)dptr);
 				buf_registered = 0;
@@ -349,21 +358,6 @@ static int gds_load_persistent(const char* path, int device, long long chunk_byt
 				rc = 3001;
 				goto cleanup;
 			}
-		}
-	} else if (direct_only && direct_size == 0) {
-		if (strict) {
-			rc = 3005;
-			goto cleanup;
-		}
-		direct_only = 0;
-		if (fd >= 0) {
-			(void)close(fd);
-			fd = -1;
-		}
-		fd = open(path, O_RDONLY);
-		if (fd < 0) {
-			rc = 3001;
-			goto cleanup;
 		}
 	}
 
@@ -418,6 +412,96 @@ static int gds_load_persistent(const char* path, int device, long long chunk_byt
 		}
 	}
 
+	if (direct_only && file_off < file_size) {
+		off_t tail_remaining = file_size - file_off;
+		CUfileError_t ferr;
+		ssize_t n;
+		size_t copy_len;
+
+		cu = cuMemAlloc(&tail_dptr, 4096);
+		if (cu != CUDA_SUCCESS) {
+			if (strict) {
+				rc = 1000 + (int)cu;
+				goto cleanup;
+			}
+			direct_only = 0;
+		}
+		if (direct_only) {
+			ferr = cuFileBufRegister((void*)(uintptr_t)tail_dptr, 4096, 0);
+			if (ferr.err != CU_FILE_SUCCESS) {
+				if (strict) {
+					rc = 2000 + (int)ferr.err;
+					goto cleanup;
+				}
+				direct_only = 0;
+			} else {
+				tail_buf_registered = 1;
+			}
+		}
+		if (direct_only) {
+			n = cuFileRead(cfh, (void*)(uintptr_t)tail_dptr, 4096, file_off, 0);
+			if (n < 0) {
+				if (strict) {
+					rc = 4000 + (int)(-n);
+					goto cleanup;
+				}
+				direct_only = 0;
+			} else if (n <= 0) {
+				if (strict) {
+					rc = 4005;
+					goto cleanup;
+				}
+				direct_only = 0;
+			} else {
+				copy_len = (size_t)n;
+				if ((off_t)copy_len > tail_remaining) {
+					copy_len = (size_t)tail_remaining;
+				}
+				cu = cuMemcpyDtoD(dptr + (CUdeviceptr)file_off, tail_dptr, copy_len);
+				if (cu != CUDA_SUCCESS) {
+					rc = 1000 + (int)cu;
+					goto cleanup;
+				}
+				file_off += (off_t)copy_len;
+				if (file_off < file_size) {
+					if (strict) {
+						rc = 4005;
+						goto cleanup;
+					}
+					direct_only = 0;
+				}
+			}
+		}
+		if (tail_buf_registered) {
+			(void)cuFileBufDeregister((void*)(uintptr_t)tail_dptr);
+			tail_buf_registered = 0;
+		}
+		if (tail_dptr != 0) {
+			(void)cuMemFree(tail_dptr);
+			tail_dptr = 0;
+		}
+		if (!strict && !direct_only) {
+			if (buf_registered) {
+				(void)cuFileBufDeregister((void*)(uintptr_t)dptr);
+				buf_registered = 0;
+			}
+			if (handle_registered) {
+				(void)cuFileHandleDeregister(cfh);
+				handle_registered = 0;
+			}
+			if (fd >= 0) {
+				(void)close(fd);
+				fd = -1;
+			}
+			fd = open(path, O_RDONLY);
+			if (fd < 0) {
+				rc = 3001;
+				goto cleanup;
+			}
+			file_off = 0;
+		}
+	}
+
 	if (!direct_only) {
 		host_buf = malloc(chunk);
 		if (host_buf == NULL) {
@@ -445,57 +529,6 @@ static int gds_load_persistent(const char* path, int device, long long chunk_byt
 			}
 			file_off += (off_t)n;
 		}
-	} else if (direct_size < file_size) {
-		if (strict) {
-			rc = 3005;
-			goto cleanup;
-		}
-		// Tail bytes are not 4KiB-aligned; switch to a non-O_DIRECT fd for
-		// host-buffer copy to avoid pread(EINVAL) on O_DIRECT descriptors.
-		if (buf_registered) {
-			(void)cuFileBufDeregister((void*)(uintptr_t)dptr);
-			buf_registered = 0;
-		}
-		if (handle_registered) {
-			(void)cuFileHandleDeregister(cfh);
-			handle_registered = 0;
-		}
-		if (fd >= 0) {
-			(void)close(fd);
-			fd = -1;
-		}
-		fd = open(path, O_RDONLY);
-		if (fd < 0) {
-			rc = 3001;
-			goto cleanup;
-		}
-		host_buf = malloc(chunk);
-		if (host_buf == NULL) {
-			rc = 3007;
-			goto cleanup;
-		}
-		file_off = direct_size;
-		while (file_off < file_size) {
-			size_t to_read = chunk;
-			if ((off_t)to_read > (file_size - file_off)) {
-				to_read = (size_t)(file_size - file_off);
-			}
-			ssize_t n = pread(fd, host_buf, to_read, file_off);
-			if (n < 0) {
-				rc = 3008;
-				goto cleanup;
-			}
-			if (n == 0) {
-				break;
-			}
-			cu = cuMemcpyHtoD(dptr + (CUdeviceptr)file_off, host_buf, (size_t)n);
-			if (cu != CUDA_SUCCESS) {
-				rc = 1000 + (int)cu;
-				goto cleanup;
-			}
-			file_off += (off_t)n;
-		}
-		direct_only = 0;
 	}
 
 	if (clock_gettime(CLOCK_MONOTONIC, &t1) != 0) {
@@ -524,6 +557,12 @@ cleanup:
 	}
 	if (host_buf != NULL) {
 		free(host_buf);
+	}
+	if (tail_buf_registered) {
+		(void)cuFileBufDeregister((void*)(uintptr_t)tail_dptr);
+	}
+	if (tail_dptr != 0) {
+		(void)cuMemFree(tail_dptr);
 	}
 	if (buf_registered) {
 		(void)cuFileBufDeregister((void*)(uintptr_t)dptr);

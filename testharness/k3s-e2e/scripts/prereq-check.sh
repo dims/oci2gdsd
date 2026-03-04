@@ -39,12 +39,20 @@ echo "runtime-image-probe:ok"'
 check_privileged_assumptions() {
   local qwen_template="${QWEN_HELLO_TEMPLATE}"
   local workload_template="${HARNESS_DIR}/manifests/workload-job.yaml.tpl"
+  local daemonset_template="${OCI2GDSD_DAEMON_TEMPLATE}"
+  local daemon_client_template="${PYTORCH_DAEMON_CLIENT_TEMPLATE}"
 
   if ! grep -Eq 'privileged:[[:space:]]*true' "${qwen_template}"; then
     die "qwen template does not declare privileged container securityContext: ${qwen_template}"
   fi
   if ! grep -Eq 'privileged:[[:space:]]*true' "${workload_template}"; then
     die "workload template does not declare privileged container securityContext: ${workload_template}"
+  fi
+  if ! grep -Eq 'privileged:[[:space:]]*true' "${daemonset_template}"; then
+    die "daemonset template does not declare privileged container securityContext: ${daemonset_template}"
+  fi
+  if ! grep -Eq 'privileged:[[:space:]]*true' "${daemon_client_template}"; then
+    die "daemon-client template does not declare privileged container securityContext: ${daemon_client_template}"
   fi
 }
 

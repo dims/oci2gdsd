@@ -21,7 +21,7 @@ RUN CGO_ENABLED=1 \
     GOOS=linux \
     GOARCH=amd64 \
     CGO_CFLAGS="-I/usr/local/cuda/include" \
-    CGO_LDFLAGS="-L/usr/local/cuda/lib64 -Wl,-rpath,/usr/local/cuda/lib64" \
+    CGO_LDFLAGS="-L/usr/local/cuda/lib64 -Wl,-rpath,/usr/lib/x86_64-linux-gnu -Wl,-rpath,/usr/local/cuda/lib64" \
     go build -tags gds -trimpath -ldflags="-s -w" -o /out/oci2gdsd ./cmd/oci2gdsd
 
 FROM nvidia/cuda:12.8.1-devel-ubuntu22.04
@@ -29,8 +29,7 @@ FROM nvidia/cuda:12.8.1-devel-ubuntu22.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates bash && \
-    rm -rf /var/lib/apt/lists/* && \
-    ln -sf /usr/local/cuda/targets/x86_64-linux/lib/stubs/libcuda.so /usr/local/cuda/lib64/libcuda.so.1
+    rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /out/oci2gdsd /usr/local/bin/oci2gdsd
 ENTRYPOINT ["/usr/local/bin/oci2gdsd"]

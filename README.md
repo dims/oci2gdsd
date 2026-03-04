@@ -171,6 +171,9 @@ make doctor
 # Full e2e: package Qwen3, push to in-cluster registry, preload, run PyTorch smoke test
 make k3s-e2e
 
+# Full e2e with raw daemonset manifests (node-level oci2gdsd serve)
+make k3s-e2e-daemonset-manifest
+
 # Fast iteration after first run (reuse existing cluster and model artifact)
 make k3s-e2e-qwen-quick
 ```
@@ -267,8 +270,11 @@ metrics/event exporters. See **[docs/IMPLEMENTATION-NOTES.md](docs/IMPLEMENTATIO
 | [docs/direct-gds-recreate-runbook.md](docs/direct-gds-recreate-runbook.md) | GPU infra — host qualification steps |
 | [docs/IMPLEMENTATION-NOTES.md](docs/IMPLEMENTATION-NOTES.md) | Contributors — what's implemented vs planned |
 | [docs/security-hardening-checklist.md](docs/security-hardening-checklist.md) | Security — controls implemented |
+| [docs/daemonset-manifest-guide.md](docs/daemonset-manifest-guide.md) | Operators — raw daemonset deployment flow |
+| [docs/helm-daemon-chart.md](docs/helm-daemon-chart.md) | Operators — helm deployment of node daemon |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contributors — dev setup, tests, PR guide |
 | [testharness/local-e2e/README.md](testharness/local-e2e/README.md) | New users — automated local lifecycle e2e |
 | [testharness/k3s-e2e/README.md](testharness/k3s-e2e/README.md) | GPU infra — Kubernetes e2e harness |
 | [testharness/host-e2e/README.md](testharness/host-e2e/README.md) | GPU infra — host-only GDS probe |
 | [examples/qwen-hello/README.md](examples/qwen-hello/README.md) | GPU infra — full Kubernetes example |
+| [examples/daemonset/README.md](examples/daemonset/README.md) | GPU infra — daemonset + daemon-client example assets |

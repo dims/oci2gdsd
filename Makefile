@@ -13,6 +13,7 @@ help:
 	@echo "  local-e2e-negative     Run local CLI negative/failure-path assertions"
 	@echo "  k3s-e2e-prereq         Check/install k3s e2e prerequisites"
 	@echo "  k3s-e2e                Run k3s Kubernetes GPU e2e harness"
+	@echo "  k3s-e2e-daemonset-manifest Run k3s e2e using raw daemonset manifests"
 	@echo "  host-e2e-prereq        Check/install host qwen quick prerequisites"
 	@echo "  k3s-e2e-qwen-quick     Fast qwen-hello redeploy/probe loop"
 	@echo "  host-e2e-qwen-quick    Run host-only strict direct-GDS qwen probe"
@@ -77,6 +78,10 @@ k3s-e2e-prereq:
 .PHONY: k3s-e2e
 k3s-e2e: k3s-e2e-prereq
 	./testharness/k3s-e2e/scripts/run.sh
+
+.PHONY: k3s-e2e-daemonset-manifest
+k3s-e2e-daemonset-manifest: k3s-e2e-prereq
+	E2E_DEPLOY_MODE=daemonset-manifest ./testharness/k3s-e2e/scripts/run.sh
 
 .PHONY: k3s-e2e-qwen-quick
 k3s-e2e-qwen-quick: k3s-e2e-prereq

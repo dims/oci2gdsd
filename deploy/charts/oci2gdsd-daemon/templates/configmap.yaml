@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "oci2gdsd-daemon.fullname" . }}-config
+  labels:
+{{ include "oci2gdsd-daemon.labels" . | indent 4 }}
+data:
+  config.yaml: |
+    root: {{ .Values.hostPaths.root }}
+    model_root: {{ .Values.hostPaths.root }}/models
+    tmp_root: {{ .Values.hostPaths.root }}/tmp
+    locks_root: {{ .Values.hostPaths.root }}/locks
+    journal_dir: {{ .Values.hostPaths.root }}/journal
+    state_db: {{ .Values.hostPaths.root }}/state.db
+    registry:
+{{ toYaml .Values.config.registry | nindent 6 }}
+    transfer:
+{{ toYaml .Values.config.transfer | nindent 6 }}
+    integrity:
+{{ toYaml .Values.config.integrity | nindent 6 }}
+    publish:
+{{ toYaml .Values.config.publish | nindent 6 }}
+    retention:
+{{ toYaml .Values.config.retention | nindent 6 }}

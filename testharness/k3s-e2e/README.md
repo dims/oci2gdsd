@@ -12,6 +12,8 @@ For host-only strict direct-GDS validation (without Kubernetes), see [`testharne
 - Local OCI registry in-cluster for repeatable artifact tests.
 - `oci2gdsd ensure/status/verify` in an init container.
 - PyTorch container reading preloaded model files and running CUDA compute.
+- Optional raw-manifest DaemonSet mode (`E2E_DEPLOY_MODE=daemonset-manifest`) where
+  `oci2gdsd serve` is node-level and workloads call daemon GPU APIs directly.
 - Validation of `examples/qwen-hello` FastAPI + PyTorch deployment by issuing a real `/chat` request and verifying `/healthz` `oci2gds_profile` status fields.
 - Optional strict gating on daemon IPC probe status (`REQUIRE_DAEMON_IPC_PROBE=true`).
 - `oci2gdsd release + gc + status` on the same node as workload pod.
@@ -23,6 +25,12 @@ From repo root:
 ```bash
 make k3s-e2e-prereq
 make k3s-e2e
+```
+
+Raw-manifest DaemonSet path (no Helm):
+
+```bash
+make k3s-e2e-daemonset-manifest
 ```
 
 `make k3s-e2e-prereq` validates cluster/runtime/image prerequisites and auto-installs host packages by default (`INSTALL_MISSING_PREREQS=true`).
@@ -178,6 +186,12 @@ MODEL_REF_OVERRIDE=oci-model-registry.oci-model-registry.svc.cluster.local:5000/
 MODEL_DIGEST_OVERRIDE=sha256:... \
 make k3s-e2e
 
+# Run full e2e in raw-manifest daemonset mode
+make k3s-e2e-daemonset-manifest
+
+# Equivalent via explicit mode toggle
+E2E_DEPLOY_MODE=daemonset-manifest make k3s-e2e
+
 # Skip qwen-hello example validation (enabled by default)
 VALIDATE_QWEN_HELLO=false make k3s-e2e
 
@@ -268,6 +282,8 @@ Logs are written under:
 
 - `testharness/k3s-e2e/work/results/preload.log`
 - `testharness/k3s-e2e/work/results/pytorch.log`
+- `testharness/k3s-e2e/work/results/pytorch-daemon-client.log` (daemonset-manifest mode)
+- `testharness/k3s-e2e/work/results/daemonset.log` (daemonset-manifest mode)
 - `testharness/k3s-e2e/work/results/qwen-hello.log`
 - `testharness/k3s-e2e/work/results/release-gc.log`
 - `testharness/k3s-e2e/work/results/environment-report.txt`

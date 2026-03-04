@@ -11,11 +11,14 @@ LOG_DIR="${WORK_DIR}/logs"
 mkdir -p "${WORK_DIR}" "${LOG_DIR}"
 
 CLUSTER_MODE="${CLUSTER_MODE:-k3s}"
+E2E_DEPLOY_MODE="${E2E_DEPLOY_MODE:-inline-daemon}"
 K3S_USE_SUDO="${K3S_USE_SUDO:-true}"
 E2E_NAMESPACE="${E2E_NAMESPACE:-oci2gdsd-e2e}"
 QWEN_HELLO_NAMESPACE="${QWEN_HELLO_NAMESPACE:-qwen-hello}"
 QWEN_HELLO_PROFILE="${QWEN_HELLO_PROFILE:-}"
 QWEN_HELLO_TEMPLATE="${QWEN_HELLO_TEMPLATE:-}"
+OCI2GDSD_DAEMON_NAMESPACE="${OCI2GDSD_DAEMON_NAMESPACE:-oci2gdsd-daemon}"
+OCI2GDSD_SOCKET_HOST_PATH="${OCI2GDSD_SOCKET_HOST_PATH:-/var/run/oci2gdsd}"
 REGISTRY_NAMESPACE="${REGISTRY_NAMESPACE:-oci2gdsd-registry}"
 REGISTRY_SERVICE="${REGISTRY_SERVICE:-oci-model-registry}"
 LOCAL_REGISTRY_PORT="${LOCAL_REGISTRY_PORT:-5002}"
@@ -42,11 +45,17 @@ AUTO_CONFIGURE_STORAGE="${AUTO_CONFIGURE_STORAGE:-true}"
 AUTO_INSTALL_GPU_OPERATOR="${AUTO_INSTALL_GPU_OPERATOR:-true}"
 GPU_OPERATOR_CHART_VERSION="${GPU_OPERATOR_CHART_VERSION:-v25.10.1}"
 
+OCI2GDSD_IMAGE_SET="${OCI2GDSD_IMAGE+x}"
 OCI2GDSD_IMAGE="${OCI2GDSD_IMAGE:-oci2gdsd:e2e}"
+OCI2GDSD_CLI_IMAGE="${OCI2GDSD_CLI_IMAGE:-oci2gdsd:e2e}"
+OCI2GDSD_CLI_DOCKERFILE="${OCI2GDSD_CLI_DOCKERFILE:-${HARNESS_DIR}/Dockerfile.oci2gdsd}"
+OCI2GDSD_ENABLE_GDS_IMAGE_SET="${OCI2GDSD_ENABLE_GDS_IMAGE+x}"
+REQUIRE_DAEMON_IPC_PROBE_SET="${REQUIRE_DAEMON_IPC_PROBE+x}"
 OCI2GDSD_ENABLE_GDS_IMAGE="${OCI2GDSD_ENABLE_GDS_IMAGE:-false}"
 OCI2GDSD_DOCKERFILE="${OCI2GDSD_DOCKERFILE:-}"
 SKIP_OCI2GDSD_IMAGE_BUILD="${SKIP_OCI2GDSD_IMAGE_BUILD:-false}"
 SKIP_OCI2GDSD_IMAGE_LOAD="${SKIP_OCI2GDSD_IMAGE_LOAD:-false}"
+FORCE_OCI2GDSD_IMAGE_REBUILD_SET="${FORCE_OCI2GDSD_IMAGE_REBUILD+x}"
 FORCE_OCI2GDSD_IMAGE_REBUILD="${FORCE_OCI2GDSD_IMAGE_REBUILD:-false}"
 PACKAGER_IMAGE="${PACKAGER_IMAGE:-oci2gdsd-qwen3-packager:local}"
 VLLM_RUNTIME_IMAGE="${VLLM_RUNTIME_IMAGE:-nvcr.io/nvidia/ai-dynamo/vllm-runtime@sha256:de8ac9afb52711b08169e0f58388528c091efae6fb367a6fcfa119edef4bb233}"
@@ -288,6 +297,25 @@ resolve_cluster_mode() {
   esac
 }
 
+validate_deploy_mode() {
+  case "${E2E_DEPLOY_MODE}" in
+    inline-daemon|daemonset-manifest)
+      ;;
+    *)
+      die "unsupported E2E_DEPLOY_MODE=${E2E_DEPLOY_MODE} (expected inline-daemon|daemonset-manifest)"
+      ;;
+  esac
+}
+
+validate_deploy_assets() {
+  if [[ "${E2E_DEPLOY_MODE}" != "daemonset-manifest" ]]; then
+    return 0
+  fi
+  [[ -f "${OCI2GDSD_DAEMON_TEMPLATE}" ]] || die "missing daemonset template: ${OCI2GDSD_DAEMON_TEMPLATE}"
+  [[ -f "${PYTORCH_DAEMON_CLIENT_TEMPLATE}" ]] || die "missing daemonset workload template: ${PYTORCH_DAEMON_CLIENT_TEMPLATE}"
+  [[ -f "${PYTORCH_DAEMON_CLIENT_SCRIPT}" ]] || die "missing daemon client script: ${PYTORCH_DAEMON_CLIENT_SCRIPT}"
+}
+
 kube() {
   if [[ "${K3S_USE_SUDO}" == "true" && "$(id -u)" -ne 0 ]]; then
     sudo k3s kubectl "$@"
@@ -309,6 +337,7 @@ cluster_hint() {
 }
 
 resolve_cluster_mode
+validate_deploy_mode
 if [[ "${CLUSTER_MODE}" == "k3s" && "${REGISTRY_NAMESPACE}" == "oci2gdsd-registry" ]]; then
   REGISTRY_NAMESPACE="oci-model-registry"
 fi
@@ -333,9 +362,29 @@ if [[ "${QWEN_HELLO_PROFILE}" == "host-direct" ]]; then
     OCI2GDS_FORCE_NO_COMPAT="true"
   fi
 fi
+if [[ "${E2E_DEPLOY_MODE}" == "daemonset-manifest" && "${REQUIRE_DIRECT_GDS}" == "true" && "${OCI2GDSD_ENABLE_GDS_IMAGE}" != "true" ]]; then
+  if [[ -n "${OCI2GDSD_ENABLE_GDS_IMAGE_SET}" ]]; then
+    die "E2E_DEPLOY_MODE=daemonset-manifest with REQUIRE_DIRECT_GDS=true requires OCI2GDSD_ENABLE_GDS_IMAGE=true"
+  fi
+  log "forcing OCI2GDSD_ENABLE_GDS_IMAGE=true for daemonset-manifest direct-GDS mode"
+  OCI2GDSD_ENABLE_GDS_IMAGE="true"
+fi
+if [[ "${E2E_DEPLOY_MODE}" == "daemonset-manifest" && "${OCI2GDSD_ENABLE_GDS_IMAGE}" == "true" && -z "${REQUIRE_DAEMON_IPC_PROBE_SET}" ]]; then
+  REQUIRE_DAEMON_IPC_PROBE="true"
+fi
+if [[ "${OCI2GDSD_ENABLE_GDS_IMAGE}" == "true" && -z "${OCI2GDSD_IMAGE_SET}" ]]; then
+  OCI2GDSD_IMAGE="oci2gdsd:e2e-gds"
+fi
+if [[ "${OCI2GDSD_ENABLE_GDS_IMAGE}" == "true" && -z "${FORCE_OCI2GDSD_IMAGE_REBUILD_SET}" ]]; then
+  FORCE_OCI2GDSD_IMAGE_REBUILD="true"
+fi
 if [[ -z "${QWEN_HELLO_TEMPLATE}" ]]; then
   QWEN_HELLO_TEMPLATE="${REPO_ROOT}/examples/qwen-hello/qwen-k3s-hello-deployment.yaml.tpl"
 fi
+OCI2GDSD_DAEMON_TEMPLATE="${OCI2GDSD_DAEMON_TEMPLATE:-${REPO_ROOT}/examples/daemonset/oci2gdsd-daemonset.yaml.tpl}"
+PYTORCH_DAEMON_CLIENT_TEMPLATE="${PYTORCH_DAEMON_CLIENT_TEMPLATE:-${REPO_ROOT}/examples/daemonset/pytorch-daemon-client-job.yaml.tpl}"
+PYTORCH_DAEMON_CLIENT_SCRIPT="${PYTORCH_DAEMON_CLIENT_SCRIPT:-${REPO_ROOT}/examples/daemonset/pytorch_daemon_client.py}"
+validate_deploy_assets
 enforce_strict_gds_policy
 
 strip_go_prefix() {
@@ -950,6 +999,7 @@ EOF
 
 build_and_load_oci2gdsd_image() {
   local dockerfile="${OCI2GDSD_DOCKERFILE}"
+  local force_load="false"
   if [[ -z "${dockerfile}" ]]; then
     if [[ "${OCI2GDSD_ENABLE_GDS_IMAGE}" == "true" ]]; then
       dockerfile="${HARNESS_DIR}/Dockerfile.oci2gdsd.gds"
@@ -964,15 +1014,33 @@ build_and_load_oci2gdsd_image() {
     else
       log "building oci2gdsd image ${OCI2GDSD_IMAGE} using ${dockerfile}"
       docker build -f "${dockerfile}" -t "${OCI2GDSD_IMAGE}" "${REPO_ROOT}"
+      force_load="true"
     fi
   else
     log "skipping oci2gdsd image build for ${OCI2GDSD_IMAGE}"
   fi
   if [[ "${SKIP_OCI2GDSD_IMAGE_LOAD}" != "true" ]]; then
-    cluster_load_image "${OCI2GDSD_IMAGE}"
+    cluster_load_image "${OCI2GDSD_IMAGE}" "${force_load}"
   else
     log "skipping cluster image load for ${OCI2GDSD_IMAGE}"
   fi
+}
+
+build_and_load_cli_image_if_needed() {
+  if [[ "${E2E_DEPLOY_MODE}" != "daemonset-manifest" ]]; then
+    return 0
+  fi
+  if [[ "${OCI2GDSD_CLI_IMAGE}" == "${OCI2GDSD_IMAGE}" ]]; then
+    return 0
+  fi
+  [[ -f "${OCI2GDSD_CLI_DOCKERFILE}" ]] || die "oci2gdsd CLI dockerfile not found: ${OCI2GDSD_CLI_DOCKERFILE}"
+  if docker image inspect "${OCI2GDSD_CLI_IMAGE}" >/dev/null 2>&1; then
+    log "reusing existing oci2gdsd CLI image ${OCI2GDSD_CLI_IMAGE}"
+  else
+    log "building oci2gdsd CLI image ${OCI2GDSD_CLI_IMAGE} using ${OCI2GDSD_CLI_DOCKERFILE}"
+    docker build -f "${OCI2GDSD_CLI_DOCKERFILE}" -t "${OCI2GDSD_CLI_IMAGE}" "${REPO_ROOT}"
+  fi
+  cluster_load_image "${OCI2GDSD_CLI_IMAGE}"
 }
 
 ensure_image_local_or_pull() {
@@ -1024,11 +1092,16 @@ preload_workload_image() {
 
 cluster_load_image() {
   local image="$1"
-  if cluster_image_present "${image}"; then
+  local force="${2:-false}"
+  if [[ "${force}" != "true" ]] && cluster_image_present "${image}"; then
     log "image already present in k3s containerd: ${image}"
     return 0
   fi
-  log "importing image into k3s containerd: ${image}"
+  if [[ "${force}" == "true" ]]; then
+    log "forcing image import into k3s containerd: ${image}"
+  else
+    log "importing image into k3s containerd: ${image}"
+  fi
   docker save "${image}" | maybe_sudo k3s ctr -n k8s.io images import -
   if [[ "${image}" != */* ]]; then
     maybe_sudo k3s ctr -n k8s.io images tag "${image}" "docker.io/library/${image}" || true
@@ -1082,6 +1155,32 @@ apply_configmap_from_files() {
   local name="$2"
   shift 2
   kube create configmap "${name}" -n "${ns}" "$@" --dry-run=client -o yaml | kube apply -f -
+}
+
+apply_daemonset_stack() {
+  mkdir -p "${WORK_DIR}/rendered"
+  local rendered="${WORK_DIR}/rendered/oci2gdsd-daemonset.yaml"
+  render_template "${OCI2GDSD_DAEMON_TEMPLATE}" "${rendered}" \
+    "OCI2GDSD_DAEMON_NAMESPACE=${OCI2GDSD_DAEMON_NAMESPACE}" \
+    "OCI2GDSD_ROOT_PATH=${OCI2GDSD_ROOT_PATH}" \
+    "OCI2GDSD_SOCKET_HOST_PATH=${OCI2GDSD_SOCKET_HOST_PATH}" \
+    "OCI2GDSD_IMAGE=${OCI2GDSD_IMAGE}"
+  kube apply -f "${rendered}"
+  kube -n "${OCI2GDSD_DAEMON_NAMESPACE}" rollout status daemonset/oci2gdsd-daemon --timeout=900s
+}
+
+capture_daemonset_logs() {
+  local out="${1:-${WORK_DIR}/results/daemonset.log}"
+  mkdir -p "$(dirname "${out}")"
+  local pod_name
+  pod_name="$(kube -n "${OCI2GDSD_DAEMON_NAMESPACE}" get pod \
+    -l app.kubernetes.io/name=oci2gdsd-daemon \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+  if [[ -z "${pod_name}" ]]; then
+    warn "failed to resolve oci2gdsd daemon pod name in namespace ${OCI2GDSD_DAEMON_NAMESPACE}"
+    return 1
+  fi
+  kube -n "${OCI2GDSD_DAEMON_NAMESPACE}" logs "pod/${pod_name}" > "${out}" 2>/dev/null || true
 }
 
 apply_registry() {
@@ -1432,6 +1531,7 @@ collect_debug() {
   kube get nodes -o wide || true
   kube get pods -A || true
   kube -n gpu-operator get pods -o wide || true
+  kube -n "${OCI2GDSD_DAEMON_NAMESPACE}" get pods -o wide || true
   kube -n "${E2E_NAMESPACE}" get pods -o wide || true
   kube -n "${E2E_NAMESPACE}" get jobs || true
   kube -n "${QWEN_HELLO_NAMESPACE}" get pods -o wide || true
