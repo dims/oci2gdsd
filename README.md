@@ -81,6 +81,7 @@ oci2gdsd gc --policy lru_no_lease --min-free-bytes 200G --json
 - Security hardening checklist: [docs/security-hardening-checklist.md](docs/security-hardening-checklist.md)
 - Direct GDS recreate runbook: [docs/direct-gds-recreate-runbook.md](docs/direct-gds-recreate-runbook.md)
 - Troubleshooting guide: [docs/troubleshooting.md](docs/troubleshooting.md)
+- Kubernetes quick e2e harness: [testharness/nvkind-e2e/README.md](testharness/nvkind-e2e/README.md)
 - Host direct-GDS quick e2e: [testharness/host-e2e/README.md](testharness/host-e2e/README.md)
 
 ## Reproducible Qwen3 OCI Packaging
