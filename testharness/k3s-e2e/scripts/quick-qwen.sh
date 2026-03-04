@@ -85,6 +85,10 @@ if [[ "${REQUIRE_DIRECT_GDS}" == "true" ]]; then
   fi
 fi
 
+# Re-check allocatable GPU right before deployment in case node/plugin state changed
+# during image build/pull or model packaging.
+ensure_gpu_capacity
+
 if ! validate_qwen_hello_example; then
   collect_debug
   kube -n "${QWEN_HELLO_NAMESPACE}" logs deploy/qwen-hello -c preload-model || true

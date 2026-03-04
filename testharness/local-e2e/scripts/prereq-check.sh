@@ -8,8 +8,14 @@ WORK_DIR="${HARNESS_DIR}/work"
 RESULTS_DIR="${WORK_DIR}/results"
 MIN_FREE_GB_DOCKER="${MIN_FREE_GB_DOCKER:-10}"
 MIN_FREE_GB_WORK="${MIN_FREE_GB_WORK:-2}"
+MIN_FREE_GB_LOCAL_ROOT="${MIN_FREE_GB_LOCAL_ROOT:-20}"
 INSTALL_MISSING_PREREQS="${INSTALL_MISSING_PREREQS:-true}"
 ORAS_VERSION="${ORAS_VERSION:-1.2.3}"
+DEFAULT_LOCAL_E2E_ROOT="${WORK_DIR}/state"
+if [[ -d /mnt/nvme ]]; then
+  DEFAULT_LOCAL_E2E_ROOT="/mnt/nvme/oci2gdsd-local-e2e"
+fi
+LOCAL_E2E_ROOT="${LOCAL_E2E_ROOT:-${DEFAULT_LOCAL_E2E_ROOT}}"
 
 _ts() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
@@ -158,6 +164,7 @@ local_docker_root="$(docker_info --format '{{.DockerRootDir}}' 2>/dev/null || tr
 [[ -n "${local_docker_root}" ]] || die "failed to detect DockerRootDir from docker info"
 check_path_free_gb "docker data-root" "${local_docker_root}" "${MIN_FREE_GB_DOCKER}"
 check_path_free_gb "local-e2e workspace" "${HARNESS_DIR}" "${MIN_FREE_GB_WORK}"
+check_path_free_gb "local-e2e root path" "${LOCAL_E2E_ROOT}" "${MIN_FREE_GB_LOCAL_ROOT}"
 
 {
   echo "# local-e2e prereq $(date -u +%Y-%m-%dT%H:%M:%SZ)"

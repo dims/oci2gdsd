@@ -966,8 +966,34 @@ start_registry_port_forward() {
     port-forward svc/"${REGISTRY_SERVICE}" "${LOCAL_REGISTRY_PORT}:5000" \
     > "${LOG_DIR}/registry-port-forward.log" 2>&1 &
   echo $! > "${PF_PID_FILE}"
-  sleep 3
-  curl -fsS "http://localhost:${LOCAL_REGISTRY_PORT}/v2/_catalog" >/dev/null
+
+  local pid
+  pid="$(cat "${PF_PID_FILE}")"
+  local attempts="${REGISTRY_PORT_FORWARD_RETRIES:-60}"
+  local delay="${REGISTRY_PORT_FORWARD_RETRY_DELAY_SEC:-1}"
+  local i
+  for ((i=1; i<=attempts; i++)); do
+    if ! kill -0 "${pid}" 2>/dev/null; then
+      warn "registry port-forward exited early (pid=${pid})"
+      if [[ -f "${LOG_DIR}/registry-port-forward.log" ]]; then
+        warn "registry port-forward log:"
+        cat "${LOG_DIR}/registry-port-forward.log" >&2 || true
+      fi
+      die "registry port-forward failed to stay running"
+    fi
+    if curl --max-time 2 -fsS "http://127.0.0.1:${LOCAL_REGISTRY_PORT}/v2/_catalog" >/dev/null 2>&1; then
+      log "registry port-forward is ready on 127.0.0.1:${LOCAL_REGISTRY_PORT}"
+      return 0
+    fi
+    sleep "${delay}"
+  done
+
+  warn "registry endpoint did not become ready after ${attempts} attempts"
+  if [[ -f "${LOG_DIR}/registry-port-forward.log" ]]; then
+    warn "registry port-forward log:"
+    cat "${LOG_DIR}/registry-port-forward.log" >&2 || true
+  fi
+  die "registry readiness check failed at 127.0.0.1:${LOCAL_REGISTRY_PORT}"
 }
 
 stop_registry_port_forward() {

@@ -37,7 +37,7 @@ make local-e2e
 - `MODEL_REPO=models/test-model`
 - `MODEL_TAG=v1`
 - `LEASE_HOLDER=local-e2e`
-- `LOCAL_E2E_ROOT=testharness/local-e2e/work/state`
+- `LOCAL_E2E_ROOT=/mnt/nvme/oci2gdsd-local-e2e` when `/mnt/nvme` exists, otherwise `testharness/local-e2e/work/state`
 
 ## Useful overrides
 
@@ -49,7 +49,7 @@ OCI2GDSD_BIN=/path/to/oci2gdsd make local-e2e
 REGISTRY_PORT=5008 make local-e2e
 
 # Tighten prereq storage gates (GiB)
-MIN_FREE_GB_DOCKER=20 MIN_FREE_GB_WORK=5 make local-e2e-prereq
+MIN_FREE_GB_DOCKER=20 MIN_FREE_GB_WORK=5 MIN_FREE_GB_LOCAL_ROOT=40 make local-e2e-prereq
 ```
 
 ## Artifacts

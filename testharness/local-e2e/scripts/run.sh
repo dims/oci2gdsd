@@ -7,7 +7,11 @@ REPO_ROOT="$(cd "${HARNESS_DIR}/../.." && pwd)"
 WORK_DIR="${HARNESS_DIR}/work"
 RESULTS_DIR="${WORK_DIR}/results"
 PAYLOAD_DIR="${WORK_DIR}/payload"
-ROOT_DIR="${LOCAL_E2E_ROOT:-${WORK_DIR}/state}"
+DEFAULT_LOCAL_E2E_ROOT="${WORK_DIR}/state"
+if [[ -d /mnt/nvme ]]; then
+  DEFAULT_LOCAL_E2E_ROOT="/mnt/nvme/oci2gdsd-local-e2e"
+fi
+ROOT_DIR="${LOCAL_E2E_ROOT:-${DEFAULT_LOCAL_E2E_ROOT}}"
 REGISTRY_NAME="${REGISTRY_NAME:-oci2gdsd-local-e2e-registry}"
 REGISTRY_PORT="${REGISTRY_PORT:-5004}"
 MODEL_ID="${MODEL_ID:-test-model}"
@@ -165,11 +169,13 @@ EOF
 
 OCI_REF="localhost:${REGISTRY_PORT}/${MODEL_REPO}:${MODEL_TAG}"
 log "pushing artifact ${OCI_REF}"
-oras push --plain-http "${OCI_REF}" \
-  --artifact-type application/vnd.oci2gdsd.model.v1 \
-  --config "${PAYLOAD_DIR}/metadata/model.json:application/vnd.oci2gdsd.model.config.v1+json" \
-  "${SHARD_PATH}:application/vnd.oci2gdsd.model.shard.v1+safetensors" \
-  | tee "${RESULTS_DIR}/oras-push.log" >/dev/null
+(
+  cd "${PAYLOAD_DIR}"
+  oras push --plain-http "${OCI_REF}" \
+    --artifact-type application/vnd.oci2gdsd.model.v1 \
+    --config "metadata/model.json:application/vnd.oci2gdsd.model.config.v1+json" \
+    "shards/model-00001-of-00001.safetensors:application/vnd.oci2gdsd.model.shard.v1+safetensors"
+) | tee "${RESULTS_DIR}/oras-push.log" >/dev/null
 
 MODEL_DIGEST="$(oras resolve --plain-http "${OCI_REF}")"
 [[ "${MODEL_DIGEST}" == sha256:* ]] || die "failed to resolve digest for ${OCI_REF}"

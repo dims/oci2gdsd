@@ -194,6 +194,18 @@ check_storage_prereqs() {
   check_path_free_gb "oci2gdsd root path" "${OCI2GDSD_ROOT_PATH}" "${MIN_FREE_GB_MODEL_ROOT}"
 }
 
+ensure_root_writable() {
+  maybe_sudo mkdir -p "${OCI2GDSD_ROOT_PATH}"
+  if [[ -w "${OCI2GDSD_ROOT_PATH}" ]]; then
+    return 0
+  fi
+  if is_true "${INSTALL_MISSING_PREREQS}"; then
+    log "granting current user write access to ${OCI2GDSD_ROOT_PATH}"
+    maybe_sudo chown -R "$(id -u):$(id -g)" "${OCI2GDSD_ROOT_PATH}" || true
+  fi
+  [[ -w "${OCI2GDSD_ROOT_PATH}" ]] || die "oci2gdsd root path is not writable: ${OCI2GDSD_ROOT_PATH}"
+}
+
 ensure_apt_available() {
   command -v apt-get >/dev/null 2>&1 || die "apt-get not found; install prerequisites manually"
 }
@@ -346,6 +358,7 @@ if ! maybe_sudo docker info >/dev/null 2>&1; then
 fi
 
 check_storage_prereqs
+ensure_root_writable
 
 if is_true "${REQUIRE_DIRECT_GDS}"; then
   if is_true "${INSTALL_MISSING_PREREQS}"; then

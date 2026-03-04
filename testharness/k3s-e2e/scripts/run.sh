@@ -12,6 +12,16 @@ bootstrap_tools
 configure_nvidia_runtime
 ensure_k3s_cluster_ready
 install_gpu_operator
+
+CLEAN_STALE_WORKLOADS_BEFORE_RUN="${CLEAN_STALE_WORKLOADS_BEFORE_RUN:-true}"
+if is_true "${CLEAN_STALE_WORKLOADS_BEFORE_RUN}"; then
+  log "cleaning stale workload namespaces (${E2E_NAMESPACE}, ${QWEN_HELLO_NAMESPACE}) before run"
+  kube delete namespace "${E2E_NAMESPACE}" --ignore-not-found >/dev/null || true
+  kube delete namespace "${QWEN_HELLO_NAMESPACE}" --ignore-not-found >/dev/null || true
+  kube wait --for=delete namespace/"${E2E_NAMESPACE}" --timeout=180s >/dev/null 2>&1 || true
+  kube wait --for=delete namespace/"${QWEN_HELLO_NAMESPACE}" --timeout=180s >/dev/null 2>&1 || true
+fi
+
 verify_gpu_pod
 validate_local_gds_loader
 
