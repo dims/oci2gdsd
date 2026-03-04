@@ -68,6 +68,7 @@ Base dev toolchain expected on the host for full repo workflows:
 - auto-configures storage to `/mnt/nvme` when root disk is too small (unless `AUTO_CONFIGURE_STORAGE=false`)
 - builds and loads `oci2gdsd` image into cluster (unless `AUTO_BUILD_OCI2GDSD_IMAGE=false`)
 - installs GPU Operator if `nvidia.com/gpu` is not allocatable (unless `AUTO_INSTALL_GPU_OPERATOR=false`)
+  - pinned chart version defaults to `GPU_OPERATOR_CHART_VERSION=v25.10.1`
 - auto-seeds model identity + in-cluster registry packaging if missing (unless `AUTO_SEED_MODEL_IDENTITY=false`)
 
 If pods fail with `No help topic for 'enable-cuda-compat'`, upgrade container toolkit and restart runtimes:
@@ -250,6 +251,9 @@ K3S_DATA_DIR=/mnt/nvme/k3s make k3s-e2e-prereq
 
 # Disable automatic storage/runtime/model bootstrap helpers (debug only)
 AUTO_CONFIGURE_STORAGE=false AUTO_INSTALL_GPU_OPERATOR=false AUTO_SEED_MODEL_IDENTITY=false make k3s-e2e-qwen-quick
+
+# Override pinned GPU Operator chart version when required
+GPU_OPERATOR_CHART_VERSION=v25.10.1 make k3s-e2e-qwen-quick
 ```
 
 ## Cleanup

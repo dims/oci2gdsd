@@ -450,6 +450,27 @@ static int gds_load_persistent(const char* path, int device, long long chunk_byt
 			rc = 3005;
 			goto cleanup;
 		}
+		/*
+		 * Tail bytes are not 4KiB-aligned; switch to a non-O_DIRECT fd for
+		 * host-buffer copy to avoid pread(EINVAL) on O_DIRECT descriptors.
+		 */
+		if (buf_registered) {
+			(void)cuFileBufDeregister((void*)(uintptr_t)dptr);
+			buf_registered = 0;
+		}
+		if (handle_registered) {
+			(void)cuFileHandleDeregister(cfh);
+			handle_registered = 0;
+		}
+		if (fd >= 0) {
+			(void)close(fd);
+			fd = -1;
+		}
+		fd = open(path, O_RDONLY);
+		if (fd < 0) {
+			rc = 3001;
+			goto cleanup;
+		}
 		host_buf = malloc(chunk);
 		if (host_buf == NULL) {
 			rc = 3007;

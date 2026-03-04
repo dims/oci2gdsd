@@ -24,6 +24,12 @@
 This example now includes a daemon-mediated IPC probe, but still does not remap the full transformer weight graph to daemon-owned VRAM pointers.
 Model execution still uses framework-managed parameter loading from local files.
 
+Contract summary for this example:
+
+- Startup verifies direct-path behavior with `torch.ops.oci2gds.load_profile(...)`.
+- Startup verifies daemon persistent allocation/export/import wiring with an IPC copy probe.
+- Inference requests (`/chat`) still run on the model loaded by standard Transformers/PyTorch file loading.
+
 ## k3s Runtime Note
 
 For host-native `k3s` clusters, the pod should run with `runtimeClassName: nvidia` so the NVIDIA container runtime injects CUDA driver libraries and devices correctly.

@@ -47,6 +47,7 @@ The prereq scripts already check and/or auto-fix common issues:
 - privileged-container assumptions for GDS workloads
 - storage minimums and optional auto-migration to `/mnt/nvme`
 - direct-path gate (`gdscheck -p`) when `REQUIRE_DIRECT_GDS=true`
+- reproducible GPU Operator install via pinned chart (`GPU_OPERATOR_CHART_VERSION`, default `v25.10.1`)
 
 ## 3) Frequently Missing Install/Setup/Config (Fresh Hosts)
 

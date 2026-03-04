@@ -26,10 +26,12 @@
 - `READY` read contract enforcement.
 - Standalone CLI `gpu load` contract is explicit benchmark mode; `--mode persistent` is rejected in one-shot CLI mode.
 - `serve` command is implemented for long-running process integrations and exposes daemon GPU API endpoints (`/v1/gpu/load`, `/v1/gpu/export`, `/v1/gpu/unload`, `/v1/gpu/status`).
+- GDS persistent loader handles non-4KiB tail bytes by switching tail copy to a non-`O_DIRECT` fd in non-strict mode.
 - `gpu unload` and `gpu status` commands are implemented; they are primarily useful for embedded/long-running process integrations.
 - Lease-aware release and GC behavior.
 - Crash-recovery guardrails for stale temp paths and inconsistent READY entries
   using lightweight READY/metadata/shard-size checks at startup.
+- Registry error classifier now prioritizes typed ORAS `errcode.ErrorResponse` mapping (auth/not-found/timeout) before string fallback.
 - Machine-oriented JSON outputs and stable exit code mapping.
 
 ## Not Yet Implemented

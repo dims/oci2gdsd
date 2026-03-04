@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/credentials"
+	"oras.land/oras-go/v2/registry/remote/errcode"
 	"oras.land/oras-go/v2/registry/remote/retry"
 )
 
@@ -226,6 +228,16 @@ func wrapRegistryError(message string, err error) error {
 	if err == nil {
 		return nil
 	}
+	if appErr, ok := classifyORASError(message, err); ok {
+		return appErr
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return app.NewAppError(app.ExitRegistry, app.ReasonRegistryTimeout, message, err)
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return app.NewAppError(app.ExitRegistry, app.ReasonRegistryTimeout, message, err)
+	}
 	lower := strings.ToLower(err.Error())
 	switch {
 	case strings.Contains(lower, "unauthorized"), strings.Contains(lower, "authentication"), strings.Contains(lower, "denied"):
@@ -239,6 +251,32 @@ func wrapRegistryError(message string, err error) error {
 	default:
 		return app.NewAppError(app.ExitRegistry, app.ReasonRegistryUnreachable, message, err)
 	}
+}
+
+func classifyORASError(message string, err error) (*app.AppError, bool) {
+	var resp *errcode.ErrorResponse
+	if !errors.As(err, &resp) {
+		return nil, false
+	}
+
+	switch resp.StatusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return app.NewAppError(app.ExitAuth, app.ReasonRegistryAuthFailed, message, err), true
+	case http.StatusRequestTimeout, http.StatusGatewayTimeout:
+		return app.NewAppError(app.ExitRegistry, app.ReasonRegistryTimeout, message, err), true
+	}
+
+	for _, entry := range resp.Errors {
+		switch entry.Code {
+		case errcode.ErrorCodeUnauthorized, errcode.ErrorCodeDenied:
+			return app.NewAppError(app.ExitAuth, app.ReasonRegistryAuthFailed, message, err), true
+		case errcode.ErrorCodeManifestUnknown, errcode.ErrorCodeNameUnknown:
+			return app.NewAppError(app.ExitRegistry, app.ReasonManifestNotFound, message, err), true
+		case errcode.ErrorCodeBlobUnknown, errcode.ErrorCodeManifestBlobUnknown:
+			return app.NewAppError(app.ExitRegistry, app.ReasonBlobNotFound, message, err), true
+		}
+	}
+	return app.NewAppError(app.ExitRegistry, app.ReasonRegistryUnreachable, message, err), true
 }
 
 func readAllWithLimit(r io.Reader, limit int64) ([]byte, error) {

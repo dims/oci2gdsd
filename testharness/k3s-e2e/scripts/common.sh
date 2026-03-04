@@ -40,6 +40,7 @@ MIN_FREE_GB_OCI2GDS_ROOT="${MIN_FREE_GB_OCI2GDS_ROOT:-20}"
 K3S_DATA_DIR="${K3S_DATA_DIR:-}"
 AUTO_CONFIGURE_STORAGE="${AUTO_CONFIGURE_STORAGE:-true}"
 AUTO_INSTALL_GPU_OPERATOR="${AUTO_INSTALL_GPU_OPERATOR:-true}"
+GPU_OPERATOR_CHART_VERSION="${GPU_OPERATOR_CHART_VERSION:-v25.10.1}"
 
 OCI2GDSD_IMAGE="${OCI2GDSD_IMAGE:-oci2gdsd:e2e}"
 OCI2GDSD_ENABLE_GDS_IMAGE="${OCI2GDSD_ENABLE_GDS_IMAGE:-false}"
@@ -733,12 +734,13 @@ ensure_k3s_cluster_ready() {
 }
 
 install_gpu_operator() {
-  log "installing GPU Operator (helm)"
+  log "installing GPU Operator (helm chart version: ${GPU_OPERATOR_CHART_VERSION})"
   helm_kube repo add nvidia https://helm.ngc.nvidia.com/nvidia >/dev/null 2>&1 || true
   helm_kube repo update >/dev/null
   helm_kube upgrade -i \
     --namespace gpu-operator \
     --create-namespace \
+    --version "${GPU_OPERATOR_CHART_VERSION}" \
     --set driver.enabled=false \
     --set toolkit.enabled=false \
     --set dcgmExporter.enabled=false \
@@ -836,6 +838,7 @@ write_environment_report() {
     k3s --version || true
     kube version -o yaml || true
     echo "---- gpu operator ----"
+    echo "gpu_operator_chart_version=${GPU_OPERATOR_CHART_VERSION}"
     helm_kube list -n gpu-operator || true
     kube -n gpu-operator get pods -o wide || true
     echo "---- node gpu allocatable ----"

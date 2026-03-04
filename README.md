@@ -175,6 +175,10 @@ make k3s-e2e
 make k3s-e2e-qwen-quick
 ```
 
+Notes:
+- GPU Operator auto-install in the harness is chart-version pinned by default (`GPU_OPERATOR_CHART_VERSION=v25.10.1`) for reproducibility.
+- Override the chart version explicitly if your environment requires a different release.
+
 See **[testharness/k3s-e2e/README.md](testharness/k3s-e2e/README.md)** for overrides and expected outputs.
 
 ---
@@ -204,6 +208,12 @@ oci2gdsd gpu load \
 
 Host qualification runbook: **[docs/direct-gds-recreate-runbook.md](docs/direct-gds-recreate-runbook.md)**
 Host-only GDS probe: **[testharness/host-e2e/README.md](testharness/host-e2e/README.md)**
+
+GPU load contract in this repo:
+
+- `gpu load --mode benchmark` (standalone CLI): direct-path throughput probe only; VRAM buffers are freed before command exit.
+- `serve` + `/v1/gpu/load` (`mode=persistent`): daemon keeps allocations alive for the daemon process lifetime and can export CUDA IPC handles.
+- Current examples use persistent load/export as a verifiable handoff probe; they do not remap full framework parameter storage to daemon-owned VRAM.
 
 ---
 
