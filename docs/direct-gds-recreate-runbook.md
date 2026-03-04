@@ -41,6 +41,11 @@ Fast fail condition:
 1. Only virtio disk (for example `vda`) and no NVMe path.
 2. `NVMe : Unsupported` after one remediation attempt/timebox.
 
+Default policy for this repo:
+
+1. Run the full remediation bundle in §3 unless a hard blocker is obvious up front (for example no guest-visible `/dev/nvme*`).
+2. Do not silently relax strict direct-path requirements in normal validation flows.
+
 ## 3) Host Bring-Up That Worked
 
 On qualifying hosts, this alignment was required:

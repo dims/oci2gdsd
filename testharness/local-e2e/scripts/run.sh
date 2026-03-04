@@ -8,7 +8,7 @@ WORK_DIR="${HARNESS_DIR}/work"
 RESULTS_DIR="${WORK_DIR}/results"
 PAYLOAD_DIR="${WORK_DIR}/payload"
 DEFAULT_LOCAL_E2E_ROOT="${WORK_DIR}/state"
-if [[ -d /mnt/nvme ]]; then
+if [[ -d /mnt/nvme && -w /mnt/nvme ]]; then
   DEFAULT_LOCAL_E2E_ROOT="/mnt/nvme/oci2gdsd-local-e2e"
 fi
 ROOT_DIR="${LOCAL_E2E_ROOT:-${DEFAULT_LOCAL_E2E_ROOT}}"
@@ -261,6 +261,8 @@ journal_dir: ${ROOT_DIR}/journal
 state_db: ${ROOT_DIR}/state.db
 registry:
   plain_http: true
+retention:
+  min_free_bytes: 0
 EOF
 
 log "running ensure/status/list/verify/release/gc lifecycle"

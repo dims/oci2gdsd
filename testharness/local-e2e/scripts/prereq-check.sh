@@ -12,7 +12,7 @@ MIN_FREE_GB_LOCAL_ROOT="${MIN_FREE_GB_LOCAL_ROOT:-20}"
 INSTALL_MISSING_PREREQS="${INSTALL_MISSING_PREREQS:-true}"
 ORAS_VERSION="${ORAS_VERSION:-1.2.3}"
 DEFAULT_LOCAL_E2E_ROOT="${WORK_DIR}/state"
-if [[ -d /mnt/nvme ]]; then
+if [[ -d /mnt/nvme && -w /mnt/nvme ]]; then
   DEFAULT_LOCAL_E2E_ROOT="/mnt/nvme/oci2gdsd-local-e2e"
 fi
 LOCAL_E2E_ROOT="${LOCAL_E2E_ROOT:-${DEFAULT_LOCAL_E2E_ROOT}}"

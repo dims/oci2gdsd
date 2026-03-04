@@ -61,6 +61,7 @@ PROFILE_PROBE_MAX_REGRESSION_PCT="${PROFILE_PROBE_MAX_REGRESSION_PCT:-0}"
 PROFILE_PROBE_BASELINE_FILE="${PROFILE_PROBE_BASELINE_FILE:-${WORK_DIR}/results/qwen-profile-probe-baseline.json}"
 RUNTIME_DRIFT_CHECKPOINTS="${RUNTIME_DRIFT_CHECKPOINTS:-true}"
 RECORD_ENVIRONMENT_REPORT="${RECORD_ENVIRONMENT_REPORT:-true}"
+ALLOW_RELAXED_GDS="${ALLOW_RELAXED_GDS:-false}"
 
 if [[ -z "${REQUIRE_DAEMON_IPC_PROBE}" ]]; then
   REQUIRE_DAEMON_IPC_PROBE="${OCI2GDSD_ENABLE_GDS_IMAGE}"
@@ -107,13 +108,18 @@ die() {
 emit_direct_gds_remediation() {
   cat >&2 <<'EOF'
 Direct-GDS remediation options:
-1. Use a host with local NVMe and GDS direct-path support (gdscheck must report "NVMe : Supported").
+1. Full remediation bundle (default):
+   - align kernel + driver + GDS packages
+   - reboot
+   - verify gdscheck
+   - mount NVMe and move data paths to NVMe
+   - run strict gdsio probe
 2. Ensure GDS tools are installed and verify with:
    sudo gdscheck -p
 3. Keep strict mode (default) for real validation:
    REQUIRE_DIRECT_GDS=true OCI2GDS_STRICT=true OCI2GDS_FORCE_NO_COMPAT=true
 4. For non-direct smoke only (not a true GDS pass), relax gates:
-   REQUIRE_DIRECT_GDS=false OCI2GDS_STRICT=false
+   ALLOW_RELAXED_GDS=true REQUIRE_DIRECT_GDS=false OCI2GDS_STRICT=false
 EOF
 }
 
@@ -135,6 +141,24 @@ is_true() {
     1|true|yes|on) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+enforce_strict_gds_policy() {
+  if is_true "${ALLOW_RELAXED_GDS}"; then
+    warn "ALLOW_RELAXED_GDS=true: strict direct-GDS policy checks are relaxed for debugging"
+    return 0
+  fi
+
+  local violations=()
+  [[ "${REQUIRE_DIRECT_GDS}" == "true" ]] || violations+=("REQUIRE_DIRECT_GDS=${REQUIRE_DIRECT_GDS}")
+  [[ "${OCI2GDS_STRICT}" == "true" ]] || violations+=("OCI2GDS_STRICT=${OCI2GDS_STRICT}")
+  [[ "${OCI2GDS_PROBE_STRICT}" == "true" ]] || violations+=("OCI2GDS_PROBE_STRICT=${OCI2GDS_PROBE_STRICT}")
+  [[ "${OCI2GDS_FORCE_NO_COMPAT}" == "true" ]] || violations+=("OCI2GDS_FORCE_NO_COMPAT=${OCI2GDS_FORCE_NO_COMPAT}")
+  [[ "${REQUIRE_STRICT_PROFILE_PROBE}" == "true" ]] || violations+=("REQUIRE_STRICT_PROFILE_PROBE=${REQUIRE_STRICT_PROFILE_PROBE}")
+  [[ "${REQUIRE_NO_COMPAT_EVIDENCE}" == "true" ]] || violations+=("REQUIRE_NO_COMPAT_EVIDENCE=${REQUIRE_NO_COMPAT_EVIDENCE}")
+  if ((${#violations[@]} > 0)); then
+    die "strict GDS policy violation: ${violations[*]} (set ALLOW_RELAXED_GDS=true only for temporary debugging)"
+  fi
 }
 
 is_uint() {
@@ -377,6 +401,7 @@ fi
 if [[ -z "${QWEN_HELLO_TEMPLATE}" ]]; then
   QWEN_HELLO_TEMPLATE="${REPO_ROOT}/examples/qwen-hello/qwen-k3s-hello-deployment.yaml.tpl"
 fi
+enforce_strict_gds_policy
 
 strip_go_prefix() {
   local version="$1"
@@ -649,6 +674,91 @@ gdscheck_binary() {
   return 1
 }
 
+has_guest_nvme() {
+  ls /dev/nvme*n1 >/dev/null 2>&1 || ls /dev/nvme*n1p* >/dev/null 2>&1 || ls /dev/nvme[0-9] >/dev/null 2>&1
+}
+
+find_nvme_mount_candidate() {
+  lsblk -pnro NAME,TYPE,FSTYPE,MOUNTPOINT | awk '$1 ~ /^\/dev\/nvme/ && $2=="part" && $3!="" && $4=="" {print $1; exit 0}'
+}
+
+find_nvme_raw_disk_candidate() {
+  lsblk -pnro NAME,TYPE | awk '$1 ~ /^\/dev\/nvme/ && $2=="disk" {print $1; exit 0}'
+}
+
+attempt_full_gds_remediation_bundle() {
+  local gdscheck_bin="$1"
+  local log_file="${WORK_DIR}/results/gds-remediation.log"
+  local post_report="${WORK_DIR}/results/gdscheck-post-remediation.txt"
+  local needs_reboot=0
+
+  : > "${log_file}"
+  {
+    echo "## full remediation attempt $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "kernel_before=$(uname -r)"
+    echo "driver_before=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -n1 || true)"
+  } >> "${log_file}"
+
+  if ! has_guest_nvme; then
+    {
+      echo "hard_blocker=no_guest_nvme"
+      echo "lsblk:"
+      lsblk -f || true
+    } >> "${log_file}"
+    return 2
+  fi
+
+  echo "non_destructive_step=skip_driver_kernel_package_mutation" >> "${log_file}"
+  maybe_sudo modprobe nvidia_fs >> "${log_file}" 2>&1 || true
+
+  maybe_sudo mkdir -p /mnt/nvme >> "${log_file}" 2>&1 || true
+  if ! mountpoint -q /mnt/nvme; then
+    local part
+    part="$(find_nvme_mount_candidate || true)"
+    if [[ -z "${part}" ]]; then
+      local raw_disk
+      raw_disk="$(find_nvme_raw_disk_candidate || true)"
+      if [[ -n "${raw_disk}" ]]; then
+        local part_name="${raw_disk}p1"
+        if ! lsblk -pnro NAME "${raw_disk}" | grep -q "^${part_name}$"; then
+          maybe_sudo parted -s "${raw_disk}" mklabel gpt >> "${log_file}" 2>&1 || true
+          maybe_sudo parted -s "${raw_disk}" mkpart primary ext4 0% 100% >> "${log_file}" 2>&1 || true
+        fi
+        if ! maybe_sudo blkid "${part_name}" >/dev/null 2>&1; then
+          maybe_sudo mkfs.ext4 -F "${part_name}" >> "${log_file}" 2>&1 || true
+        fi
+        part="${part_name}"
+      fi
+    fi
+    if [[ -n "${part}" ]]; then
+      maybe_sudo mount -o rw,noatime,data=ordered "${part}" /mnt/nvme >> "${log_file}" 2>&1 || true
+      echo "mounted_nvme_part=${part}" >> "${log_file}"
+    else
+      echo "mounted_nvme_part=none" >> "${log_file}"
+    fi
+  fi
+
+  if mountpoint -q /mnt/nvme; then
+    configure_docker_data_root "/mnt/nvme/docker" >> "${log_file}" 2>&1 || true
+  fi
+
+  if [[ -f /var/run/reboot-required || -f /run/reboot-required ]]; then
+    needs_reboot=1
+  fi
+  echo "reboot_required=${needs_reboot}" >> "${log_file}"
+
+  maybe_sudo "${gdscheck_bin}" -p > "${post_report}" 2>&1 || true
+  cat "${post_report}" >> "${log_file}" 2>&1 || true
+
+  if grep -Eq 'NVMe[[:space:]]*:[[:space:]]*Supported' "${post_report}"; then
+    return 0
+  fi
+  if [[ "${needs_reboot}" -eq 1 ]]; then
+    return 3
+  fi
+  return 1
+}
+
 check_direct_gds_platform_support() {
   local gdscheck
   if ! gdscheck="$(gdscheck_binary)"; then
@@ -671,7 +781,19 @@ check_direct_gds_platform_support() {
   cat "${tmp_report}" >"${report}"
   rm -f "${tmp_report}"
   if ! grep -Eq 'NVMe[[:space:]]*:[[:space:]]*Supported' "${report}"; then
-    warn "gdscheck reports NVMe unsupported for GDS direct path; see ${report}"
+    if attempt_full_gds_remediation_bundle "${gdscheck}"; then
+      log "full GDS remediation succeeded; proceeding with strict validation"
+      cp "${WORK_DIR}/results/gdscheck-post-remediation.txt" "${report}" || true
+      return 0
+    fi
+    local rc=$?
+    if [[ "${rc}" -eq 2 ]]; then
+      warn "gdscheck direct preflight failed and host has no guest-visible NVMe (/dev/nvme*)"
+    elif [[ "${rc}" -eq 3 ]]; then
+      warn "full GDS remediation attempted but reboot is required before strict validation"
+    else
+      warn "full GDS remediation attempted but NVMe direct path is still unavailable"
+    fi
     emit_direct_gds_remediation
     return 1
   fi
@@ -985,11 +1107,31 @@ preload_workload_image() {
 
 cluster_load_image() {
   local image="$1"
+  if cluster_image_present "${image}"; then
+    log "image already present in k3s containerd: ${image}"
+    return 0
+  fi
   log "importing image into k3s containerd: ${image}"
   docker save "${image}" | maybe_sudo k3s ctr -n k8s.io images import -
   if [[ "${image}" != */* ]]; then
     maybe_sudo k3s ctr -n k8s.io images tag "${image}" "docker.io/library/${image}" || true
   fi
+}
+
+cluster_image_present() {
+  local image="$1"
+  local refs
+  refs="$(maybe_sudo k3s ctr -n k8s.io images ls -q 2>/dev/null || true)"
+  [[ -n "${refs}" ]] || return 1
+  if printf '%s\n' "${refs}" | grep -Fx -- "${image}" >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ "${image}" != */* ]]; then
+    if printf '%s\n' "${refs}" | grep -Fx -- "docker.io/library/${image}" >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+  return 1
 }
 
 build_packager_image() {
@@ -1267,9 +1409,17 @@ validate_qwen_hello_example() {
   local oci2gds_mode_counts
   oci2gds_mode_counts="$(printf '%s' "${health_response}" | jq -r '.oci2gds_profile.mode_counts // "{}"' 2>/dev/null || true)"
   local oci2gds_direct_count
-  oci2gds_direct_count="$(printf '%s' "${health_response}" | jq -r '.oci2gds_profile.mode_counts // "{}" | (try fromjson catch {}) | .direct // 0' 2>/dev/null || true)"
+  oci2gds_direct_count="$(printf '%s' "${health_response}" | jq -r '
+    (.oci2gds_profile.mode_counts // {}) |
+    (if type=="string" then (try fromjson catch {}) elif type=="object" then . else {} end) |
+    .direct // 0
+  ' 2>/dev/null || true)"
   local oci2gds_compat_count
-  oci2gds_compat_count="$(printf '%s' "${health_response}" | jq -r '.oci2gds_profile.mode_counts // "{}" | (try fromjson catch {}) | .compat // 0' 2>/dev/null || true)"
+  oci2gds_compat_count="$(printf '%s' "${health_response}" | jq -r '
+    (.oci2gds_profile.mode_counts // {}) |
+    (if type=="string" then (try fromjson catch {}) elif type=="object" then . else {} end) |
+    .compat // 0
+  ' 2>/dev/null || true)"
   local oci2gds_force_no_compat
   oci2gds_force_no_compat="$(printf '%s' "${health_response}" | jq -r '(.oci2gds_backend.force_no_compat // .oci2gds_profile.force_no_compat // false) | tostring' 2>/dev/null || true)"
   local oci2gds_cufile_env_path

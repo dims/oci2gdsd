@@ -13,7 +13,7 @@ semantics:
 8. run `release`
 9. run `gc`
 10. confirm final `status=RELEASED`
-11. run negative/failure-path assertions with expected error reason checks
+11. run negative/failure-path assertions with expected error reason checks (missing flags, malformed digests, non-digest refs, unreachable registry, invalid shard names)
 12. run concurrency/idempotency checks (same-model and cross-model ensures)
 
 ## Run
@@ -45,7 +45,7 @@ make local-e2e
 - `LEASE_HOLDER=local-e2e`
 - `SECOND_MODEL_ID=test-model-b`
 - `SECOND_LEASE_HOLDER=local-e2e-b`
-- `LOCAL_E2E_ROOT=/mnt/nvme/oci2gdsd-local-e2e` when `/mnt/nvme` exists, otherwise `testharness/local-e2e/work/state`
+- `LOCAL_E2E_ROOT=/mnt/nvme/oci2gdsd-local-e2e` when `/mnt/nvme` exists and is writable, otherwise `testharness/local-e2e/work/state`
 
 ## Useful overrides
 

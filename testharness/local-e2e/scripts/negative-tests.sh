@@ -62,8 +62,8 @@ run_cli() {
 }
 
 extract_error_json() {
-  local stderr_path="$1"
-  jq -c . "${stderr_path}" 2>/dev/null || true
+  local path="$1"
+  jq -c . "${path}" 2>/dev/null || true
 }
 
 expect_reason() {
@@ -79,7 +79,10 @@ expect_reason() {
   [[ "${rc}" -ne 0 ]] || die "${name}: expected failure but command exited 0"
   local err_json
   err_json="$(extract_error_json "${err}")"
-  [[ -n "${err_json}" ]] || die "${name}: expected JSON error on stderr"
+  if [[ -z "${err_json}" ]]; then
+    err_json="$(extract_error_json "${out}")"
+  fi
+  [[ -n "${err_json}" ]] || die "${name}: expected JSON error payload on stderr or stdout"
   printf '%s\n' "${err_json}" | jq -e --arg reason "${expected_reason}" '.reason_code == $reason' >/dev/null || \
     die "${name}: expected reason_code=${expected_reason}; got: ${err_json}"
 }
@@ -97,7 +100,10 @@ expect_reason_any() {
   [[ "${rc}" -ne 0 ]] || die "${name}: expected failure but command exited 0"
   local err_json reason
   err_json="$(extract_error_json "${err}")"
-  [[ -n "${err_json}" ]] || die "${name}: expected JSON error on stderr"
+  if [[ -z "${err_json}" ]]; then
+    err_json="$(extract_error_json "${out}")"
+  fi
+  [[ -n "${err_json}" ]] || die "${name}: expected JSON error payload on stderr or stdout"
   reason="$(printf '%s\n' "${err_json}" | jq -r '.reason_code // empty')"
   [[ -n "${reason}" ]] || die "${name}: missing reason_code in stderr JSON"
   IFS=',' read -r -a allowed <<< "${expected_csv}"
@@ -157,6 +163,10 @@ expect_reason "VALIDATION_FAILED" "negative-status-missing-digest" \
     --model-id "${MODEL_ID}" \
     --json
 
+expect_reason "VALIDATION_FAILED" "negative-profile-lint-missing-source" \
+  run_cli profile lint \
+    --json
+
 expect_reason "VALIDATION_FAILED" "negative-profile-inspect-missing-config" \
   run_cli profile inspect \
     --config "/tmp/does-not-exist-modelprofile.json" \
@@ -171,7 +181,7 @@ expect_lint_invalid
 
 cat > "${RESULTS_DIR}/negative-summary.txt" <<EOF
 local-e2e-negative: success
-checked_reasons=VALIDATION_FAILED(status),VALIDATION_FAILED(profile-inspect-missing-config),REGISTRY_UNREACHABLE|REGISTRY_TIMEOUT|MANIFEST_NOT_FOUND,PROFILE_LINT_FAILED-via-lint-result
+checked_reasons=VALIDATION_FAILED(status-missing-digest),VALIDATION_FAILED(profile-lint-missing-source),VALIDATION_FAILED(profile-inspect-missing-config),REGISTRY_UNREACHABLE|REGISTRY_TIMEOUT|MANIFEST_NOT_FOUND,PROFILE_LINT_FAILED-via-lint-result
 EOF
 
 log "local-e2e negative tests completed successfully"

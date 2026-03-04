@@ -34,6 +34,7 @@ REQUIRE_STRICT_PROBE_EVIDENCE="${REQUIRE_STRICT_PROBE_EVIDENCE:-true}"
 HOST_PROBE_MIN_THROUGHPUT_MIB_S="${HOST_PROBE_MIN_THROUGHPUT_MIB_S:-0}"
 HOST_PROBE_MAX_REGRESSION_PCT="${HOST_PROBE_MAX_REGRESSION_PCT:-0}"
 HOST_PROBE_BASELINE_FILE="${HOST_PROBE_BASELINE_FILE:-${RESULTS_DIR}/host-qwen-probe-baseline.json}"
+ALLOW_RELAXED_GDS="${ALLOW_RELAXED_GDS:-false}"
 OCI2GDSD_BIN_MODE=""
 declare -a OCI2GDSD_CMD=()
 declare -a OCI2GDSD_GLOBAL_ARGS=()
@@ -76,6 +77,21 @@ is_true() {
     1|true|yes|on) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+enforce_strict_gds_policy() {
+  if is_true "${ALLOW_RELAXED_GDS}"; then
+    warn "ALLOW_RELAXED_GDS=true: strict direct-GDS policy checks are relaxed for debugging"
+    return 0
+  fi
+  local violations=()
+  [[ "${OCI2GDS_STRICT}" == "true" ]] || violations+=("OCI2GDS_STRICT=${OCI2GDS_STRICT}")
+  [[ "${REQUIRE_DIRECT_GDS}" == "true" ]] || violations+=("REQUIRE_DIRECT_GDS=${REQUIRE_DIRECT_GDS}")
+  [[ "${OCI2GDS_FORCE_NO_COMPAT}" == "true" ]] || violations+=("OCI2GDS_FORCE_NO_COMPAT=${OCI2GDS_FORCE_NO_COMPAT}")
+  [[ "${REQUIRE_STRICT_PROBE_EVIDENCE}" == "true" ]] || violations+=("REQUIRE_STRICT_PROBE_EVIDENCE=${REQUIRE_STRICT_PROBE_EVIDENCE}")
+  if ((${#violations[@]} > 0)); then
+    die "strict GDS policy violation: ${violations[*]} (set ALLOW_RELAXED_GDS=true only for temporary debugging)"
+  fi
 }
 
 resolve_nvfs_stats_mode() {
@@ -495,6 +511,7 @@ ensure_cmd docker
 ensure_cmd jq
 ensure_cmd python3
 resolve_nvfs_stats_mode
+enforce_strict_gds_policy
 resolve_oci2gdsd_cmd
 resolve_oci2gdsd_global_args
 resolve_model_digest

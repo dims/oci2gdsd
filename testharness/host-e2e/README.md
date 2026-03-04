@@ -45,7 +45,9 @@ The prereq script auto-detects the newest `READY` entry for `MODEL_ID` under
 `OCI2GDSD_ROOT_PATH`.
 
 Defaults are strict direct-GDS. On hosts where `gdscheck -p` reports
-`NVMe : compat/Unsupported`, the target intentionally fails fast.
+`NVMe : compat/Unsupported`, prereq now attempts non-destructive remediation first
+(GDS tooling/modules + NVMe mount/data-path alignment), then fails if direct path is
+still unavailable.
 By default, `host-e2e-qwen-quick` also validates CLI quick-example operations
 (`status`, `verify`, and optionally `ensure`/`release`).
 
@@ -59,7 +61,9 @@ make host-e2e-qwen-quick
 ```
 
 `make host-e2e-prereq` auto-installs host prerequisites by default on Ubuntu/Debian (`INSTALL_MISSING_PREREQS=true`).
-When `REQUIRE_DIRECT_GDS=true`, it also attempts to install GDS user-space tools (`gdscheck`) if missing.
+When `REQUIRE_DIRECT_GDS=true`, it also installs GDS user-space tools (`gdscheck`) if missing and
+attempts non-destructive remediation unless a hard blocker is detected (for example no guest-visible NVMe).
+It does not mutate GPU driver/kernel packages automatically.
 Set `INSTALL_MISSING_PREREQS=false` to run checks only.
 
 Defaults:
@@ -78,6 +82,7 @@ Defaults:
 - `OCI2GDS_VALIDATE_SAMPLE_BYTES=true` (compares first 4KiB GPU-loaded bytes with host bytes per sampled shard)
 - `REQUIRE_NVFS_STATS_DELTA_MODE=auto` (default: require counter deltas only when nvfs stats are enabled)
 - `REQUIRE_STRICT_PROBE_EVIDENCE=true` (fail unless probe reports native-cufile + cuFile init success)
+- `ALLOW_RELAXED_GDS=false` (default; strict GDS policy must remain enabled)
 - `HOST_PROBE_MIN_THROUGHPUT_MIB_S=0` (optional perf floor gate)
 - `HOST_PROBE_MAX_REGRESSION_PCT=0` (optional baseline regression gate; `>0` enforces max drop)
 - `MIN_FREE_GB_DOCKER=80` (fails fast when Docker data-root free space is below 80 GiB)
@@ -109,8 +114,8 @@ make host-e2e-qwen-quick
 # Use a different model root
 OCI2GDSD_ROOT_PATH=/var/lib/oci2gdsd make host-e2e-qwen-quick
 
-# Allow fallback mode (no direct-path enforcement)
-OCI2GDS_STRICT=false REQUIRE_DIRECT_GDS=false make host-e2e-qwen-quick
+# Allow fallback mode (debug-only; strict policy guard must be explicitly relaxed)
+ALLOW_RELAXED_GDS=true OCI2GDS_STRICT=false REQUIRE_DIRECT_GDS=false OCI2GDS_FORCE_NO_COMPAT=false make host-e2e-qwen-quick
 
 # Optional: disable immediate process exit after summary (debug-only)
 OCI2GDS_FORCE_EXIT_AFTER_SUMMARY=false make host-e2e-qwen-quick

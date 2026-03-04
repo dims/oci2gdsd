@@ -125,10 +125,86 @@ Common fail patterns seen repeatedly:
 
 ### What to do
 
-1. Use a provider/instance with guest-visible local NVMe.
-2. Keep model root on that NVMe mount (for example `/mnt/nvme/oci2gdsd`).
-3. Re-run prereq and quick targets.
-4. If still unsupported after one bounded remediation attempt, stop and change host/provider.
+Policy in this repo: **attempt remediation by default**.  
+Harness prereq scripts first run non-destructive remediation automatically (install missing GDS userspace tools, NVMe partition+mount alignment, Docker data-root alignment).  
+If strict direct path still fails, run the full operator bundle below unless a hard blocker is obvious up front.
+
+#### 4.1 Hard blockers (skip full remediation and change host)
+
+1. `lsblk` shows no guest-visible NVMe device (`/dev/nvme*` absent).
+2. Provider only exposes virtio/SCSI boot disk and does not expose local NVMe.
+3. You cannot install required NVIDIA packages or reboot policy prevents kernel/runtime alignment.
+
+#### 4.2 Full remediation bundle (run unless blocked by 4.1)
+
+1. Align kernel + driver + GDS stack:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  nvidia-driver-570-open \
+  nvidia-fs \
+  nvidia-gds-12-6 \
+  linux-image-nvidia
+```
+
+2. Reboot:
+
+```bash
+sudo reboot
+```
+
+3. Post-reboot verify:
+
+```bash
+uname -r
+nvidia-smi
+lsmod | grep nvidia_fs
+sudo /usr/local/cuda/gds/tools/gdscheck -p
+```
+
+4. Ensure NVMe is mounted for data paths (example):
+
+```bash
+sudo mkdir -p /mnt/nvme
+sudo mount -t ext4 -o rw,noatime,data=ordered /dev/nvme0n1p1 /mnt/nvme
+```
+
+5. Move Docker data-root to NVMe and restart:
+
+```bash
+sudo mkdir -p /mnt/nvme/docker
+sudo tee /etc/docker/daemon.json >/dev/null <<'JSON'
+{
+  "data-root": "/mnt/nvme/docker",
+  "default-runtime": "nvidia",
+  "features": { "cdi": true },
+  "runtimes": { "nvidia": { "path": "nvidia-container-runtime", "args": [] } }
+}
+JSON
+sudo systemctl restart docker
+docker info --format '{{.DockerRootDir}}'
+```
+
+6. Run strict direct functional probe:
+
+```bash
+sudo /usr/libexec/gds/tools/gdsio -D /mnt/nvme -d 0 -w 1 -s 1G -i 1M -x 0
+```
+
+7. Re-run harness prereqs and quick tests:
+
+```bash
+make host-e2e-prereq
+make k3s-e2e-prereq
+make host-e2e-qwen-quick
+make k3s-e2e-qwen-quick
+```
+
+#### 4.3 Exit criteria
+
+1. Continue on this host only if `gdscheck -p` shows `NVMe : Supported`.
+2. If still not supported after one full remediation attempt (timebox 30 minutes), stop and switch provider/instance type.
 
 ## 5) `enable-cuda-compat` Hook Failure
 
@@ -231,9 +307,10 @@ Current defaults are intentionally fail-fast for real GDS validation:
 - `OCI2GDS_STRICT=true`
 - `OCI2GDS_PROBE_STRICT=true`
 - `OCI2GDS_FORCE_NO_COMPAT=true`
+- `ALLOW_RELAXED_GDS=false`
 
 If strict direct path cannot be initialized, runs should fail, not silently pass in compat mode.
-Only disable strict/no-compat temporarily for debugging.
+Only disable strict/no-compat temporarily for debugging, and set `ALLOW_RELAXED_GDS=true` explicitly when doing so.
 
 ## 10) NVFS Counters Stay Zero
 

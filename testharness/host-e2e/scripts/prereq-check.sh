@@ -15,6 +15,10 @@ REQUIRE_NVFS_STATS_DELTA="${REQUIRE_NVFS_STATS_DELTA:-}"
 REQUIRE_NVFS_STATS_DELTA_MODE="${REQUIRE_NVFS_STATS_DELTA_MODE:-auto}"
 INSTALL_MISSING_PREREQS="${INSTALL_MISSING_PREREQS:-true}"
 OCI2GDSD_ROOT_PATH="${OCI2GDSD_ROOT_PATH:-/mnt/nvme/oci2gdsd}"
+OCI2GDS_STRICT="${OCI2GDS_STRICT:-true}"
+OCI2GDS_FORCE_NO_COMPAT="${OCI2GDS_FORCE_NO_COMPAT:-true}"
+REQUIRE_STRICT_PROBE_EVIDENCE="${REQUIRE_STRICT_PROBE_EVIDENCE:-true}"
+ALLOW_RELAXED_GDS="${ALLOW_RELAXED_GDS:-false}"
 MIN_FREE_GB_DOCKER="${MIN_FREE_GB_DOCKER:-80}"
 MIN_FREE_GB_MODEL_ROOT="${MIN_FREE_GB_MODEL_ROOT:-20}"
 AUTO_CONFIGURE_STORAGE="${AUTO_CONFIGURE_STORAGE:-true}"
@@ -43,13 +47,18 @@ die() {
 emit_direct_gds_remediation() {
   cat >&2 <<'EOF'
 Direct-GDS remediation options:
-1. Use a host with local NVMe and GDS direct-path support (gdscheck must report "NVMe : Supported").
+1. Full remediation bundle (default):
+   - align kernel + driver + GDS packages
+   - reboot
+   - verify gdscheck
+   - mount NVMe and move data paths to NVMe
+   - run strict gdsio probe
 2. Verify platform capability:
    sudo gdscheck -p
 3. Keep strict mode (default) for real validation:
    REQUIRE_DIRECT_GDS=true OCI2GDS_STRICT=true OCI2GDS_FORCE_NO_COMPAT=true
 4. For non-direct smoke only (not a true GDS pass), relax gates:
-   REQUIRE_DIRECT_GDS=false OCI2GDS_STRICT=false
+   ALLOW_RELAXED_GDS=true REQUIRE_DIRECT_GDS=false OCI2GDS_STRICT=false
 EOF
 }
 
@@ -68,6 +77,21 @@ is_true() {
     1|true|yes|on) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+enforce_strict_gds_policy() {
+  if is_true "${ALLOW_RELAXED_GDS}"; then
+    warn "ALLOW_RELAXED_GDS=true: strict direct-GDS policy checks are relaxed for debugging"
+    return 0
+  fi
+  local violations=()
+  [[ "${REQUIRE_DIRECT_GDS}" == "true" ]] || violations+=("REQUIRE_DIRECT_GDS=${REQUIRE_DIRECT_GDS}")
+  [[ "${OCI2GDS_STRICT}" == "true" ]] || violations+=("OCI2GDS_STRICT=${OCI2GDS_STRICT}")
+  [[ "${OCI2GDS_FORCE_NO_COMPAT}" == "true" ]] || violations+=("OCI2GDS_FORCE_NO_COMPAT=${OCI2GDS_FORCE_NO_COMPAT}")
+  [[ "${REQUIRE_STRICT_PROBE_EVIDENCE}" == "true" ]] || violations+=("REQUIRE_STRICT_PROBE_EVIDENCE=${REQUIRE_STRICT_PROBE_EVIDENCE}")
+  if ((${#violations[@]} > 0)); then
+    die "strict GDS policy violation: ${violations[*]} (set ALLOW_RELAXED_GDS=true only for temporary debugging)"
+  fi
 }
 
 resolve_nvfs_stats_mode() {
@@ -300,6 +324,96 @@ install_gds_tools_if_missing() {
   die "failed to install gdscheck automatically; install nvidia-gds (or gds-tools) manually"
 }
 
+has_guest_nvme() {
+  ls /dev/nvme*n1 >/dev/null 2>&1 || ls /dev/nvme*n1p* >/dev/null 2>&1 || ls /dev/nvme[0-9] >/dev/null 2>&1
+}
+
+find_nvme_mount_candidate() {
+  lsblk -pnro NAME,TYPE,FSTYPE,MOUNTPOINT | awk '$1 ~ /^\/dev\/nvme/ && $2=="part" && $3!="" && $4=="" {print $1; exit 0}'
+}
+
+find_nvme_raw_disk_candidate() {
+  lsblk -pnro NAME,TYPE | awk '$1 ~ /^\/dev\/nvme/ && $2=="disk" {print $1; exit 0}'
+}
+
+attempt_full_gds_remediation_bundle() {
+  local gdscheck_bin="$1"
+  local log_file="${RESULTS_DIR}/gds-remediation.log"
+  local post_report="${RESULTS_DIR}/gdscheck-prereq-post-remediation.txt"
+  local needs_reboot=0
+
+  : > "${log_file}"
+  {
+    echo "## full remediation attempt $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "kernel_before=$(uname -r)"
+    echo "driver_before=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -n1 || true)"
+  } >> "${log_file}"
+
+  if ! has_guest_nvme; then
+    {
+      echo "hard_blocker=no_guest_nvme"
+      echo "lsblk:"
+      lsblk -f || true
+    } >> "${log_file}"
+    return 2
+  fi
+
+  if is_true "${INSTALL_MISSING_PREREQS}"; then
+    {
+      echo "non_destructive_step=skip_driver_kernel_package_mutation"
+    } >> "${log_file}"
+  fi
+
+  maybe_sudo modprobe nvidia_fs >> "${log_file}" 2>&1 || true
+
+  maybe_sudo mkdir -p /mnt/nvme >> "${log_file}" 2>&1 || true
+  if ! mountpoint -q /mnt/nvme; then
+    local part
+    part="$(find_nvme_mount_candidate || true)"
+    if [[ -z "${part}" ]]; then
+      local raw_disk
+      raw_disk="$(find_nvme_raw_disk_candidate || true)"
+      if [[ -n "${raw_disk}" ]]; then
+        local part_name="${raw_disk}p1"
+        if ! lsblk -pnro NAME "${raw_disk}" | grep -q "^${part_name}$"; then
+          maybe_sudo parted -s "${raw_disk}" mklabel gpt >> "${log_file}" 2>&1 || true
+          maybe_sudo parted -s "${raw_disk}" mkpart primary ext4 0% 100% >> "${log_file}" 2>&1 || true
+        fi
+        if ! maybe_sudo blkid "${part_name}" >/dev/null 2>&1; then
+          maybe_sudo mkfs.ext4 -F "${part_name}" >> "${log_file}" 2>&1 || true
+        fi
+        part="${part_name}"
+      fi
+    fi
+    if [[ -n "${part}" ]]; then
+      maybe_sudo mount -o rw,noatime,data=ordered "${part}" /mnt/nvme >> "${log_file}" 2>&1 || true
+      echo "mounted_nvme_part=${part}" >> "${log_file}"
+    else
+      echo "mounted_nvme_part=none" >> "${log_file}"
+    fi
+  fi
+
+  if mountpoint -q /mnt/nvme; then
+    configure_docker_data_root "/mnt/nvme/docker" >> "${log_file}" 2>&1 || true
+  fi
+
+  if [[ -f /var/run/reboot-required || -f /run/reboot-required ]]; then
+    needs_reboot=1
+  fi
+  echo "reboot_required=${needs_reboot}" >> "${log_file}"
+
+  maybe_sudo "${gdscheck_bin}" -p > "${post_report}" 2>&1 || true
+  cat "${post_report}" >> "${log_file}" 2>&1 || true
+
+  if grep -Eq 'NVMe[[:space:]]*:[[:space:]]*Supported' "${post_report}"; then
+    return 0
+  fi
+  if [[ "${needs_reboot}" -eq 1 ]]; then
+    return 3
+  fi
+  return 1
+}
+
 check_runtime_image_toolchain() {
   local image="$1"
   local probe_log="${RESULTS_DIR}/runtime-image-prereq.log"
@@ -389,6 +503,7 @@ write_environment_report() {
 
 log "running host-e2e prerequisite checks"
 log "assumption: probe containers run with --privileged"
+enforce_strict_gds_policy
 resolve_nvfs_stats_mode
 
 ensure_cmd_or_install python3 python3
@@ -419,8 +534,20 @@ if is_true "${REQUIRE_DIRECT_GDS}"; then
     die "gdscheck -p failed; see ${local_report}"
   fi
   if ! grep -Eq 'NVMe[[:space:]]*:[[:space:]]*Supported' "${local_report}"; then
-    emit_direct_gds_remediation
-    die "gdscheck reports NVMe unsupported; see ${local_report}"
+    if attempt_full_gds_remediation_bundle "${gdscheck}"; then
+      log "full GDS remediation succeeded; proceeding with strict validation"
+      cp "${RESULTS_DIR}/gdscheck-prereq-post-remediation.txt" "${local_report}" || true
+    else
+      rc=$?
+      emit_direct_gds_remediation
+      if [[ "${rc}" -eq 2 ]]; then
+        die "gdscheck direct preflight failed and host has no guest-visible NVMe (/dev/nvme*); see ${local_report} and ${RESULTS_DIR}/gds-remediation.log"
+      fi
+      if [[ "${rc}" -eq 3 ]]; then
+        die "full GDS remediation attempted but reboot is required before strict validation; reboot host and rerun prereq (see ${RESULTS_DIR}/gds-remediation.log)"
+      fi
+      die "full GDS remediation attempted but NVMe direct path is still unavailable; see ${local_report} and ${RESULTS_DIR}/gds-remediation.log"
+    fi
   fi
 fi
 

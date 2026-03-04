@@ -26,6 +26,7 @@ make k3s-e2e
 ```
 
 `make k3s-e2e-prereq` validates cluster/runtime/image prerequisites and auto-installs host packages by default (`INSTALL_MISSING_PREREQS=true`).
+It does not mutate GPU driver/kernel packages automatically.
 Set `INSTALL_MISSING_PREREQS=false` to run checks only.
 
 Default storage gates enforced by prereq:
@@ -59,7 +60,7 @@ After that, `make host-e2e-qwen-quick` validates host direct-GDS with the model 
 
 By default this harness is strict (`REQUIRE_DIRECT_GDS=true`). If the host is not
 direct-GDS capable (`gdscheck -p` reports `NVMe : compat/Unsupported`), the target
-fails fast with remediation hints.
+runs a non-destructive remediation attempt first, then fails if direct NVMe path is still unavailable.
 
 If you prefer explicit staged runs:
 
@@ -123,7 +124,8 @@ The quick script enforces NVIDIA runtime compatibility by setting:
 and restarting `k3s` only when a change is required.
 
 When `REQUIRE_DIRECT_GDS=true`, quick iterate also runs `gdscheck -p` preflight.
-If `gdscheck` reports `NVMe : Unsupported`, true direct path is not available on that host and the run fails fast.
+If preflight is not direct-ready, the harness attempts non-destructive remediation by default.
+It only fails immediately when a hard blocker is detected (for example no guest-visible `/dev/nvme*`).
 
 If you want to override the model identity explicitly:
 
@@ -171,6 +173,7 @@ REQUIRE_DAEMON_IPC_PROBE=true make k3s-e2e
 # - REQUIRE_STRICT_PROFILE_PROBE=true
 # - REQUIRE_NO_COMPAT_EVIDENCE=true
 # - RUNTIME_DRIFT_CHECKPOINTS=true
+# - ALLOW_RELAXED_GDS=false
 # - privileged container securityContext for GPU/GDS workload containers
 # You can still set them explicitly:
 REQUIRE_DIRECT_GDS=true OCI2GDS_STRICT=true OCI2GDS_PROBE_STRICT=true OCI2GDS_FORCE_NO_COMPAT=true make k3s-e2e-qwen-quick
@@ -188,7 +191,7 @@ QWEN_HELLO_PROFILE=host-direct make k3s-e2e-qwen-quick
 OCI2GDSD_ROOT_PATH=/mnt/nvme/oci2gdsd make k3s-e2e-qwen-quick
 
 # Explicit opt-out (debug only): relax strict/direct enforcement.
-REQUIRE_DIRECT_GDS=false OCI2GDS_STRICT=false OCI2GDS_PROBE_STRICT=false OCI2GDS_FORCE_NO_COMPAT=false make k3s-e2e-qwen-quick
+ALLOW_RELAXED_GDS=true REQUIRE_DIRECT_GDS=false OCI2GDS_STRICT=false OCI2GDS_PROBE_STRICT=false OCI2GDS_FORCE_NO_COMPAT=false make k3s-e2e-qwen-quick
 
 # Build a GDS-capable oci2gdsd image for init/daemon containers
 OCI2GDSD_ENABLE_GDS_IMAGE=true REQUIRE_DAEMON_IPC_PROBE=true make k3s-e2e
