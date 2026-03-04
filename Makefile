@@ -8,12 +8,14 @@ help:
 	@echo "  clean                  Remove local build and test harness artifacts"
 	@echo "  test                   Run Go tests (no GPU required)"
 	@echo "  demo-local             Self-contained local demo (no GPU, no k8s)"
-	@echo "  nvkind-e2e-prereq      Check/install nvkind e2e prerequisites"
-	@echo "  nvkind-e2e             Run nvkind Kubernetes GPU e2e harness"
+	@echo "  local-e2e-prereq       Check local CLI e2e prerequisites"
+	@echo "  local-e2e              Run local CLI lifecycle e2e (ensure/status/verify/release/gc)"
+	@echo "  k3s-e2e-prereq         Check/install k3s e2e prerequisites"
+	@echo "  k3s-e2e                Run k3s Kubernetes GPU e2e harness"
 	@echo "  host-e2e-prereq        Check/install host qwen quick prerequisites"
-	@echo "  nvkind-e2e-qwen-quick  Fast qwen-hello redeploy/probe loop"
+	@echo "  k3s-e2e-qwen-quick     Fast qwen-hello redeploy/probe loop"
 	@echo "  host-e2e-qwen-quick    Run host-only strict direct-GDS qwen probe"
-	@echo "  nvkind-e2e-clean       Delete nvkind cluster and local harness artifacts"
+	@echo "  k3s-e2e-clean          Delete k3s e2e local harness artifacts"
 
 .PHONY: build
 build:
@@ -27,7 +29,7 @@ install:
 clean:
 	@echo "==> Removing local artifacts..."
 	@rm -f ./oci2gdsd
-	@rm -rf ./testharness/nvkind-e2e/work ./testharness/host-e2e/work
+	@rm -rf ./testharness/local-e2e/work ./testharness/k3s-e2e/work ./testharness/host-e2e/work
 	@find . -type d \( -name '__pycache__' -o -name '.pytest_cache' -o -name '.mypy_cache' \) -prune -exec rm -rf {} +
 	@find . -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
 	@echo "==> Done"
@@ -53,17 +55,25 @@ demo-local: build
 	@echo "==> To stop the registry when done:"
 	@echo "    docker stop local-registry"
 
-.PHONY: nvkind-e2e-prereq
-nvkind-e2e-prereq:
-	./testharness/nvkind-e2e/scripts/prereq-check.sh
+.PHONY: local-e2e-prereq
+local-e2e-prereq:
+	./testharness/local-e2e/scripts/prereq-check.sh
 
-.PHONY: nvkind-e2e
-nvkind-e2e: nvkind-e2e-prereq
-	./testharness/nvkind-e2e/scripts/run.sh
+.PHONY: local-e2e
+local-e2e: local-e2e-prereq
+	./testharness/local-e2e/scripts/run.sh
 
-.PHONY: nvkind-e2e-qwen-quick
-nvkind-e2e-qwen-quick: nvkind-e2e-prereq
-	./testharness/nvkind-e2e/scripts/quick-qwen.sh
+.PHONY: k3s-e2e-prereq
+k3s-e2e-prereq:
+	./testharness/k3s-e2e/scripts/prereq-check.sh
+
+.PHONY: k3s-e2e
+k3s-e2e: k3s-e2e-prereq
+	./testharness/k3s-e2e/scripts/run.sh
+
+.PHONY: k3s-e2e-qwen-quick
+k3s-e2e-qwen-quick: k3s-e2e-prereq
+	./testharness/k3s-e2e/scripts/quick-qwen.sh
 
 .PHONY: host-e2e-prereq
 host-e2e-prereq:
@@ -73,6 +83,6 @@ host-e2e-prereq:
 host-e2e-qwen-quick: host-e2e-prereq
 	./testharness/host-e2e/scripts/quick-qwen.sh
 
-.PHONY: nvkind-e2e-clean
-nvkind-e2e-clean:
-	./testharness/nvkind-e2e/scripts/cleanup.sh
+.PHONY: k3s-e2e-clean
+k3s-e2e-clean:
+	./testharness/k3s-e2e/scripts/cleanup.sh

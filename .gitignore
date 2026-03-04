@@ -1,7 +1,8 @@
 /oci2gdsd
 
 # Test harness runtime artifacts
-testharness/nvkind-e2e/work/
+testharness/local-e2e/work/
+testharness/k3s-e2e/work/
 testharness/host-e2e/work/
 
 # macOS

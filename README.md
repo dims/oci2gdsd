@@ -48,6 +48,12 @@ See **[docs/getting-started.md](docs/getting-started.md)** for a self-contained 
 build the binary, spin up a local registry, push a tiny test artifact, and run the full
 `ensure → status → verify → release → gc` lifecycle in under 10 minutes.
 
+For an automated version of that lifecycle:
+
+```bash
+make local-e2e
+```
+
 ---
 
 ## Install / Build
@@ -141,21 +147,25 @@ oci2gdsd gc --policy lru_no_lease --min-free-bytes 200G --json
 
 ## Kubernetes Quick Start
 
-Two `make` targets run end-to-end with a local k3s cluster and GPU operator:
+Run the local lifecycle e2e, then the GPU/k3s harness:
+
+```bash
+# Local no-GPU/no-k8s lifecycle e2e
+make local-e2e
+```
 
 ```bash
 # Check/install prerequisites (k3s, Docker, NVIDIA toolkit, etc.)
-make nvkind-e2e-prereq
+make k3s-e2e-prereq
 
 # Full e2e: package Qwen3, push to in-cluster registry, preload, run PyTorch smoke test
-make nvkind-e2e
+make k3s-e2e
 
 # Fast iteration after first run (reuse existing cluster and model artifact)
-make nvkind-e2e-qwen-quick
+make k3s-e2e-qwen-quick
 ```
 
-See **[testharness/nvkind-e2e/README.md](testharness/nvkind-e2e/README.md)** for overrides,
-cluster modes (k3s vs kind), and expected outputs.
+See **[testharness/k3s-e2e/README.md](testharness/k3s-e2e/README.md)** for overrides and expected outputs.
 
 ---
 
@@ -238,6 +248,7 @@ metrics/event exporters. See **[docs/IMPLEMENTATION-NOTES.md](docs/IMPLEMENTATIO
 | [docs/IMPLEMENTATION-NOTES.md](docs/IMPLEMENTATION-NOTES.md) | Contributors — what's implemented vs planned |
 | [docs/security-hardening-checklist.md](docs/security-hardening-checklist.md) | Security — controls implemented |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contributors — dev setup, tests, PR guide |
-| [testharness/nvkind-e2e/README.md](testharness/nvkind-e2e/README.md) | GPU infra — Kubernetes e2e harness |
+| [testharness/local-e2e/README.md](testharness/local-e2e/README.md) | New users — automated local lifecycle e2e |
+| [testharness/k3s-e2e/README.md](testharness/k3s-e2e/README.md) | GPU infra — Kubernetes e2e harness |
 | [testharness/host-e2e/README.md](testharness/host-e2e/README.md) | GPU infra — host-only GDS probe |
 | [examples/qwen-hello/README.md](examples/qwen-hello/README.md) | GPU infra — full Kubernetes example |

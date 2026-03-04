@@ -59,6 +59,6 @@ as the `--ref` for `oci2gdsd ensure`.
 
 ## Next step
 
-For a full nvkind + Kubernetes hello-world deployment using this artifact, see:
+For a full k3s + Kubernetes hello-world deployment using this artifact, see:
 
-- `examples/qwen-hello/qwen-packager-nvkind-hello-world.md`
+- `examples/qwen-hello/qwen-packager-k3s-hello-world.md`

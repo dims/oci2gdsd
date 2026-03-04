@@ -1,19 +1,19 @@
 # Troubleshooting Guide
 
-> **New here?** Before anything else, run `make nvkind-e2e-prereq` (or `make host-e2e-prereq`
+> **New here?** Before anything else, run `make k3s-e2e-prereq` (or `make host-e2e-prereq`
 > for host-only). That single step auto-installs missing tools and catches the most common
 > setup problems. If you're on a machine without an A100 + NVMe, see §4 and §14 first —
 > strict direct-GDS requires specific hardware.
 
 This guide is for failures we repeatedly observed while running:
 
-- `make nvkind-e2e-qwen-quick`
+- `make k3s-e2e-qwen-quick`
 - `make host-e2e-qwen-quick`
 
 Use it together with:
 
 - [docs/direct-gds-recreate-runbook.md](direct-gds-recreate-runbook.md)
-- [testharness/nvkind-e2e/README.md](../testharness/nvkind-e2e/README.md)
+- [testharness/k3s-e2e/README.md](../testharness/k3s-e2e/README.md)
 - [testharness/host-e2e/README.md](../testharness/host-e2e/README.md)
 
 ## 1) Fast Triage By Symptom
@@ -26,7 +26,7 @@ Use it together with:
 | Runtime image precheck fails with `missing: c++` | Selected runtime image cannot build native extension path | Use `PYTORCH_RUNTIME_IMAGE=nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1` |
 | Space errors during pull/build/apply | Docker/k3s/model root on small boot disk | Move Docker data-root and k3s/model paths to `/mnt/nvme` |
 | Direct probe says ok but NVFS counters stay zero | `nvidia-fs` IO stats disabled | Enable `rw_stats_enabled=1` or keep counter gate disabled |
-| qwen quick fails with missing model digest/ref | Quick mode does not have model identity yet | Run full `make nvkind-e2e` once or pass explicit `MODEL_*_OVERRIDE` |
+| qwen quick fails with missing model digest/ref | Quick mode does not have model identity yet | Run full `make k3s-e2e` once or pass explicit `MODEL_*_OVERRIDE` |
 | No `nvidia.com/gpu` allocatable | GPU operator/device plugin not ready | Install/repair GPU operator, then re-check node allocatable |
 
 ## 2) Preflight First, Always
@@ -34,7 +34,7 @@ Use it together with:
 Before any quick run on a fresh host:
 
 ```bash
-make nvkind-e2e-prereq
+make k3s-e2e-prereq
 make host-e2e-prereq
 ```
 
@@ -258,17 +258,17 @@ Repo default currently keeps `REQUIRE_NVFS_STATS_DELTA=false` to avoid false neg
 
 ## 11) Quick Target Fails Due To Model Identity
 
-`make nvkind-e2e-qwen-quick` needs model digest and registry ref.
+`make k3s-e2e-qwen-quick` needs model digest and registry ref.
 
 Ways to satisfy:
 
-1. Run `make nvkind-e2e` once to seed identity artifacts.
+1. Run `make k3s-e2e` once to seed identity artifacts.
 2. Set explicit overrides:
 
 ```bash
 MODEL_DIGEST_OVERRIDE=sha256:... \
 MODEL_REF_OVERRIDE=oci-model-registry.oci-model-registry.svc.cluster.local:5000/models/qwen3-0.6b@sha256:... \
-make nvkind-e2e-qwen-quick
+make k3s-e2e-qwen-quick
 ```
 
 ## 12) Recommended Recovery Sequence (Fresh A100)
@@ -276,14 +276,14 @@ make nvkind-e2e-qwen-quick
 1. Run prereq:
 
 ```bash
-make nvkind-e2e-prereq
+make k3s-e2e-prereq
 ```
 
 2. If toolkit hook error appears, upgrade toolkit/runtime and restart services.
 3. Re-run:
 
 ```bash
-make nvkind-e2e-qwen-quick
+make k3s-e2e-qwen-quick
 make host-e2e-qwen-quick
 ```
 
@@ -296,9 +296,9 @@ make host-e2e-qwen-quick
 
 For fast triage, include:
 
-1. `testharness/nvkind-e2e/work/results/gdscheck.txt`
+1. `testharness/k3s-e2e/work/results/gdscheck.txt`
 2. `testharness/host-e2e/work/results/gdscheck-host.txt`
-3. `testharness/nvkind-e2e/work/results/qwen-hello.log`
+3. `testharness/k3s-e2e/work/results/qwen-hello.log`
 4. `testharness/host-e2e/work/results/host-qwen-gds.log`
 5. `nvidia-smi` output
 6. `uname -r`
@@ -307,6 +307,6 @@ For fast triage, include:
 
 ## 14) Non-Goals and Known Limits
 
-- `kind`/`nvkind` can run app-level validation, but strict direct-path fidelity depends on host/provider topology.
+- Nested containerized Kubernetes can run app-level validation, but strict direct-path fidelity depends on host/provider topology.
 - Provider capability varies significantly; some A100 offerings never expose usable direct NVMe path.
 - Fast runs rely on privileged containers for current GDS probe mechanics.

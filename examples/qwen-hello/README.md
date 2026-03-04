@@ -38,7 +38,7 @@ If CUDA appears unavailable in pods (`torch.cuda.is_available() == False` while 
 ## Files
 
 - `oci-model-registry.yaml`: In-cluster Docker registry deployment/service.
-- `qwen-nvkind-hello-deployment.yaml.tpl`: Deployment template with:
+- `qwen-k3s-hello-deployment.yaml.tpl`: Deployment template with:
   - `preload-model` init container (`oci2gdsd ensure`)
   - `pytorch-api` container (runs `oci2gdsd serve` + FastAPI + PyTorch runtime)
 - `app/qwen_server.py`: FastAPI + PyTorch + `torch.ops.oci2gds` startup/runtime logic.
@@ -46,33 +46,33 @@ If CUDA appears unavailable in pods (`torch.cuda.is_available() == False` while 
 - `native/oci2gds_torch_native.cpp`: shared native extension source used by both qwen app and host probe.
 - `Dockerfile.vllm-runtime-gds`: Optional qwen runtime image with `oci2gdsd` + `libcufile` for native probe experiments.
 - `qwen-packager-hello-world.md`: Local packager walkthrough.
-- `qwen-packager-nvkind-hello-world.md`: End-to-end nvkind walkthrough.
+- `qwen-packager-k3s-hello-world.md`: End-to-end k3s walkthrough.
 
 ## Quick Start (Automated)
 
-From repo root, run the nvkind harness:
+From repo root, run the k3s harness:
 
 ```bash
-make nvkind-e2e
+make k3s-e2e
 ```
 
 To run qwen-hello validation specifically (enabled by default):
 
 ```bash
-VALIDATE_QWEN_HELLO=true make nvkind-e2e
+VALIDATE_QWEN_HELLO=true make k3s-e2e
 ```
 
-Harness docs: [`testharness/nvkind-e2e/README.md`](../../testharness/nvkind-e2e/README.md)
+Harness docs: [`testharness/k3s-e2e/README.md`](../../testharness/k3s-e2e/README.md)
 
 ## Manual Walkthrough
 
 Use:
 
-- [`qwen-packager-nvkind-hello-world.md`](./qwen-packager-nvkind-hello-world.md)
+- [`qwen-packager-k3s-hello-world.md`](./qwen-packager-k3s-hello-world.md)
 
 It covers:
 
-- creating `nvkind` cluster
+- preparing host-native `k3s`
 - starting in-cluster registry
 - packaging + pushing Qwen artifact
 - rendering and applying the deployment template

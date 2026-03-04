@@ -7,10 +7,10 @@ source "${SCRIPT_DIR}/common.sh"
 
 trap 'stop_registry_port_forward' EXIT
 
-log "starting nvkind e2e harness"
+log "starting k3s e2e harness"
 bootstrap_tools
 configure_nvidia_runtime
-create_nvkind_cluster
+ensure_k3s_cluster_ready
 install_gpu_operator
 verify_gpu_pod
 validate_local_gds_loader
@@ -46,25 +46,25 @@ render_template "${HARNESS_DIR}/manifests/workload-job.yaml.tpl" "${WORK_DIR}/re
   "LEASE_HOLDER=${LEASE_HOLDER}" \
   "OCI2GDSD_ROOT_PATH=${OCI2GDSD_ROOT_PATH}"
 
-kubectl --context "${KUBECTL_CONTEXT}" apply -f "${WORK_DIR}/rendered/namespace.yaml"
-kubectl --context "${KUBECTL_CONTEXT}" apply -f "${WORK_DIR}/rendered/oci2gdsd-configmap.yaml"
+kube apply -f "${WORK_DIR}/rendered/namespace.yaml"
+kube apply -f "${WORK_DIR}/rendered/oci2gdsd-configmap.yaml"
 SMOKE_SCRIPT="${HARNESS_DIR}/scripts/pytorch_smoke.py"
 [[ -f "${SMOKE_SCRIPT}" ]] || die "missing pytorch smoke script: ${SMOKE_SCRIPT}"
 apply_configmap_from_files "${E2E_NAMESPACE}" "pytorch-smoke-script" \
   --from-file=pytorch_smoke.py="${SMOKE_SCRIPT}"
-kubectl --context "${KUBECTL_CONTEXT}" -n "${E2E_NAMESPACE}" delete job/oci2gdsd-pytorch-smoke --ignore-not-found >/dev/null
-kubectl --context "${KUBECTL_CONTEXT}" apply -f "${WORK_DIR}/rendered/workload-job.yaml"
+kube -n "${E2E_NAMESPACE}" delete job/oci2gdsd-pytorch-smoke --ignore-not-found >/dev/null
+kube apply -f "${WORK_DIR}/rendered/workload-job.yaml"
 
 log "waiting for workload job completion"
-if ! kubectl --context "${KUBECTL_CONTEXT}" -n "${E2E_NAMESPACE}" wait job/oci2gdsd-pytorch-smoke --for=condition=Complete --timeout=1800s; then
+if ! kube -n "${E2E_NAMESPACE}" wait job/oci2gdsd-pytorch-smoke --for=condition=Complete --timeout=1800s; then
   collect_debug
-  kubectl --context "${KUBECTL_CONTEXT}" -n "${E2E_NAMESPACE}" logs job/oci2gdsd-pytorch-smoke -c preload-model || true
-  kubectl --context "${KUBECTL_CONTEXT}" -n "${E2E_NAMESPACE}" logs job/oci2gdsd-pytorch-smoke -c pytorch-smoke || true
+  kube -n "${E2E_NAMESPACE}" logs job/oci2gdsd-pytorch-smoke -c preload-model || true
+  kube -n "${E2E_NAMESPACE}" logs job/oci2gdsd-pytorch-smoke -c pytorch-smoke || true
   die "workload job failed"
 fi
 
-kubectl --context "${KUBECTL_CONTEXT}" -n "${E2E_NAMESPACE}" logs job/oci2gdsd-pytorch-smoke -c preload-model > "${WORK_DIR}/results/preload.log"
-kubectl --context "${KUBECTL_CONTEXT}" -n "${E2E_NAMESPACE}" logs job/oci2gdsd-pytorch-smoke -c pytorch-smoke > "${WORK_DIR}/results/pytorch.log"
+kube -n "${E2E_NAMESPACE}" logs job/oci2gdsd-pytorch-smoke -c preload-model > "${WORK_DIR}/results/preload.log"
+kube -n "${E2E_NAMESPACE}" logs job/oci2gdsd-pytorch-smoke -c pytorch-smoke > "${WORK_DIR}/results/pytorch.log"
 
 if ! grep -q '"status": "READY"' "${WORK_DIR}/results/preload.log"; then
   die "preload init container did not report READY"
@@ -77,16 +77,16 @@ if [[ "${VALIDATE_QWEN_HELLO}" == "true" ]]; then
   log "validating examples/qwen-hello deployment"
   if ! validate_qwen_hello_example; then
     collect_debug
-    kubectl --context "${KUBECTL_CONTEXT}" -n "${QWEN_HELLO_NAMESPACE}" logs deploy/qwen-hello -c preload-model || true
-    kubectl --context "${KUBECTL_CONTEXT}" -n "${QWEN_HELLO_NAMESPACE}" logs deploy/qwen-hello -c oci2gdsd-daemon || true
-    kubectl --context "${KUBECTL_CONTEXT}" -n "${QWEN_HELLO_NAMESPACE}" logs deploy/qwen-hello -c pytorch-api || true
+    kube -n "${QWEN_HELLO_NAMESPACE}" logs deploy/qwen-hello -c preload-model || true
+    kube -n "${QWEN_HELLO_NAMESPACE}" logs deploy/qwen-hello -c oci2gdsd-daemon || true
+    kube -n "${QWEN_HELLO_NAMESPACE}" logs deploy/qwen-hello -c pytorch-api || true
     die "qwen hello example validation failed"
   fi
   cleanup_qwen_hello_example
 fi
 
-POD_NAME="$(kubectl --context "${KUBECTL_CONTEXT}" -n "${E2E_NAMESPACE}" get pod -l job-name=oci2gdsd-pytorch-smoke -o jsonpath='{.items[0].metadata.name}')"
-NODE_NAME="$(kubectl --context "${KUBECTL_CONTEXT}" -n "${E2E_NAMESPACE}" get pod "${POD_NAME}" -o jsonpath='{.spec.nodeName}')"
+POD_NAME="$(kube -n "${E2E_NAMESPACE}" get pod -l job-name=oci2gdsd-pytorch-smoke -o jsonpath='{.items[0].metadata.name}')"
+NODE_NAME="$(kube -n "${E2E_NAMESPACE}" get pod "${POD_NAME}" -o jsonpath='{.spec.nodeName}')"
 if [[ -z "${NODE_NAME}" ]]; then
   die "failed to resolve node name for workload pod"
 fi
@@ -101,21 +101,21 @@ render_template "${HARNESS_DIR}/manifests/release-job.yaml.tpl" "${WORK_DIR}/ren
   "NODE_NAME=${NODE_NAME}" \
   "OCI2GDSD_ROOT_PATH=${OCI2GDSD_ROOT_PATH}"
 
-kubectl --context "${KUBECTL_CONTEXT}" -n "${E2E_NAMESPACE}" delete job/oci2gdsd-release-gc --ignore-not-found >/dev/null
-kubectl --context "${KUBECTL_CONTEXT}" apply -f "${WORK_DIR}/rendered/release-job.yaml"
+kube -n "${E2E_NAMESPACE}" delete job/oci2gdsd-release-gc --ignore-not-found >/dev/null
+kube apply -f "${WORK_DIR}/rendered/release-job.yaml"
 log "waiting for release job completion"
-if ! kubectl --context "${KUBECTL_CONTEXT}" -n "${E2E_NAMESPACE}" wait job/oci2gdsd-release-gc --for=condition=Complete --timeout=600s; then
+if ! kube -n "${E2E_NAMESPACE}" wait job/oci2gdsd-release-gc --for=condition=Complete --timeout=600s; then
   collect_debug
-  kubectl --context "${KUBECTL_CONTEXT}" -n "${E2E_NAMESPACE}" logs job/oci2gdsd-release-gc || true
+  kube -n "${E2E_NAMESPACE}" logs job/oci2gdsd-release-gc || true
   die "release/gc job failed"
 fi
 
-kubectl --context "${KUBECTL_CONTEXT}" -n "${E2E_NAMESPACE}" logs job/oci2gdsd-release-gc > "${WORK_DIR}/results/release-gc.log"
+kube -n "${E2E_NAMESPACE}" logs job/oci2gdsd-release-gc > "${WORK_DIR}/results/release-gc.log"
 if ! grep -q '"status": "RELEASED"' "${WORK_DIR}/results/release-gc.log"; then
   die "release/gc lifecycle did not end in RELEASED status"
 fi
 
-log "nvkind e2e harness completed successfully"
+log "k3s e2e harness completed successfully"
 log "artifacts:"
 log "  ${WORK_DIR}/results/preload.log"
 log "  ${WORK_DIR}/results/pytorch.log"

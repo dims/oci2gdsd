@@ -48,7 +48,7 @@ check_privileged_assumptions() {
   fi
 }
 
-log "running nvkind/k3s prerequisite checks"
+log "running k3s prerequisite checks"
 log "assumption: all GPU/GDS workload containers run privileged"
 
 if [[ "${INSTALL_MISSING_PREREQS}" == "true" ]]; then
@@ -59,22 +59,14 @@ else
   ensure_cmd gsed
   ensure_cmd curl
   ensure_cmd nvidia-smi
-  if [[ "${CLUSTER_MODE}" == "k3s" ]]; then
-    ensure_cmd k3s
-    ensure_cmd nvidia-ctk
-  else
-    ensure_cmd kubectl
-    ensure_cmd kind
-    ensure_cmd nvkind
-  fi
+  ensure_cmd k3s
+  ensure_cmd nvidia-ctk
 fi
 
 ensure_docker_access
 check_storage_prereqs
 
-if [[ "${CLUSTER_MODE}" == "k3s" ]]; then
-  ensure_k3s_nvidia_runtime_prereqs
-fi
+ensure_k3s_nvidia_runtime_prereqs
 
 if ! kube get nodes >/dev/null 2>&1; then
   die "cluster ${CLUSTER_MODE} is not reachable ($(cluster_hint))"
@@ -90,4 +82,4 @@ mkdir -p "${WORK_DIR}/results"
 check_runtime_image_toolchain "${PYTORCH_RUNTIME_IMAGE}"
 check_privileged_assumptions
 
-log "nvkind/k3s prerequisites are satisfied"
+log "k3s prerequisites are satisfied"

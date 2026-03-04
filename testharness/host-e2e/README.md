@@ -9,8 +9,8 @@ downloaded to disk.
 **Option A — run the full e2e once first (recommended for first-time setup):**
 
 ```bash
-make nvkind-e2e-prereq
-make nvkind-e2e
+make k3s-e2e-prereq
+make k3s-e2e
 ```
 
 This provisions a local k3s cluster, packages Qwen3, and runs `oci2gdsd ensure` to

@@ -8,10 +8,8 @@ WORK_DIR="${HARNESS_DIR}/work"
 LOG_DIR="${WORK_DIR}/logs"
 mkdir -p "${WORK_DIR}" "${LOG_DIR}"
 
-CLUSTER_NAME="${CLUSTER_NAME:-oci2gdsd-e2e}"
 CLUSTER_MODE="${CLUSTER_MODE:-k3s}"
 K3S_USE_SUDO="${K3S_USE_SUDO:-true}"
-KUBECTL_CONTEXT="${KUBECTL_CONTEXT:-kind-${CLUSTER_NAME}}"
 E2E_NAMESPACE="${E2E_NAMESPACE:-oci2gdsd-e2e}"
 QWEN_HELLO_NAMESPACE="${QWEN_HELLO_NAMESPACE:-qwen-hello}"
 QWEN_HELLO_PROFILE="${QWEN_HELLO_PROFILE:-}"
@@ -315,61 +313,33 @@ check_storage_prereqs() {
 
 resolve_cluster_mode() {
   case "${CLUSTER_MODE}" in
-    kind|k3s)
-      ;;
-    auto)
-      if command -v k3s >/dev/null 2>&1; then
-        if [[ "$(id -u)" -eq 0 ]]; then
-          if k3s kubectl get nodes >/dev/null 2>&1; then
-            CLUSTER_MODE="k3s"
-          else
-            CLUSTER_MODE="kind"
-          fi
-        elif sudo -n true >/dev/null 2>&1 && sudo -n k3s kubectl get nodes >/dev/null 2>&1; then
-          CLUSTER_MODE="k3s"
-        else
-          CLUSTER_MODE="kind"
-        fi
-      else
-        CLUSTER_MODE="kind"
-      fi
+    k3s|auto)
+      CLUSTER_MODE="k3s"
       ;;
     *)
-      die "unsupported CLUSTER_MODE=${CLUSTER_MODE} (expected kind|k3s|auto)"
+      die "unsupported CLUSTER_MODE=${CLUSTER_MODE} (expected k3s|auto)"
       ;;
   esac
 }
 
 kube() {
-  if [[ "${CLUSTER_MODE}" == "k3s" ]]; then
-    if [[ "${K3S_USE_SUDO}" == "true" && "$(id -u)" -ne 0 ]]; then
-      sudo k3s kubectl "$@"
-    else
-      k3s kubectl "$@"
-    fi
+  if [[ "${K3S_USE_SUDO}" == "true" && "$(id -u)" -ne 0 ]]; then
+    sudo k3s kubectl "$@"
   else
-    kubectl --context "${KUBECTL_CONTEXT}" "$@"
+    k3s kubectl "$@"
   fi
 }
 
 helm_kube() {
-  if [[ "${CLUSTER_MODE}" == "k3s" ]]; then
-    if [[ "${K3S_USE_SUDO}" == "true" && "$(id -u)" -ne 0 ]]; then
-      sudo helm --kubeconfig /etc/rancher/k3s/k3s.yaml "$@"
-    else
-      helm --kubeconfig /etc/rancher/k3s/k3s.yaml "$@"
-    fi
+  if [[ "${K3S_USE_SUDO}" == "true" && "$(id -u)" -ne 0 ]]; then
+    sudo helm --kubeconfig /etc/rancher/k3s/k3s.yaml "$@"
   else
-    helm --kube-context "${KUBECTL_CONTEXT}" "$@"
+    helm --kubeconfig /etc/rancher/k3s/k3s.yaml "$@"
   fi
 }
 
 cluster_hint() {
-  if [[ "${CLUSTER_MODE}" == "k3s" ]]; then
-    echo "k3s"
-  else
-    echo "kind context ${KUBECTL_CONTEXT}"
-  fi
+  echo "k3s"
 }
 
 resolve_cluster_mode
@@ -398,7 +368,7 @@ if [[ "${QWEN_HELLO_PROFILE}" == "host-direct" ]]; then
   fi
 fi
 if [[ -z "${QWEN_HELLO_TEMPLATE}" ]]; then
-  QWEN_HELLO_TEMPLATE="${REPO_ROOT}/examples/qwen-hello/qwen-nvkind-hello-deployment.yaml.tpl"
+  QWEN_HELLO_TEMPLATE="${REPO_ROOT}/examples/qwen-hello/qwen-k3s-hello-deployment.yaml.tpl"
 fi
 
 strip_go_prefix() {
@@ -457,16 +427,6 @@ ensure_go_path() {
       fi
     fi
   fi
-}
-
-install_kind_if_missing() {
-  if command -v kind >/dev/null 2>&1; then
-    return
-  fi
-  log "installing kind v${KIND_VERSION}"
-  curl -fsSL -o /tmp/kind "https://kind.sigs.k8s.io/dl/v${KIND_VERSION}/kind-linux-amd64"
-  chmod +x /tmp/kind
-  maybe_sudo mv /tmp/kind /usr/local/bin/kind
 }
 
 install_kubectl_if_missing() {
@@ -604,33 +564,11 @@ install_gds_tools_if_missing() {
   die "failed to install gdscheck automatically; install nvidia-gds (or gds-tools) manually"
 }
 
-install_nvkind_if_missing() {
-  ensure_go_path
-  if command -v nvkind >/dev/null 2>&1; then
-    return
-  fi
-  if ! command -v gcc >/dev/null 2>&1 || [[ ! -f /usr/include/nvml.h ]]; then
-    ensure_apt_available
-    log "installing nvkind build dependencies (build-essential, libnvidia-ml-dev)"
-    maybe_sudo apt-get update -y >/dev/null
-    maybe_sudo apt-get install -y build-essential libnvidia-ml-dev >/dev/null
-  fi
-  log "installing nvkind"
-  go install github.com/NVIDIA/nvkind/cmd/nvkind@latest
-  if [[ -d "${HOME}/go/bin" ]]; then
-    export PATH="${HOME}/go/bin:${PATH}"
-  fi
-  ensure_cmd nvkind
-}
-
 bootstrap_tools() {
   require_linux_host
   install_go_if_missing
   ensure_go_path
-  if [[ "${CLUSTER_MODE}" == "kind" ]]; then
-    install_kind_if_missing
-    install_kubectl_if_missing
-  fi
+  install_kubectl_if_missing
   install_helm_if_missing
   install_jq_if_missing
   install_gsed_if_missing
@@ -640,11 +578,7 @@ bootstrap_tools() {
   if [[ "${REQUIRE_DIRECT_GDS}" == "true" ]]; then
     install_gds_tools_if_missing
   fi
-  if [[ "${CLUSTER_MODE}" == "k3s" ]]; then
-    install_k3s_if_missing
-  else
-    install_nvkind_if_missing
-  fi
+  install_k3s_if_missing
   ensure_cmd nvidia-smi
 }
 
@@ -737,26 +671,22 @@ check_direct_gds_platform_support() {
   return 0
 }
 
-create_nvkind_cluster() {
-  if kind get clusters 2>/dev/null | grep -Fxq "${CLUSTER_NAME}"; then
-    log "kind cluster ${CLUSTER_NAME} already exists"
-  else
-    log "creating nvkind cluster ${CLUSTER_NAME}"
-    nvkind cluster create --name="${CLUSTER_NAME}" || warn "nvkind returned non-zero (continuing)"
+ensure_k3s_cluster_ready() {
+  if [[ "${K3S_USE_SUDO}" == "true" && "$(id -u)" -ne 0 ]]; then
+    maybe_sudo systemctl enable --now k3s >/dev/null 2>&1 || true
   fi
   local tries=0
   local max_tries=30
-  until kubectl --context "${KUBECTL_CONTEXT}" get nodes >/dev/null 2>&1; do
+  until kube get nodes >/dev/null 2>&1; do
     tries=$((tries + 1))
     if [[ "${tries}" -ge "${max_tries}" ]]; then
-      die "kubernetes API for ${KUBECTL_CONTEXT} did not become queryable after ${max_tries} attempts"
+      die "k3s API did not become queryable after ${max_tries} attempts"
     fi
-    warn "waiting for kubernetes API/RBAC bootstrap (${tries}/${max_tries})"
+    warn "waiting for k3s API/RBAC bootstrap (${tries}/${max_tries})"
     sleep 5
   done
-  kubectl --context "${KUBECTL_CONTEXT}" wait --for=condition=Ready nodes --all --timeout=300s
-  kubectl --context "${KUBECTL_CONTEXT}" get nodes -o wide
-  nvkind cluster print-gpus --name="${CLUSTER_NAME}" || true
+  kube wait --for=condition=Ready nodes --all --timeout=300s
+  kube get nodes -o wide
 }
 
 install_gpu_operator() {
@@ -917,7 +847,7 @@ build_and_load_oci2gdsd_image() {
     log "skipping oci2gdsd image build for ${OCI2GDSD_IMAGE}"
   fi
   if [[ "${SKIP_OCI2GDSD_IMAGE_LOAD}" != "true" ]]; then
-    kind_load_image "${OCI2GDSD_IMAGE}"
+    cluster_load_image "${OCI2GDSD_IMAGE}"
   else
     log "skipping cluster image load for ${OCI2GDSD_IMAGE}"
   fi
@@ -948,7 +878,7 @@ build_and_load_qwen_gds_runtime_image() {
   [[ -f "${QWEN_GDS_RUNTIME_DOCKERFILE}" ]] || die "qwen gds runtime dockerfile not found: ${QWEN_GDS_RUNTIME_DOCKERFILE}"
   log "building qwen gds runtime image ${QWEN_GDS_RUNTIME_IMAGE} using ${QWEN_GDS_RUNTIME_DOCKERFILE}"
   docker build -f "${QWEN_GDS_RUNTIME_DOCKERFILE}" -t "${QWEN_GDS_RUNTIME_IMAGE}" "${REPO_ROOT}"
-  kind_load_image "${QWEN_GDS_RUNTIME_IMAGE}"
+  cluster_load_image "${QWEN_GDS_RUNTIME_IMAGE}"
   PYTORCH_RUNTIME_IMAGE="${QWEN_GDS_RUNTIME_IMAGE}"
   export PYTORCH_RUNTIME_IMAGE
   log "using qwen gds runtime image for qwen-hello: ${PYTORCH_RUNTIME_IMAGE}"
@@ -961,33 +891,22 @@ preload_workload_image() {
   fi
   local max_tries=3
   ensure_image_local_or_pull "${PYTORCH_IMAGE}" "${max_tries}"
-  kind_load_image "${PYTORCH_IMAGE}"
+  cluster_load_image "${PYTORCH_IMAGE}"
   if [[ "${PRELOAD_PYTORCH_RUNTIME_IMAGE}" == "true" ]]; then
     ensure_image_local_or_pull "${PYTORCH_RUNTIME_IMAGE}" "${max_tries}"
-    kind_load_image "${PYTORCH_RUNTIME_IMAGE}"
+    cluster_load_image "${PYTORCH_RUNTIME_IMAGE}"
   else
     log "skipping pre-load for ${PYTORCH_RUNTIME_IMAGE}; cluster will pull image on demand"
   fi
 }
 
-kind_load_image() {
+cluster_load_image() {
   local image="$1"
-  if [[ "${CLUSTER_MODE}" == "k3s" ]]; then
-    log "importing image into k3s containerd: ${image}"
-    docker save "${image}" | maybe_sudo k3s ctr -n k8s.io images import -
-    if [[ "${image}" != */* ]]; then
-      maybe_sudo k3s ctr -n k8s.io images tag "${image}" "docker.io/library/${image}" || true
-    fi
-    return
+  log "importing image into k3s containerd: ${image}"
+  docker save "${image}" | maybe_sudo k3s ctr -n k8s.io images import -
+  if [[ "${image}" != */* ]]; then
+    maybe_sudo k3s ctr -n k8s.io images tag "${image}" "docker.io/library/${image}" || true
   fi
-  if kind load docker-image "${image}" --name "${CLUSTER_NAME}"; then
-    return
-  fi
-  if [[ "$(id -u)" -eq 0 ]]; then
-    die "kind load docker-image failed for ${image}"
-  fi
-  warn "kind load docker-image failed for ${image}; retrying with sudo"
-  maybe_sudo kind load docker-image "${image}" --name "${CLUSTER_NAME}"
 }
 
 build_packager_image() {
@@ -1214,8 +1133,8 @@ validate_qwen_hello_example() {
 
   kube -n "${QWEN_HELLO_NAMESPACE}" \
     logs "pod/${pod_name}" -c pytorch-api > "${log_file}" 2>/dev/null || true
-  printf '\nQWEN_NVKIND_HELLO_HEALTH_RESPONSE %s\n' "${health_response}" >> "${log_file}"
-  printf '\nQWEN_NVKIND_HELLO_CHAT_RESPONSE %s\n' "${response}" >> "${log_file}"
+  printf '\nQWEN_K3S_HELLO_HEALTH_RESPONSE %s\n' "${health_response}" >> "${log_file}"
+  printf '\nQWEN_K3S_HELLO_CHAT_RESPONSE %s\n' "${response}" >> "${log_file}"
 
   if [[ -f "${pf_pid_file}" ]]; then
     kill "$(cat "${pf_pid_file}")" 2>/dev/null || true
@@ -1244,7 +1163,7 @@ validate_qwen_hello_example() {
     warn "qwen hello daemon ipc probe not ok: status=${oci2gds_ipc_status} backend=${oci2gds_ipc_backend}"
     return 1
   fi
-  printf 'QWEN_NVKIND_HELLO_SUCCESS prompt=%s answer=%s oci2gds_profile_status=%s oci2gds_backend=%s oci2gds_mode_counts=%s oci2gds_ipc_status=%s oci2gds_ipc_backend=%s\n' \
+  printf 'QWEN_K3S_HELLO_SUCCESS prompt=%s answer=%s oci2gds_profile_status=%s oci2gds_backend=%s oci2gds_mode_counts=%s oci2gds_ipc_status=%s oci2gds_ipc_backend=%s\n' \
     "${prompt}" "${answer}" "${oci2gds_profile_status}" "${oci2gds_backend}" "${oci2gds_mode_counts}" "${oci2gds_ipc_status}" "${oci2gds_ipc_backend}" >> "${log_file}"
   return 0
 }
