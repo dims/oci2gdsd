@@ -54,8 +54,8 @@ This script only:
 
 It supports both cluster modes:
 
-- `CLUSTER_MODE=kind` (default)
-- `CLUSTER_MODE=k3s` (host-native k3s on Brev/Ubuntu)
+- `CLUSTER_MODE=k3s` (default; host-native k3s on Brev/Ubuntu)
+- `CLUSTER_MODE=kind` (optional override)
 
 For host-native k3s quick iteration:
 
@@ -66,6 +66,36 @@ MODEL_REF_OVERRIDE=oci-model-registry.oci-model-registry.svc.cluster.local:5000/
 MODEL_DIGEST_OVERRIDE=sha256:... \
 make nvkind-e2e-qwen-quick
 ```
+
+## Model Identity For Quick Runs
+
+`make nvkind-e2e-qwen-quick` needs a model digest and in-cluster OCI ref.
+There are three supported ways to provide this:
+
+1. Run `make nvkind-e2e` once on the same host.
+This generates `testharness/nvkind-e2e/work/packager/output/manifest-descriptor.json`,
+which quick mode can reuse automatically.
+
+2. Pass explicit overrides (recommended for repeatability):
+
+```bash
+MODEL_DIGEST_OVERRIDE=sha256:<digest> \
+MODEL_REF_OVERRIDE=oci-model-registry.oci-model-registry.svc.cluster.local:5000/models/qwen3-0.6b@sha256:<digest> \
+make nvkind-e2e-qwen-quick
+```
+
+3. Derive digest from preloaded host model cache and export overrides:
+
+```bash
+digest_dir="$(ls -1dt /mnt/nvme/oci2gdsd/models/qwen3-0.6b/sha256-* | head -n1)"
+digest="sha256:${digest_dir##*/sha256-}"
+export MODEL_DIGEST_OVERRIDE="${digest}"
+export MODEL_REF_OVERRIDE="oci-model-registry.oci-model-registry.svc.cluster.local:5000/models/qwen3-0.6b@${digest}"
+make nvkind-e2e-qwen-quick
+```
+
+If you use a non-default registry service/namespace, replace
+`oci-model-registry.oci-model-registry.svc.cluster.local:5000` accordingly.
 
 When `CLUSTER_MODE=k3s`, the quick script enforces NVIDIA runtime compatibility by setting:
 

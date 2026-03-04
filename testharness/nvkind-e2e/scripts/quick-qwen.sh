@@ -14,7 +14,11 @@ resolve_model_identity() {
     [[ -n "${MODEL_DIGEST}" ]] || die "packager manifest exists but digest is empty: ${WORK_DIR}/packager/output/manifest-descriptor.json"
     MODEL_REF="${REGISTRY_SERVICE}.${REGISTRY_NAMESPACE}.svc.cluster.local:5000/${MODEL_REPO}@${MODEL_DIGEST}"
   else
-    die "missing model identity; set MODEL_REF_OVERRIDE and MODEL_DIGEST_OVERRIDE, or run make nvkind-e2e once to generate ${WORK_DIR}/packager/output/manifest-descriptor.json"
+    die "missing model identity; set MODEL_REF_OVERRIDE and MODEL_DIGEST_OVERRIDE, or run make nvkind-e2e once to generate ${WORK_DIR}/packager/output/manifest-descriptor.json.
+Example:
+  MODEL_DIGEST_OVERRIDE=sha256:<digest> \\
+  MODEL_REF_OVERRIDE=${REGISTRY_SERVICE}.${REGISTRY_NAMESPACE}.svc.cluster.local:5000/${MODEL_REPO}@sha256:<digest> \\
+  make nvkind-e2e-qwen-quick"
   fi
   MODEL_ROOT_PATH="${OCI2GDSD_ROOT_PATH}/models/${MODEL_ID}/${MODEL_DIGEST//:/-}"
   export MODEL_REF MODEL_DIGEST MODEL_ROOT_PATH
