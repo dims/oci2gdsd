@@ -3,6 +3,8 @@
 This guide describes the raw-manifest deployment path for running `oci2gdsd serve`
 as a node-level daemon and validating GPU load/export lifecycle from a workload pod.
 
+Architecture overview: [architecture-diagram.md](architecture-diagram.md)
+
 ## Files
 
 - `platform/k3s/shared/oci2gdsd-daemonset.yaml.tpl`
@@ -22,6 +24,7 @@ as a node-level daemon and validating GPU load/export lifecycle from a workload 
 4. Runs a PyTorch workload that calls daemon APIs:
    - `POST /v1/gpu/load` (`mode=persistent`)
    - `POST /v1/gpu/export`
+   - `POST /v1/gpu/tensor-map`
    - `POST /v1/gpu/attach`
    - `POST /v1/gpu/heartbeat`
    - `POST /v1/gpu/detach`
@@ -33,9 +36,16 @@ For TensorRT-LLM daemon-client mode, the workload:
 
 - Builds a TensorRT engine from the ensured local model files.
 - Runs `ModelRunnerCpp.from_dir(..., use_gpu_direct_storage=True)`.
-- Verifies daemon `gpu/load` + `gpu/status` + `gpu/unload` lifecycle.
+- Verifies daemon `gpu/tensor-map` IPC handle coverage for safetensors shards.
+- Verifies daemon `gpu/load` + `gpu/status` + `gpu/attach` + `gpu/heartbeat` + `gpu/detach` + `gpu/unload` lifecycle.
 - Mounts host `/run/udev` and `/etc/cufile.json` so cuFile device registration
   can succeed for strict direct-GDS engine loading.
+
+For vLLM daemon-client mode, the workload:
+
+- Registers out-of-tree `load_format=oci2gds`.
+- Uses daemon `gpu/tensor-map` output to drive IPC tensor rebinding checks.
+- Supports parity modes (`RUNTIME_PARITY_MODE=off|probe|partial|full`) to gate how strict runtime coupling must be.
 
 ## Harness entrypoint (recommended)
 
@@ -55,6 +65,14 @@ vLLM daemon-client run (out-of-tree loader plugin):
 make verify-k3s-vllm-e2e-daemonset
 ```
 
+Parity-focused runtime checks:
+
+```bash
+make verify-k3s-tensor-e2e-daemonset-parity
+make verify-k3s-vllm-e2e-daemonset-parity
+make verify-k3s-daemonset-parity-all
+```
+
 Equivalent explicit mode toggle:
 
 ```bash
@@ -68,6 +86,8 @@ E2E_DEPLOY_MODE=daemonset-manifest make verify-k3s
 - `OCI2GDSD_ROOT_PATH` (default `/mnt/nvme/oci2gdsd` in host-direct profile)
 - `REQUIRE_DIRECT_GDS` (default `true`)
 - `WORKLOAD_RUNTIME` (`pytorch`, `tensorrt`, or `vllm`; default `pytorch`)
+- `RUNTIME_PARITY_MODE` (`off`, `probe`, `partial`, `full`; default `probe`)
+- `REQUIRE_FULL_IPC_BIND` (default `false`, currently used by vLLM parity flow)
 
 ## Success markers
 
@@ -87,9 +107,14 @@ TensorRT daemon-client log (`platform/k3s/work/artifacts/results/tensorrt-daemon
 
 - `DAEMON_GPU_LOAD_READY`
 - `DAEMON_GPU_STATUS_OK`
+- `DAEMON_GPU_ATTACH_OK`
+- `DAEMON_GPU_HEARTBEAT_OK`
+- `TENSORRT_IPC_TENSOR_MAP_OK`
+- `TENSORRT_IPC_BIND_OK`
 - `TENSORRT_ENGINE_BUILD_OK`
 - `TENSORRT_GDS_RUNNER_READY`
 - `TENSORRT_QWEN_INFER_OK`
+- `DAEMON_GPU_DETACH_OK`
 - `DAEMON_GPU_UNLOAD_OK`
 - `TENSORRT_DAEMON_CLIENT_SUCCESS`
 
@@ -97,9 +122,14 @@ vLLM daemon-client log (`platform/k3s/work/artifacts/results/vllm-daemon-client.
 
 - `DAEMON_GPU_LOAD_READY`
 - `DAEMON_GPU_STATUS_OK`
+- `DAEMON_GPU_ATTACH_OK`
+- `DAEMON_GPU_HEARTBEAT_OK`
+- `VLLM_IPC_TENSOR_MAP_OK`
+- `VLLM_IPC_BIND_OK`
 - `VLLM_LOADER_REGISTERED`
 - `VLLM_OCI2GDS_LOAD_OK`
 - `VLLM_QWEN_INFER_OK`
+- `DAEMON_GPU_DETACH_OK`
 - `DAEMON_GPU_UNLOAD_OK`
 - `VLLM_DAEMON_CLIENT_SUCCESS`
 
