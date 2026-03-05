@@ -115,8 +115,8 @@ make verify-k3s-qwen-smoke
 
 This script only:
 
-- re-renders and reapplies `platform/k3s/workloads/pytorch/qwen-hello/qwen-k3s-hello-deployment.yaml.tpl`
-- applies qwen app/native ConfigMaps from standalone files under `platform/k3s/workloads/pytorch/qwen-hello/app` and `platform/k3s/workloads/pytorch/qwen-hello/native`
+- re-renders and reapplies `platform/k3s/workloads/pytorch/qwen-k3s-hello-deployment.yaml.tpl`
+- applies qwen app/native ConfigMaps from standalone files under `platform/k3s/workloads/pytorch/app` and `platform/k3s/workloads/pytorch/native`
 - waits for rollout
 - probes `/healthz` and `/chat`
 - writes logs to `platform/k3s/e2e/work/results/qwen-hello.log`

@@ -10,7 +10,7 @@ kept separately.
 - `platform/k3s/workloads/pytorch/`
   - `pytorch-daemon-client-job.yaml.tpl`
   - `pytorch_daemon_client.py`
-  - `qwen-hello/` FastAPI + PyTorch deployment and app/native sources.
+  - `qwen-hello.md` plus qwen deployment/app/native sources.
 - `platform/k3s/workloads/tensorrt/`
   - `tensorrt-daemon-client-job.yaml.tpl`
   - `tensorrt_daemon_client.py`
@@ -20,7 +20,7 @@ kept separately.
 
 ## Start points
 
-- PyTorch qwen-hello app: `platform/k3s/workloads/pytorch/qwen-hello/README.md`
+- PyTorch qwen-hello app: `platform/k3s/workloads/pytorch/qwen-hello.md`
 - PyTorch daemon-client workload: `platform/k3s/workloads/pytorch/README.md`
 - TensorRT daemon-client workload: `platform/k3s/workloads/tensorrt/README.md`
 - vLLM daemon-client workload: `platform/k3s/workloads/vllm/README.md`

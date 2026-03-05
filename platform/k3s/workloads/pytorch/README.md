@@ -6,7 +6,8 @@ Runtime-specific assets for PyTorch paths in k3s daemonset mode.
 
 - `pytorch-daemon-client-job.yaml.tpl`: daemon client workload job.
 - `pytorch_daemon_client.py`: daemon API + CUDA IPC handoff workflow.
-- `qwen-hello/`: FastAPI deployment and startup probes for local-preloaded model files.
+- `qwen-hello.md`: qwen workload walkthrough and behavior notes.
+- `app/`, `native/`, and `qwen-*.yaml.tpl`: qwen deployment/runtime assets.
 
 ## Typical runs
 

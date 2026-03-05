@@ -61,4 +61,4 @@ as the `--ref` for `oci2gdsd ensure`.
 
 For a full k3s + Kubernetes hello-world deployment using this artifact, see:
 
-- `platform/k3s/workloads/pytorch/qwen-hello/qwen-packager-k3s-hello-world.md`
+- `platform/k3s/workloads/pytorch/qwen-packager-k3s-hello-world.md`

@@ -468,7 +468,7 @@ validate_quick_example_cli() {
 run_host_probe() {
   local probe_log="${RESULTS_DIR}/host-qwen-gds.log"
   local probe_script="${SCRIPT_DIR}/host_qwen_probe.py"
-  local native_cpp="${REPO_ROOT}/platform/k3s/workloads/pytorch/qwen-hello/native/oci2gds_torch_native.cpp"
+  local native_cpp="${REPO_ROOT}/platform/k3s/workloads/pytorch/native/oci2gds_torch_native.cpp"
   [[ -f "${probe_script}" ]] || die "missing probe script: ${probe_script}"
   [[ -f "${native_cpp}" ]] || die "missing native source: ${native_cpp}"
 
