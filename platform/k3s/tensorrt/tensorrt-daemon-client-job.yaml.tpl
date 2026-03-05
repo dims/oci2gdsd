@@ -100,6 +100,8 @@ spec:
           value: "__REQUIRE_DIRECT_GDS__"
         - name: OCI2GDS_STRICT
           value: "__OCI2GDS_STRICT__"
+        - name: DEVICE_UUID
+          value: ""
         - name: DEVICE_INDEX
           value: "0"
         - name: CUFILE_ENV_PATH_JSON

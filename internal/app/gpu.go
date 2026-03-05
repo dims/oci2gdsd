@@ -13,10 +13,17 @@ import (
 type GPUProbeResult struct {
 	Available   bool   `json:"available"`
 	Loader      string `json:"loader"`
-	Device      int    `json:"device"`
+	DeviceUUID  string `json:"device_uuid"`
+	DeviceIndex int    `json:"device_index"`
 	DeviceCount int    `json:"device_count"`
 	GDSDriver   bool   `json:"gds_driver"`
 	Message     string `json:"message,omitempty"`
+}
+
+type GPUDeviceInfo struct {
+	UUID  string `json:"uuid"`
+	Index int    `json:"index"`
+	Name  string `json:"name,omitempty"`
 }
 
 type GPULoadFileRequest struct {
@@ -44,7 +51,8 @@ type GPULoadRequest struct {
 	Digest      string `json:"digest"`
 	Path        string `json:"path"`
 	LeaseHolder string `json:"lease_holder"`
-	Device      int    `json:"device"`
+	DeviceUUID  string `json:"device_uuid"`
+	Device      int    `json:"-"`
 	ChunkBytes  int64  `json:"chunk_bytes"`
 	MaxShards   int    `json:"max_shards"`
 	Strict      bool   `json:"strict"`
@@ -57,7 +65,8 @@ type GPULoadResult struct {
 	ManifestDigest string              `json:"manifest_digest,omitempty"`
 	LeaseHolder    string              `json:"lease_holder,omitempty"`
 	Path           string              `json:"path"`
-	Device         int                 `json:"device"`
+	DeviceUUID     string              `json:"device_uuid"`
+	DeviceIndex    int                 `json:"device_index"`
 	Loader         string              `json:"loader"`
 	Mode           string              `json:"mode"`
 	Persistent     bool                `json:"persistent"`
@@ -73,7 +82,8 @@ type GPUUnloadRequest struct {
 	Digest      string `json:"digest"`
 	Path        string `json:"path"`
 	LeaseHolder string `json:"lease_holder"`
-	Device      int    `json:"device"`
+	DeviceUUID  string `json:"device_uuid"`
+	Device      int    `json:"-"`
 }
 
 type GPUUnloadResult struct {
@@ -82,7 +92,8 @@ type GPUUnloadResult struct {
 	ManifestDigest  string              `json:"manifest_digest,omitempty"`
 	LeaseHolder     string              `json:"lease_holder,omitempty"`
 	Path            string              `json:"path"`
-	Device          int                 `json:"device"`
+	DeviceUUID      string              `json:"device_uuid"`
+	DeviceIndex     int                 `json:"device_index"`
 	Loader          string              `json:"loader"`
 	Files           []GPULoadFileResult `json:"files"`
 	ReleasedBytes   int64               `json:"released_bytes"`
@@ -93,11 +104,12 @@ type GPUUnloadResult struct {
 }
 
 type GPUExportRequest struct {
-	ModelID   string `json:"model_id"`
-	Digest    string `json:"digest"`
-	Path      string `json:"path"`
-	Device    int    `json:"device"`
-	MaxShards int    `json:"max_shards"`
+	ModelID    string `json:"model_id"`
+	Digest     string `json:"digest"`
+	Path       string `json:"path"`
+	DeviceUUID string `json:"device_uuid"`
+	Device     int    `json:"-"`
+	MaxShards  int    `json:"max_shards"`
 }
 
 type GPUExportResult struct {
@@ -105,7 +117,8 @@ type GPUExportResult struct {
 	ModelID        string              `json:"model_id,omitempty"`
 	ManifestDigest string              `json:"manifest_digest,omitempty"`
 	Path           string              `json:"path"`
-	Device         int                 `json:"device"`
+	DeviceUUID     string              `json:"device_uuid"`
+	DeviceIndex    int                 `json:"device_index"`
 	Loader         string              `json:"loader"`
 	Files          []GPULoadFileResult `json:"files"`
 	TotalBytes     int64               `json:"total_bytes"`
@@ -118,7 +131,8 @@ type GPUAttachRequest struct {
 	ModelID    string `json:"model_id"`
 	Digest     string `json:"digest"`
 	Path       string `json:"path"`
-	Device     int    `json:"device"`
+	DeviceUUID string `json:"device_uuid"`
+	Device     int    `json:"-"`
 	ClientID   string `json:"client_id"`
 	MaxShards  int    `json:"max_shards"`
 	TTLSeconds int    `json:"ttl_seconds"`
@@ -129,7 +143,8 @@ type GPUAttachResult struct {
 	ModelID        string              `json:"model_id,omitempty"`
 	ManifestDigest string              `json:"manifest_digest,omitempty"`
 	Path           string              `json:"path"`
-	Device         int                 `json:"device"`
+	DeviceUUID     string              `json:"device_uuid"`
+	DeviceIndex    int                 `json:"device_index"`
 	ClientID       string              `json:"client_id"`
 	ExpiresAt      string              `json:"expires_at,omitempty"`
 	Loader         string              `json:"loader"`
@@ -141,11 +156,12 @@ type GPUAttachResult struct {
 }
 
 type GPUDetachRequest struct {
-	ModelID  string `json:"model_id"`
-	Digest   string `json:"digest"`
-	Path     string `json:"path"`
-	Device   int    `json:"device"`
-	ClientID string `json:"client_id"`
+	ModelID    string `json:"model_id"`
+	Digest     string `json:"digest"`
+	Path       string `json:"path"`
+	DeviceUUID string `json:"device_uuid"`
+	Device     int    `json:"-"`
+	ClientID   string `json:"client_id"`
 }
 
 type GPUDetachResult struct {
@@ -153,7 +169,8 @@ type GPUDetachResult struct {
 	ModelID        string              `json:"model_id,omitempty"`
 	ManifestDigest string              `json:"manifest_digest,omitempty"`
 	Path           string              `json:"path"`
-	Device         int                 `json:"device"`
+	DeviceUUID     string              `json:"device_uuid"`
+	DeviceIndex    int                 `json:"device_index"`
 	ClientID       string              `json:"client_id"`
 	Loader         string              `json:"loader"`
 	Files          []GPULoadFileResult `json:"files"`
@@ -167,7 +184,8 @@ type GPUHeartbeatRequest struct {
 	ModelID    string `json:"model_id"`
 	Digest     string `json:"digest"`
 	Path       string `json:"path"`
-	Device     int    `json:"device"`
+	DeviceUUID string `json:"device_uuid"`
+	Device     int    `json:"-"`
 	ClientID   string `json:"client_id"`
 	TTLSeconds int    `json:"ttl_seconds"`
 }
@@ -177,7 +195,8 @@ type GPUHeartbeatResult struct {
 	ModelID        string     `json:"model_id,omitempty"`
 	ManifestDigest string     `json:"manifest_digest,omitempty"`
 	Path           string     `json:"path"`
-	Device         int        `json:"device"`
+	DeviceUUID     string     `json:"device_uuid"`
+	DeviceIndex    int        `json:"device_index"`
 	ClientID       string     `json:"client_id"`
 	ExpiresAt      string     `json:"expires_at,omitempty"`
 	DurationMS     int64      `json:"duration_ms"`
@@ -187,6 +206,8 @@ type GPUHeartbeatResult struct {
 
 type GPULoader interface {
 	Name() string
+	ListDevices(ctx context.Context) ([]GPUDeviceInfo, error)
+	ResolveDevice(ctx context.Context, deviceUUID string) (GPUDeviceInfo, error)
 	Probe(ctx context.Context, device int) (GPUProbeResult, error)
 	LoadFile(ctx context.Context, req GPULoadFileRequest) (GPULoadFileResult, error)
 	LoadPersistent(ctx context.Context, req GPULoadFileRequest) (GPULoadFileResult, error)
@@ -201,15 +222,26 @@ type GPULoaderSession interface {
 	BeginSession(ctx context.Context, device int) (end func(), err error)
 }
 
-func (s *Service) GPUProbe(ctx context.Context, device int) (GPUProbeResult, error) {
-	return s.gpuLoader.Probe(ctx, device)
+func (s *Service) GPUDevices(ctx context.Context) ([]GPUDeviceInfo, error) {
+	return s.gpuLoader.ListDevices(ctx)
+}
+
+func (s *Service) GPUProbe(ctx context.Context, deviceUUID string) (GPUProbeResult, error) {
+	device, err := s.resolveRequestedDevice(ctx, deviceUUID)
+	if err != nil {
+		return GPUProbeResult{}, err
+	}
+	probe, err := s.gpuLoader.Probe(ctx, device.Index)
+	if err != nil {
+		return GPUProbeResult{}, err
+	}
+	probe.DeviceUUID = device.UUID
+	probe.DeviceIndex = device.Index
+	return probe, nil
 }
 
 func (s *Service) GPULoad(ctx context.Context, req GPULoadRequest) (GPULoadResult, error) {
 	start := time.Now()
-	if req.Device < 0 {
-		return GPULoadResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "--device must be >= 0", nil)
-	}
 	if req.ChunkBytes <= 0 {
 		req.ChunkBytes = 16 * 1024 * 1024
 	}
@@ -226,6 +258,12 @@ func (s *Service) GPULoad(ctx context.Context, req GPULoadRequest) (GPULoadResul
 	default:
 		return GPULoadResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "gpu load --mode must be one of: benchmark,persistent", nil)
 	}
+	device, err := s.resolveRequestedDevice(ctx, req.DeviceUUID)
+	if err != nil {
+		return GPULoadResult{}, err
+	}
+	req.DeviceUUID = device.UUID
+	req.Device = device.Index
 
 	modelPath := strings.TrimSpace(req.Path)
 	modelID := strings.TrimSpace(req.ModelID)
@@ -266,7 +304,7 @@ func (s *Service) GPULoad(ctx context.Context, req GPULoadRequest) (GPULoadResul
 		manifestDigest = md.ManifestDigest
 	}
 
-	probe, err := s.gpuLoader.Probe(ctx, req.Device)
+	probe, err := s.gpuLoader.Probe(ctx, device.Index)
 	if err != nil {
 		return GPULoadResult{}, AsAppError(err)
 	}
@@ -276,7 +314,8 @@ func (s *Service) GPULoad(ctx context.Context, req GPULoadRequest) (GPULoadResul
 			ModelID:        modelID,
 			ManifestDigest: manifestDigest,
 			Path:           modelPath,
-			Device:         req.Device,
+			DeviceUUID:     device.UUID,
+			DeviceIndex:    device.Index,
 			Loader:         s.gpuLoader.Name(),
 			Mode:           mode,
 			Persistent:     false,
@@ -315,7 +354,8 @@ func (s *Service) gpuBenchmarkLoad(ctx context.Context, start time.Time, req GPU
 				ManifestDigest: manifestDigest,
 				LeaseHolder:    strings.TrimSpace(req.LeaseHolder),
 				Path:           modelPath,
-				Device:         req.Device,
+				DeviceUUID:     req.DeviceUUID,
+				DeviceIndex:    req.Device,
 				Loader:         s.gpuLoader.Name(),
 				Mode:           "benchmark",
 				Persistent:     false,
@@ -354,7 +394,8 @@ func (s *Service) gpuBenchmarkLoad(ctx context.Context, start time.Time, req GPU
 				ModelID:        modelID,
 				ManifestDigest: manifestDigest,
 				Path:           modelPath,
-				Device:         req.Device,
+				DeviceUUID:     req.DeviceUUID,
+				DeviceIndex:    req.Device,
 				Loader:         s.gpuLoader.Name(),
 				Mode:           "benchmark",
 				Persistent:     false,
@@ -375,7 +416,8 @@ func (s *Service) gpuBenchmarkLoad(ctx context.Context, start time.Time, req GPU
 		ManifestDigest: manifestDigest,
 		LeaseHolder:    strings.TrimSpace(req.LeaseHolder),
 		Path:           modelPath,
-		Device:         req.Device,
+		DeviceUUID:     req.DeviceUUID,
+		DeviceIndex:    req.Device,
 		Loader:         s.gpuLoader.Name(),
 		Mode:           "benchmark",
 		Persistent:     false,
@@ -461,7 +503,8 @@ func (s *Service) gpuPersistentLoad(ctx context.Context, start time.Time, req GP
 					ManifestDigest: manifestDigest,
 					LeaseHolder:    leaseHolder,
 					Path:           modelPath,
-					Device:         req.Device,
+					DeviceUUID:     req.DeviceUUID,
+					DeviceIndex:    req.Device,
 					Loader:         s.gpuLoader.Name(),
 					Mode:           "persistent",
 					Persistent:     true,
@@ -490,7 +533,8 @@ func (s *Service) gpuPersistentLoad(ctx context.Context, start time.Time, req GP
 					ManifestDigest: manifestDigest,
 					LeaseHolder:    leaseHolder,
 					Path:           modelPath,
-					Device:         req.Device,
+					DeviceUUID:     req.DeviceUUID,
+					DeviceIndex:    req.Device,
 					Loader:         s.gpuLoader.Name(),
 					Mode:           "persistent",
 					Persistent:     true,
@@ -507,7 +551,8 @@ func (s *Service) gpuPersistentLoad(ctx context.Context, start time.Time, req GP
 				ManifestDigest: manifestDigest,
 				LeaseHolder:    leaseHolder,
 				Path:           modelPath,
-				Device:         req.Device,
+				DeviceUUID:     req.DeviceUUID,
+				DeviceIndex:    req.Device,
 				Loader:         s.gpuLoader.Name(),
 				Mode:           "persistent",
 				Persistent:     true,
@@ -528,7 +573,8 @@ func (s *Service) gpuPersistentLoad(ctx context.Context, start time.Time, req GP
 		ManifestDigest: manifestDigest,
 		LeaseHolder:    leaseHolder,
 		Path:           modelPath,
-		Device:         req.Device,
+		DeviceUUID:     req.DeviceUUID,
+		DeviceIndex:    req.Device,
 		Loader:         s.gpuLoader.Name(),
 		Mode:           "persistent",
 		Persistent:     true,
@@ -542,9 +588,12 @@ func (s *Service) gpuPersistentLoad(ctx context.Context, start time.Time, req GP
 
 func (s *Service) GPUUnload(ctx context.Context, req GPUUnloadRequest) (GPUUnloadResult, error) {
 	start := time.Now()
-	if req.Device < 0 {
-		return GPUUnloadResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "--device must be >= 0", nil)
+	device, err := s.resolveRequestedDevice(ctx, req.DeviceUUID)
+	if err != nil {
+		return GPUUnloadResult{}, err
 	}
+	req.DeviceUUID = device.UUID
+	req.Device = device.Index
 	leaseHolder := strings.TrimSpace(req.LeaseHolder)
 	if leaseHolder == "" {
 		return GPUUnloadResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "--lease-holder is required for gpu unload", nil)
@@ -609,14 +658,15 @@ func (s *Service) GPUUnload(ctx context.Context, req GPUUnloadRequest) (GPUUnloa
 	if err := s.pruneExpiredAttachments(context.Background()); err != nil {
 		return GPUUnloadResult{}, err
 	}
-	if active := s.countActiveAttachmentsForModel(key, req.Device); active > 0 {
+	if active := s.countActiveAttachmentsForModel(key, req.DeviceUUID); active > 0 {
 		return GPUUnloadResult{
 			Status:         "FAILED",
 			ModelID:        modelID,
 			ManifestDigest: manifestDigest,
 			LeaseHolder:    leaseHolder,
 			Path:           modelPath,
-			Device:         req.Device,
+			DeviceUUID:     req.DeviceUUID,
+			DeviceIndex:    req.Device,
 			Loader:         s.gpuLoader.Name(),
 			DurationMS:     time.Since(start).Milliseconds(),
 			ReasonCode:     ReasonLeaseConflict,
@@ -647,7 +697,8 @@ func (s *Service) GPUUnload(ctx context.Context, req GPUUnloadRequest) (GPUUnloa
 				ManifestDigest: manifestDigest,
 				LeaseHolder:    leaseHolder,
 				Path:           modelPath,
-				Device:         req.Device,
+				DeviceUUID:     req.DeviceUUID,
+				DeviceIndex:    req.Device,
 				Loader:         s.gpuLoader.Name(),
 				Files:          files,
 				ReleasedBytes:  total,
@@ -671,7 +722,8 @@ func (s *Service) GPUUnload(ctx context.Context, req GPUUnloadRequest) (GPUUnloa
 		ManifestDigest:  manifestDigest,
 		LeaseHolder:     leaseHolder,
 		Path:            modelPath,
-		Device:          req.Device,
+		DeviceUUID:      req.DeviceUUID,
+		DeviceIndex:     req.Device,
 		Loader:          s.gpuLoader.Name(),
 		Files:           files,
 		ReleasedBytes:   total,
@@ -682,18 +734,22 @@ func (s *Service) GPUUnload(ctx context.Context, req GPUUnloadRequest) (GPUUnloa
 	}, nil
 }
 
-func (s *Service) GPUListPersistent(ctx context.Context, device int) ([]GPULoadFileResult, error) {
-	if device < 0 {
-		return nil, NewAppError(ExitValidation, ReasonValidationFailed, "--device must be >= 0", nil)
+func (s *Service) GPUListPersistent(ctx context.Context, deviceUUID string) ([]GPULoadFileResult, error) {
+	device, err := s.resolveRequestedDevice(ctx, deviceUUID)
+	if err != nil {
+		return nil, err
 	}
-	return s.gpuLoader.ListPersistent(ctx, device)
+	return s.gpuLoader.ListPersistent(ctx, device.Index)
 }
 
 func (s *Service) GPUExport(ctx context.Context, req GPUExportRequest) (GPUExportResult, error) {
 	start := time.Now()
-	if req.Device < 0 {
-		return GPUExportResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "--device must be >= 0", nil)
+	device, err := s.resolveRequestedDevice(ctx, req.DeviceUUID)
+	if err != nil {
+		return GPUExportResult{}, err
 	}
+	req.DeviceUUID = device.UUID
+	req.Device = device.Index
 	if req.MaxShards <= 0 {
 		req.MaxShards = 0
 	}
@@ -762,7 +818,8 @@ func (s *Service) GPUExport(ctx context.Context, req GPUExportRequest) (GPUExpor
 				ModelID:        modelID,
 				ManifestDigest: manifestDigest,
 				Path:           modelPath,
-				Device:         req.Device,
+				DeviceUUID:     req.DeviceUUID,
+				DeviceIndex:    req.Device,
 				Loader:         s.gpuLoader.Name(),
 				Files:          files,
 				TotalBytes:     total,
@@ -780,7 +837,8 @@ func (s *Service) GPUExport(ctx context.Context, req GPUExportRequest) (GPUExpor
 		ModelID:        modelID,
 		ManifestDigest: manifestDigest,
 		Path:           modelPath,
-		Device:         req.Device,
+		DeviceUUID:     req.DeviceUUID,
+		DeviceIndex:    req.Device,
 		Loader:         s.gpuLoader.Name(),
 		Files:          files,
 		TotalBytes:     total,
@@ -797,9 +855,12 @@ const (
 
 func (s *Service) GPUAttach(ctx context.Context, req GPUAttachRequest) (GPUAttachResult, error) {
 	start := time.Now()
-	if req.Device < 0 {
-		return GPUAttachResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "--device must be >= 0", nil)
+	device, err := s.resolveRequestedDevice(ctx, req.DeviceUUID)
+	if err != nil {
+		return GPUAttachResult{}, err
 	}
+	req.DeviceUUID = device.UUID
+	req.Device = device.Index
 	clientID := strings.TrimSpace(req.ClientID)
 	if clientID == "" {
 		return GPUAttachResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "--client-id is required", nil)
@@ -845,7 +906,8 @@ func (s *Service) GPUAttach(ctx context.Context, req GPUAttachRequest) (GPUAttac
 				ModelID:        modelID,
 				ManifestDigest: manifestDigest,
 				Path:           modelPath,
-				Device:         req.Device,
+				DeviceUUID:     req.DeviceUUID,
+				DeviceIndex:    req.Device,
 				ClientID:       clientID,
 				Loader:         s.gpuLoader.Name(),
 				Files:          files,
@@ -863,12 +925,13 @@ func (s *Service) GPUAttach(ctx context.Context, req GPUAttachRequest) (GPUAttac
 	if s.attachMap == nil {
 		s.attachMap = map[string]*gpuClientAttachment{}
 	}
-	s.attachMap[gpuAttachKey(key, req.Device, clientID)] = &gpuClientAttachment{
+	s.attachMap[gpuAttachKey(key, req.DeviceUUID, clientID)] = &gpuClientAttachment{
 		ModelKey:        key,
 		ModelID:         modelID,
 		ManifestDigest:  manifestDigest,
 		Path:            modelPath,
-		Device:          req.Device,
+		DeviceUUID:      req.DeviceUUID,
+		DeviceIndex:     req.Device,
 		ClientID:        clientID,
 		ShardPaths:      append([]string(nil), shardPaths...),
 		ExpiresAt:       expiresAt,
@@ -881,7 +944,8 @@ func (s *Service) GPUAttach(ctx context.Context, req GPUAttachRequest) (GPUAttac
 		ModelID:        modelID,
 		ManifestDigest: manifestDigest,
 		Path:           modelPath,
-		Device:         req.Device,
+		DeviceUUID:     req.DeviceUUID,
+		DeviceIndex:    req.Device,
 		ClientID:       clientID,
 		ExpiresAt:      expiresAt.Format(time.RFC3339Nano),
 		Loader:         s.gpuLoader.Name(),
@@ -895,9 +959,12 @@ func (s *Service) GPUAttach(ctx context.Context, req GPUAttachRequest) (GPUAttac
 
 func (s *Service) GPUHeartbeat(ctx context.Context, req GPUHeartbeatRequest) (GPUHeartbeatResult, error) {
 	start := time.Now()
-	if req.Device < 0 {
-		return GPUHeartbeatResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "--device must be >= 0", nil)
+	device, err := s.resolveRequestedDevice(ctx, req.DeviceUUID)
+	if err != nil {
+		return GPUHeartbeatResult{}, err
 	}
+	req.DeviceUUID = device.UUID
+	req.Device = device.Index
 	clientID := strings.TrimSpace(req.ClientID)
 	if clientID == "" {
 		return GPUHeartbeatResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "--client-id is required", nil)
@@ -913,7 +980,7 @@ func (s *Service) GPUHeartbeat(ctx context.Context, req GPUHeartbeatRequest) (GP
 	ttl := s.normalizeAttachTTL(req.TTLSeconds)
 
 	now := time.Now().UTC()
-	attachKey := gpuAttachKey(key, req.Device, clientID)
+	attachKey := gpuAttachKey(key, req.DeviceUUID, clientID)
 	s.attachMu.Lock()
 	session, ok := s.attachMap[attachKey]
 	if !ok {
@@ -923,7 +990,8 @@ func (s *Service) GPUHeartbeat(ctx context.Context, req GPUHeartbeatRequest) (GP
 			ModelID:        modelID,
 			ManifestDigest: manifestDigest,
 			Path:           modelPath,
-			Device:         req.Device,
+			DeviceUUID:     req.DeviceUUID,
+			DeviceIndex:    req.Device,
 			ClientID:       clientID,
 			DurationMS:     time.Since(start).Milliseconds(),
 			ReasonCode:     ReasonValidationFailed,
@@ -946,7 +1014,8 @@ func (s *Service) GPUHeartbeat(ctx context.Context, req GPUHeartbeatRequest) (GP
 		ModelID:        modelID,
 		ManifestDigest: manifestDigest,
 		Path:           modelPath,
-		Device:         req.Device,
+		DeviceUUID:     req.DeviceUUID,
+		DeviceIndex:    req.Device,
 		ClientID:       clientID,
 		ExpiresAt:      expiresAt.Format(time.RFC3339Nano),
 		DurationMS:     time.Since(start).Milliseconds(),
@@ -957,9 +1026,12 @@ func (s *Service) GPUHeartbeat(ctx context.Context, req GPUHeartbeatRequest) (GP
 
 func (s *Service) GPUDetach(ctx context.Context, req GPUDetachRequest) (GPUDetachResult, error) {
 	start := time.Now()
-	if req.Device < 0 {
-		return GPUDetachResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "--device must be >= 0", nil)
+	device, err := s.resolveRequestedDevice(ctx, req.DeviceUUID)
+	if err != nil {
+		return GPUDetachResult{}, err
 	}
+	req.DeviceUUID = device.UUID
+	req.Device = device.Index
 	clientID := strings.TrimSpace(req.ClientID)
 	if clientID == "" {
 		return GPUDetachResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "--client-id is required", nil)
@@ -972,7 +1044,7 @@ func (s *Service) GPUDetach(ctx context.Context, req GPUDetachRequest) (GPUDetac
 	if err := s.pruneExpiredAttachments(context.Background()); err != nil {
 		return GPUDetachResult{}, err
 	}
-	attachKey := gpuAttachKey(key, req.Device, clientID)
+	attachKey := gpuAttachKey(key, req.DeviceUUID, clientID)
 
 	s.attachMu.Lock()
 	session, ok := s.attachMap[attachKey]
@@ -987,7 +1059,8 @@ func (s *Service) GPUDetach(ctx context.Context, req GPUDetachRequest) (GPUDetac
 			ModelID:        modelID,
 			ManifestDigest: manifestDigest,
 			Path:           modelPath,
-			Device:         req.Device,
+			DeviceUUID:     req.DeviceUUID,
+			DeviceIndex:    req.Device,
 			ClientID:       clientID,
 			Loader:         s.gpuLoader.Name(),
 			Files:          []GPULoadFileResult{},
@@ -1012,7 +1085,8 @@ func (s *Service) GPUDetach(ctx context.Context, req GPUDetachRequest) (GPUDetac
 				ModelID:        modelID,
 				ManifestDigest: manifestDigest,
 				Path:           modelPath,
-				Device:         req.Device,
+				DeviceUUID:     req.DeviceUUID,
+				DeviceIndex:    req.Device,
 				ClientID:       clientID,
 				Loader:         s.gpuLoader.Name(),
 				Files:          files,
@@ -1030,7 +1104,8 @@ func (s *Service) GPUDetach(ctx context.Context, req GPUDetachRequest) (GPUDetac
 		ModelID:        modelID,
 		ManifestDigest: manifestDigest,
 		Path:           modelPath,
-		Device:         req.Device,
+		DeviceUUID:     req.DeviceUUID,
+		DeviceIndex:    req.Device,
 		ClientID:       clientID,
 		Loader:         s.gpuLoader.Name(),
 		Files:          files,
@@ -1061,7 +1136,7 @@ func (s *Service) pruneExpiredAttachments(ctx context.Context) error {
 		}
 		expired = append(expired, expiredSession{
 			clientID:   session.ClientID,
-			device:     session.Device,
+			device:     session.DeviceIndex,
 			shardPaths: append([]string(nil), session.ShardPaths...),
 		})
 		delete(s.attachMap, key)
@@ -1079,7 +1154,7 @@ func (s *Service) pruneExpiredAttachments(ctx context.Context) error {
 	return nil
 }
 
-func (s *Service) countActiveAttachmentsForModel(modelKey string, device int) int {
+func (s *Service) countActiveAttachmentsForModel(modelKey, deviceUUID string) int {
 	s.attachMu.Lock()
 	defer s.attachMu.Unlock()
 	count := 0
@@ -1087,7 +1162,7 @@ func (s *Service) countActiveAttachmentsForModel(modelKey string, device int) in
 		if session == nil {
 			continue
 		}
-		if session.ModelKey == modelKey && session.Device == device {
+		if session.ModelKey == modelKey && session.DeviceUUID == deviceUUID {
 			count++
 		}
 	}
@@ -1108,8 +1183,26 @@ func (s *Service) normalizeAttachTTL(ttlSeconds int) time.Duration {
 	return ttl
 }
 
-func gpuAttachKey(modelKey string, device int, clientID string) string {
-	return fmt.Sprintf("%s|%d|%s", modelKey, device, clientID)
+func gpuAttachKey(modelKey, deviceUUID, clientID string) string {
+	return fmt.Sprintf("%s|%s|%s", modelKey, deviceUUID, clientID)
+}
+
+func (s *Service) resolveRequestedDevice(ctx context.Context, deviceUUID string) (GPUDeviceInfo, error) {
+	uuid := strings.TrimSpace(deviceUUID)
+	if uuid == "" {
+		return GPUDeviceInfo{}, NewAppError(ExitValidation, ReasonValidationFailed, "--device-uuid is required", nil)
+	}
+	device, err := s.gpuLoader.ResolveDevice(ctx, uuid)
+	if err != nil {
+		return GPUDeviceInfo{}, AsAppError(err)
+	}
+	if strings.TrimSpace(device.UUID) == "" {
+		return GPUDeviceInfo{}, NewAppError(ExitStateCorrupt, ReasonStateDBCorrupt, "gpu loader returned empty device UUID", nil)
+	}
+	if device.Index < 0 {
+		return GPUDeviceInfo{}, NewAppError(ExitStateCorrupt, ReasonStateDBCorrupt, "gpu loader returned invalid device index", nil)
+	}
+	return device, nil
 }
 
 func resolveWeightShardPaths(md *localMetadata, modelPath string, maxShards int) ([]string, error) {

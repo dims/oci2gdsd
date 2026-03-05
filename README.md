@@ -92,7 +92,8 @@ CGO_ENABLED=1 go build -tags gds ./cmd/oci2gdsd
 | `verify` | Re-check READY contract and shard digests for a cached model |
 | `profile lint` | Validate an OCI-ModelProfile-v1 metadata blob |
 | `profile inspect` | Print a summary of model id, framework, shards, and total bytes |
-| `gpu probe` | Check whether GPU Direct Storage is available on a device |
+| `gpu devices` | List visible GPUs (UUID + local index) |
+| `gpu probe` | Check whether GPU Direct Storage is available on a specific GPU UUID |
 | `gpu load` | Benchmark shard loading throughput via GDS |
 | `gpu unload` | Release persistent GPU allocations (daemon mode) |
 | `gpu status` | List current persistent GPU allocations (daemon mode) |
@@ -194,14 +195,17 @@ Requirements for GDS:
 - Build with `-tags gds` (see Install section)
 
 ```bash
-# Probe GDS capability on device 0
-oci2gdsd gpu probe --device 0 --json
+# Discover GPU UUIDs and pick one
+oci2gdsd gpu devices --json
+
+# Probe GDS capability on a specific GPU UUID
+oci2gdsd gpu probe --device-uuid GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --json
 
 # Benchmark shard loading throughput
 oci2gdsd gpu load \
   --model-id qwen3-0.6b \
   --digest sha256:abc123... \
-  --device 0 \
+  --device-uuid GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee \
   --mode benchmark --json
 ```
 

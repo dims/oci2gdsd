@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -63,6 +62,7 @@ func Serve(ctx context.Context, svc *app.Service, cfg ServerConfig) error {
 	mux.HandleFunc("/v1/gpu/load", h.handleGPULoad)
 	mux.HandleFunc("/v1/gpu/unload", h.handleGPUUnload)
 	mux.HandleFunc("/v1/gpu/status", h.handleGPUStatus)
+	mux.HandleFunc("/v1/gpu/devices", h.handleGPUDevices)
 	mux.HandleFunc("/v1/gpu/export", h.handleGPUExport)
 	mux.HandleFunc("/v1/gpu/attach", h.handleGPUAttach)
 	mux.HandleFunc("/v1/gpu/detach", h.handleGPUDetach)
@@ -120,7 +120,7 @@ func (h *handler) handleGPULoad(w http.ResponseWriter, r *http.Request) {
 		Digest      string `json:"digest"`
 		Path        string `json:"path"`
 		LeaseHolder string `json:"lease_holder"`
-		Device      int    `json:"device"`
+		DeviceUUID  string `json:"device_uuid"`
 		ChunkBytes  int64  `json:"chunk_bytes"`
 		MaxShards   int    `json:"max_shards"`
 		Strict      *bool  `json:"strict"`
@@ -135,7 +135,7 @@ func (h *handler) handleGPULoad(w http.ResponseWriter, r *http.Request) {
 		Digest:      wireReq.Digest,
 		Path:        wireReq.Path,
 		LeaseHolder: wireReq.LeaseHolder,
-		Device:      wireReq.Device,
+		DeviceUUID:  wireReq.DeviceUUID,
 		ChunkBytes:  wireReq.ChunkBytes,
 		MaxShards:   wireReq.MaxShards,
 		Mode:        wireReq.Mode,
@@ -178,24 +178,36 @@ func (h *handler) handleGPUStatus(w http.ResponseWriter, r *http.Request) {
 		writeMethodNotAllowed(w)
 		return
 	}
-	device := 0
-	if q := strings.TrimSpace(r.URL.Query().Get("device")); q != "" {
-		d, err := strconv.Atoi(q)
-		if err != nil {
-			writeAppError(w, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid device query parameter", err))
-			return
-		}
-		device = d
+	deviceUUID := strings.TrimSpace(r.URL.Query().Get("device_uuid"))
+	if deviceUUID == "" {
+		writeAppError(w, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "device_uuid query parameter is required", nil))
+		return
 	}
-	res, err := h.svc.GPUListPersistent(r.Context(), device)
+	res, err := h.svc.GPUListPersistent(r.Context(), deviceUUID)
 	if err != nil {
 		writeAppError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status": "READY",
-		"device": device,
-		"files":  res,
+		"status":      "READY",
+		"device_uuid": deviceUUID,
+		"files":       res,
+	})
+}
+
+func (h *handler) handleGPUDevices(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+	devices, err := h.svc.GPUDevices(r.Context())
+	if err != nil {
+		writeAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":  "READY",
+		"devices": devices,
 	})
 }
 

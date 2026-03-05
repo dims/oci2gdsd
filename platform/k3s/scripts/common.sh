@@ -937,7 +937,13 @@ validate_local_gds_loader() {
       CGO_LDFLAGS="-L${CUDA_LIB_DIR}" \
       go build -buildvcs=false -tags gds -o "${bin_path}" ./cmd/oci2gdsd
   )
-  "${bin_path}" --root "${gds_root}" --target-root "${gds_root}/models" gpu probe --json > "${RESULTS_DIR}/gpu-probe.json"
+  "${bin_path}" --root "${gds_root}" --target-root "${gds_root}/models" gpu devices --json > "${RESULTS_DIR}/gpu-devices.json"
+  local device_uuid
+  device_uuid="$(jq -r '.[0].uuid // empty' "${RESULTS_DIR}/gpu-devices.json")"
+  if [[ -z "${device_uuid}" ]]; then
+    die "local GDS device discovery returned no devices; see ${RESULTS_DIR}/gpu-devices.json"
+  fi
+  "${bin_path}" --root "${gds_root}" --target-root "${gds_root}/models" gpu probe --device-uuid "${device_uuid}" --json > "${RESULTS_DIR}/gpu-probe.json"
   if ! jq -e '.available == true' "${RESULTS_DIR}/gpu-probe.json" >/dev/null; then
     die "local GDS probe failed; see ${RESULTS_DIR}/gpu-probe.json"
   fi
@@ -972,7 +978,7 @@ EOF
   printf "ok\n" > "${model_path}/READY"
 
   "${bin_path}" --root "${gds_root}" --target-root "${gds_root}/models" \
-    gpu load --path "${model_path}" --mode benchmark --device 0 --chunk-bytes 4096 --strict --json > "${RESULTS_DIR}/gpu-load-benchmark.json"
+    gpu load --path "${model_path}" --mode benchmark --device-uuid "${device_uuid}" --chunk-bytes 4096 --strict --json > "${RESULTS_DIR}/gpu-load-benchmark.json"
   if ! jq -e '.status == "READY"' "${RESULTS_DIR}/gpu-load-benchmark.json" >/dev/null; then
     die "local GDS benchmark load failed; see ${RESULTS_DIR}/gpu-load-benchmark.json"
   fi

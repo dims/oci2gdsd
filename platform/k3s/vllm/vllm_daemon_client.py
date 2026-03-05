@@ -2,7 +2,9 @@ import gc
 import hashlib
 import json
 import os
+import re
 import socket
+import subprocess
 from importlib.util import find_spec
 from pathlib import Path
 
@@ -14,6 +16,40 @@ def parse_bool_env(name: str, default: bool) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+GPU_UUID_PATTERN = re.compile(r"^GPU-[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$")
+
+
+def resolve_device_uuid(device_index: int) -> str:
+    explicit = os.environ.get("DEVICE_UUID", "").strip()
+    if explicit:
+        if not GPU_UUID_PATTERN.match(explicit):
+            raise RuntimeError(f"DEVICE_UUID is not a canonical GPU UUID: {explicit}")
+        return explicit
+
+    visible = os.environ.get("NVIDIA_VISIBLE_DEVICES", "").strip()
+    if visible and visible.lower() not in {"none", "void"}:
+        first = visible.split(",")[0].strip()
+        if GPU_UUID_PATTERN.match(first):
+            return first
+
+    try:
+        out = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=uuid", "--format=csv,noheader"],
+            text=True,
+            stderr=subprocess.STDOUT,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"failed to resolve GPU UUID via nvidia-smi: {exc}") from exc
+
+    uuids = [line.strip() for line in out.splitlines() if line.strip()]
+    if device_index < 0 or device_index >= len(uuids):
+        raise RuntimeError(f"device index {device_index} out of range for discovered GPU UUIDs: {uuids}")
+    candidate = uuids[device_index]
+    if not GPU_UUID_PATTERN.match(candidate):
+        raise RuntimeError(f"nvidia-smi returned non-canonical GPU UUID: {candidate}")
+    return candidate
 
 
 def unix_http_json(socket_path: str, method: str, path: str, payload=None, timeout_seconds: int = 120):
@@ -256,6 +292,7 @@ def main():
     lease_holder = os.environ.get("LEASE_HOLDER", "vllm-daemon-client")
     socket_path = os.environ.get("OCI2GDS_DAEMON_SOCKET", "/run/oci2gdsd/daemon.sock")
     device_index = int(os.environ.get("DEVICE_INDEX", "0"))
+    device_uuid = resolve_device_uuid(device_index)
     strict_load = parse_bool_env("OCI2GDS_STRICT", True)
     require_direct = parse_bool_env("REQUIRE_DIRECT_GDS", True)
 
@@ -288,7 +325,7 @@ def main():
             "model_id": model_id,
             "digest": model_digest,
             "lease_holder": lease_holder,
-            "device": device_index,
+            "device_uuid": device_uuid,
             "chunk_bytes": 4 * 1024 * 1024,
             "strict": strict_load,
             "mode": "persistent",
@@ -312,7 +349,7 @@ def main():
         status_code, status_payload = unix_http_json(
             socket_path,
             "GET",
-            f"/v1/gpu/status?device={device_index}",
+            f"/v1/gpu/status?device_uuid={device_uuid}",
             payload=None,
             timeout_seconds=60,
         )
@@ -330,7 +367,7 @@ def main():
             "model_id": model_id,
             "digest": model_digest,
             "lease_holder": lease_holder,
-            "device": device_index,
+            "device_uuid": device_uuid,
         }
         unload_code, unload_payload = unix_http_json(socket_path, "POST", "/v1/gpu/unload", unload_req, timeout_seconds=300)
         assert_http_ok(unload_code, unload_payload, "gpu/unload")
@@ -340,7 +377,7 @@ def main():
         post_code, post_payload = unix_http_json(
             socket_path,
             "GET",
-            f"/v1/gpu/status?device={device_index}",
+            f"/v1/gpu/status?device_uuid={device_uuid}",
             payload=None,
             timeout_seconds=60,
         )
@@ -359,7 +396,7 @@ def main():
                 "model_id": model_id,
                 "digest": model_digest,
                 "lease_holder": lease_holder,
-                "device": device_index,
+                "device_uuid": device_uuid,
             }
             try:
                 unload_code, unload_payload = unix_http_json(

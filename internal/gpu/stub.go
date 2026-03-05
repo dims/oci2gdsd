@@ -18,11 +18,19 @@ func (l *unsupportedGPULoader) Name() string {
 	return "unsupported"
 }
 
+func (l *unsupportedGPULoader) ListDevices(_ context.Context) ([]app.GPUDeviceInfo, error) {
+	return nil, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, "GPU direct loader unavailable in this build", nil)
+}
+
+func (l *unsupportedGPULoader) ResolveDevice(_ context.Context, _ string) (app.GPUDeviceInfo, error) {
+	return app.GPUDeviceInfo{}, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, "GPU direct loader unavailable in this build", nil)
+}
+
 func (l *unsupportedGPULoader) Probe(_ context.Context, device int) (app.GPUProbeResult, error) {
 	return app.GPUProbeResult{
 		Available:   false,
 		Loader:      l.Name(),
-		Device:      device,
+		DeviceIndex: device,
 		DeviceCount: 0,
 		GDSDriver:   false,
 		Message:     "GPU direct loader unavailable: build on Linux with CGO and -tags gds",

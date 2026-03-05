@@ -15,11 +15,22 @@ package gpu
 #include <sys/stat.h>
 #include <time.h>
 #include <pthread.h>
+#include <stdio.h>
 
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
 static int g_driver_open = 0;
-static CUcontext g_primary_ctx = NULL;
-static int g_primary_device = -1;
+static CUcontext g_device_ctxs[128];
+static int g_device_ids[128];
+static int g_device_ctx_count = 0;
+
+static int gds_find_ctx_locked(int device) {
+	for (int i = 0; i < g_device_ctx_count; i++) {
+		if (g_device_ids[i] == device) {
+			return i;
+		}
+	}
+	return -1;
+}
 
 static int gds_init() {
 	CUresult cu = cuInit(0);
@@ -39,15 +50,19 @@ static int gds_init() {
 
 static int gds_shutdown() {
 	pthread_mutex_lock(&g_mu);
-	if (g_primary_ctx != NULL && g_primary_device >= 0) {
-		CUdevice old_dev;
-		CUresult cu = cuDeviceGet(&old_dev, g_primary_device);
-		if (cu == CUDA_SUCCESS) {
-			(void)cuDevicePrimaryCtxRelease(old_dev);
+	for (int i = 0; i < g_device_ctx_count; i++) {
+		if (g_device_ctxs[i] == NULL) {
+			continue;
 		}
-		g_primary_ctx = NULL;
-		g_primary_device = -1;
+		CUdevice dev;
+		CUresult cu = cuDeviceGet(&dev, g_device_ids[i]);
+		if (cu == CUDA_SUCCESS) {
+			(void)cuDevicePrimaryCtxRelease(dev);
+		}
+		g_device_ctxs[i] = NULL;
+		g_device_ids[i] = -1;
 	}
+	g_device_ctx_count = 0;
 	if (g_driver_open) {
 		CUfileError_t st = cuFileDriverClose();
 		if (st.err != CU_FILE_SUCCESS) {
@@ -61,12 +76,57 @@ static int gds_shutdown() {
 }
 
 static int gds_device_count(int* count) {
+	CUresult cui = cuInit(0);
+	if (cui != CUDA_SUCCESS) return 1000 + (int)cui;
 	CUresult cu = cuDeviceGetCount(count);
 	if (cu != CUDA_SUCCESS) return 1000 + (int)cu;
 	return 0;
 }
 
-static int gds_activate_device(int device) {
+static int gds_device_uuid(int device, char* out, int out_len) {
+	CUresult cui = cuInit(0);
+	if (cui != CUDA_SUCCESS) return 1000 + (int)cui;
+	CUdevice dev;
+	CUuuid uuid;
+	CUresult cu = cuDeviceGet(&dev, device);
+	if (cu != CUDA_SUCCESS) return 1000 + (int)cu;
+#if defined(CUDA_VERSION) && CUDA_VERSION >= 11000
+	cu = cuDeviceGetUuid_v2(&uuid, dev);
+#else
+	cu = cuDeviceGetUuid(&uuid, dev);
+#endif
+	if (cu != CUDA_SUCCESS) return 1000 + (int)cu;
+	if (out == NULL || out_len < 40) return 3010;
+	int n = snprintf(
+		out,
+		(size_t)out_len,
+		"GPU-%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+		(unsigned int)(unsigned char)uuid.bytes[0], (unsigned int)(unsigned char)uuid.bytes[1],
+		(unsigned int)(unsigned char)uuid.bytes[2], (unsigned int)(unsigned char)uuid.bytes[3],
+		(unsigned int)(unsigned char)uuid.bytes[4], (unsigned int)(unsigned char)uuid.bytes[5],
+		(unsigned int)(unsigned char)uuid.bytes[6], (unsigned int)(unsigned char)uuid.bytes[7],
+		(unsigned int)(unsigned char)uuid.bytes[8], (unsigned int)(unsigned char)uuid.bytes[9],
+		(unsigned int)(unsigned char)uuid.bytes[10], (unsigned int)(unsigned char)uuid.bytes[11],
+		(unsigned int)(unsigned char)uuid.bytes[12], (unsigned int)(unsigned char)uuid.bytes[13],
+		(unsigned int)(unsigned char)uuid.bytes[14], (unsigned int)(unsigned char)uuid.bytes[15]
+	);
+	if (n <= 0 || n >= out_len) return 3010;
+	return 0;
+}
+
+static int gds_device_name(int device, char* out, int out_len) {
+	CUresult cui = cuInit(0);
+	if (cui != CUDA_SUCCESS) return 1000 + (int)cui;
+	CUdevice dev;
+	CUresult cu = cuDeviceGet(&dev, device);
+	if (cu != CUDA_SUCCESS) return 1000 + (int)cu;
+	if (out == NULL || out_len <= 1) return 3010;
+	cu = cuDeviceGetName(out, out_len, dev);
+	if (cu != CUDA_SUCCESS) return 1000 + (int)cu;
+	return 0;
+}
+
+static int gds_activate_device(int device, CUcontext* out_ctx) {
 	CUresult cu;
 	CUdevice dev;
 	pthread_mutex_lock(&g_mu);
@@ -74,31 +134,63 @@ static int gds_activate_device(int device) {
 		pthread_mutex_unlock(&g_mu);
 		return 2001;
 	}
-	if (g_primary_ctx != NULL && g_primary_device == device) {
+	if (out_ctx == NULL) {
+		pthread_mutex_unlock(&g_mu);
+		return 3009;
+	}
+	int idx = gds_find_ctx_locked(device);
+	if (idx >= 0) {
+		*out_ctx = g_device_ctxs[idx];
 		pthread_mutex_unlock(&g_mu);
 		return 0;
 	}
-	if (g_primary_ctx != NULL && g_primary_device >= 0) {
-		CUdevice old_dev;
-		cu = cuDeviceGet(&old_dev, g_primary_device);
-		if (cu == CUDA_SUCCESS) {
-			(void)cuDevicePrimaryCtxRelease(old_dev);
-		}
-		g_primary_ctx = NULL;
-		g_primary_device = -1;
+	if (g_device_ctx_count >= (int)(sizeof(g_device_ctxs) / sizeof(g_device_ctxs[0]))) {
+		pthread_mutex_unlock(&g_mu);
+		return 3011;
 	}
 	cu = cuDeviceGet(&dev, device);
 	if (cu != CUDA_SUCCESS) {
 		pthread_mutex_unlock(&g_mu);
 		return 1000 + (int)cu;
 	}
-	cu = cuDevicePrimaryCtxRetain(&g_primary_ctx, dev);
+	CUcontext ctx = NULL;
+	cu = cuDevicePrimaryCtxRetain(&ctx, dev);
 	if (cu != CUDA_SUCCESS) {
-		g_primary_ctx = NULL;
 		pthread_mutex_unlock(&g_mu);
 		return 1000 + (int)cu;
 	}
-	g_primary_device = device;
+	g_device_ids[g_device_ctx_count] = device;
+	g_device_ctxs[g_device_ctx_count] = ctx;
+	g_device_ctx_count++;
+	*out_ctx = ctx;
+	pthread_mutex_unlock(&g_mu);
+	return 0;
+}
+
+static int gds_release_device_if_unused(int device) {
+	pthread_mutex_lock(&g_mu);
+	int idx = gds_find_ctx_locked(device);
+	if (idx < 0) {
+		pthread_mutex_unlock(&g_mu);
+		return 0;
+	}
+	CUcontext ctx = g_device_ctxs[idx];
+	if (ctx != NULL) {
+		CUdevice dev;
+		CUresult cu = cuDeviceGet(&dev, device);
+		if (cu == CUDA_SUCCESS) {
+			(void)cuDevicePrimaryCtxRelease(dev);
+		}
+	}
+	for (int i = idx; i + 1 < g_device_ctx_count; i++) {
+		g_device_ids[i] = g_device_ids[i+1];
+		g_device_ctxs[i] = g_device_ctxs[i+1];
+	}
+	g_device_ctx_count--;
+	if (g_device_ctx_count >= 0) {
+		g_device_ids[g_device_ctx_count] = -1;
+		g_device_ctxs[g_device_ctx_count] = NULL;
+	}
 	pthread_mutex_unlock(&g_mu);
 	return 0;
 }
@@ -111,6 +203,7 @@ static int gds_read_file(const char* path, int device, long long chunk_bytes, in
 	int fd = -1;
 	CUfileHandle_t cfh;
 	CUdeviceptr dptr = 0;
+	CUcontext active_ctx = NULL;
 	int handle_registered = 0;
 	int buf_registered = 0;
 	int ctx_pushed = 0;
@@ -126,11 +219,11 @@ static int gds_read_file(const char* path, int device, long long chunk_bytes, in
 	chunk = (chunk / 4096) * 4096;
 	if (chunk == 0) chunk = 4096;
 
-	rc = gds_activate_device(device);
+	rc = gds_activate_device(device, &active_ctx);
 	if (rc != 0) {
 		return rc;
 	}
-	cu = cuCtxPushCurrent(g_primary_ctx);
+	cu = cuCtxPushCurrent(active_ctx);
 	if (cu != CUDA_SUCCESS) return 1000 + (int)cu;
 	ctx_pushed = 1;
 
@@ -242,6 +335,7 @@ static int gds_load_persistent(const char* path, int device, long long chunk_byt
 	int fd = -1;
 	CUfileHandle_t cfh;
 	CUdeviceptr dptr = 0;
+	CUcontext active_ctx = NULL;
 	int handle_registered = 0;
 	int buf_registered = 0;
 	int tail_buf_registered = 0;
@@ -269,11 +363,11 @@ static int gds_load_persistent(const char* path, int device, long long chunk_byt
 	chunk = (chunk / 4096) * 4096;
 	if (chunk == 0) chunk = 4096;
 
-	rc = gds_activate_device(device);
+	rc = gds_activate_device(device, &active_ctx);
 	if (rc != 0) {
 		return rc;
 	}
-	cu = cuCtxPushCurrent(g_primary_ctx);
+	cu = cuCtxPushCurrent(active_ctx);
 	if (cu != CUDA_SUCCESS) return 1000 + (int)cu;
 	ctx_pushed = 1;
 
@@ -582,17 +676,18 @@ cleanup:
 static int gds_free_persistent(int device, CUdeviceptr dptr) {
 	CUresult cu;
 	CUcontext prev_ctx = NULL;
+	CUcontext active_ctx = NULL;
 	int rc = 0;
 	int ctx_pushed = 0;
 
 	if (dptr == 0) {
 		return 0;
 	}
-	rc = gds_activate_device(device);
+	rc = gds_activate_device(device, &active_ctx);
 	if (rc != 0) {
 		return rc;
 	}
-	cu = cuCtxPushCurrent(g_primary_ctx);
+	cu = cuCtxPushCurrent(active_ctx);
 	if (cu != CUDA_SUCCESS) return 1000 + (int)cu;
 	ctx_pushed = 1;
 
@@ -609,6 +704,7 @@ static int gds_free_persistent(int device, CUdeviceptr dptr) {
 static int gds_export_ipc_handle(int device, CUdeviceptr dptr, unsigned char* out_handle, int out_handle_len) {
 	CUresult cu;
 	CUcontext prev_ctx = NULL;
+	CUcontext active_ctx = NULL;
 	int rc = 0;
 	int ctx_pushed = 0;
 	CUipcMemHandle handle;
@@ -620,11 +716,11 @@ static int gds_export_ipc_handle(int device, CUdeviceptr dptr, unsigned char* ou
 		return 3010;
 	}
 
-	rc = gds_activate_device(device);
+	rc = gds_activate_device(device, &active_ctx);
 	if (rc != 0) {
 		return rc;
 	}
-	cu = cuCtxPushCurrent(g_primary_ctx);
+	cu = cuCtxPushCurrent(active_ctx);
 	if (cu != CUDA_SUCCESS) return 1000 + (int)cu;
 	ctx_pushed = 1;
 
@@ -651,6 +747,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 	"unsafe"
@@ -659,6 +756,7 @@ import (
 )
 
 type persistentAllocation struct {
+	device       int
 	ptr          C.CUdeviceptr
 	bytes        int64
 	loadRefs     int
@@ -669,14 +767,15 @@ type persistentAllocation struct {
 
 type gdsLoader struct {
 	mu          sync.Mutex
-	refs        int
-	device      int
-	ready       bool
+	refs        map[int]int
+	active      map[int]bool
 	allocations map[string]*persistentAllocation
 }
 
 func NewDefaultGPULoader() app.GPULoader {
 	return &gdsLoader{
+		refs:        map[int]int{},
+		active:      map[int]bool{},
 		allocations: map[string]*persistentAllocation{},
 	}
 }
@@ -685,40 +784,102 @@ func (l *gdsLoader) Name() string {
 	return "cufile"
 }
 
-func (l *gdsLoader) Probe(_ context.Context, device int) (app.GPUProbeResult, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+func normalizeGPUUUID(uuid string) string {
+	s := strings.TrimSpace(strings.ToLower(uuid))
+	s = strings.TrimPrefix(s, "gpu-")
+	out := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '-' {
+			continue
+		}
+		if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') {
+			out = append(out, c)
+		}
+	}
+	return string(out)
+}
 
+func (l *gdsLoader) ListDevices(_ context.Context) ([]app.GPUDeviceInfo, error) {
+	code := int(C.gds_init())
+	if code != 0 {
+		return nil, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, fmt.Sprintf("failed to initialize CUDA/GDS driver: %s", describeGDSCode(code)), nil)
+	}
+	var cnt C.int
+	code = int(C.gds_device_count(&cnt))
+	if code != 0 {
+		return nil, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, fmt.Sprintf("failed to read CUDA device count: %s", describeGDSCode(code)), nil)
+	}
+	if int(cnt) <= 0 {
+		return []app.GPUDeviceInfo{}, nil
+	}
+	out := make([]app.GPUDeviceInfo, 0, int(cnt))
+	for i := 0; i < int(cnt); i++ {
+		uuidBuf := make([]C.char, 64)
+		code = int(C.gds_device_uuid(C.int(i), &uuidBuf[0], C.int(len(uuidBuf))))
+		if code != 0 {
+			return nil, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, fmt.Sprintf("failed to read CUDA device UUID for index %d: %s", i, describeGDSCode(code)), nil)
+		}
+		nameBuf := make([]C.char, 256)
+		nameCode := int(C.gds_device_name(C.int(i), &nameBuf[0], C.int(len(nameBuf))))
+		name := ""
+		if nameCode == 0 {
+			name = C.GoString(&nameBuf[0])
+		}
+		out = append(out, app.GPUDeviceInfo{
+			UUID:  C.GoString(&uuidBuf[0]),
+			Index: i,
+			Name:  strings.TrimSpace(name),
+		})
+	}
+	return out, nil
+}
+
+func (l *gdsLoader) ResolveDevice(ctx context.Context, deviceUUID string) (app.GPUDeviceInfo, error) {
+	want := normalizeGPUUUID(deviceUUID)
+	if len(want) != 32 {
+		return app.GPUDeviceInfo{}, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "device UUID must be a canonical GPU UUID (GPU-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)", nil)
+	}
+	devices, err := l.ListDevices(ctx)
+	if err != nil {
+		return app.GPUDeviceInfo{}, err
+	}
+	for _, dev := range devices {
+		if normalizeGPUUUID(dev.UUID) == want {
+			return dev, nil
+		}
+	}
+	return app.GPUDeviceInfo{}, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, fmt.Sprintf("device UUID %q is not visible to this process", deviceUUID), nil)
+}
+
+func (l *gdsLoader) Probe(_ context.Context, device int) (app.GPUProbeResult, error) {
 	code := int(C.gds_init())
 	if code != 0 {
 		return app.GPUProbeResult{
-			Available: false,
-			Loader:    l.Name(),
-			Device:    device,
-			GDSDriver: false,
-			Message:   fmt.Sprintf("failed to initialize CUDA/GDS driver: %s", describeGDSCode(code)),
+			Available:   false,
+			Loader:      l.Name(),
+			DeviceIndex: device,
+			GDSDriver:   false,
+			Message:     fmt.Sprintf("failed to initialize CUDA/GDS driver: %s", describeGDSCode(code)),
 		}, nil
-	}
-	if !l.ready {
-		defer C.gds_shutdown()
 	}
 
 	var cnt C.int
 	code = int(C.gds_device_count(&cnt))
 	if code != 0 {
 		return app.GPUProbeResult{
-			Available: false,
-			Loader:    l.Name(),
-			Device:    device,
-			GDSDriver: true,
-			Message:   fmt.Sprintf("failed to read CUDA device count: code=%d", code),
+			Available:   false,
+			Loader:      l.Name(),
+			DeviceIndex: device,
+			GDSDriver:   true,
+			Message:     fmt.Sprintf("failed to read CUDA device count: code=%d", code),
 		}, nil
 	}
 	if int(cnt) <= device {
 		return app.GPUProbeResult{
 			Available:   false,
 			Loader:      l.Name(),
-			Device:      device,
+			DeviceIndex: device,
 			DeviceCount: int(cnt),
 			GDSDriver:   true,
 			Message:     fmt.Sprintf("device index %d out of range (device_count=%d)", device, int(cnt)),
@@ -727,38 +888,55 @@ func (l *gdsLoader) Probe(_ context.Context, device int) (app.GPUProbeResult, er
 	return app.GPUProbeResult{
 		Available:   true,
 		Loader:      l.Name(),
-		Device:      device,
+		DeviceIndex: device,
 		DeviceCount: int(cnt),
 		GDSDriver:   true,
 	}, nil
 }
 
+func allocKey(device int, path string) string {
+	return fmt.Sprintf("%d|%s", device, path)
+}
+
+func (l *gdsLoader) totalRefsLocked() int {
+	total := 0
+	for _, c := range l.refs {
+		total += c
+	}
+	return total
+}
+
 func (l *gdsLoader) BeginSession(_ context.Context, device int) (func(), error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.ready {
-		if l.device != device {
-			return nil, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, fmt.Sprintf("loader session already active on device %d", l.device), nil)
-		}
-		l.refs++
-		return l.releaseFn(), nil
+	if l.refs == nil {
+		l.refs = map[int]int{}
+	}
+	if l.active == nil {
+		l.active = map[int]bool{}
+	}
+	if count := l.refs[device]; count > 0 {
+		l.refs[device] = count + 1
+		return l.releaseFn(device), nil
 	}
 	code := int(C.gds_init())
 	if code != 0 {
 		return nil, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, fmt.Sprintf("failed to initialize CUDA/GDS driver: %s", describeGDSCode(code)), nil)
 	}
-	code = int(C.gds_activate_device(C.int(device)))
+	var ctx C.CUcontext
+	code = int(C.gds_activate_device(C.int(device), &ctx))
 	if code != 0 {
-		_ = C.gds_shutdown()
+		if l.totalRefsLocked() == 0 && len(l.allocations) == 0 {
+			_ = C.gds_shutdown()
+		}
 		return nil, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, fmt.Sprintf("failed to activate CUDA primary context: %s", describeGDSCode(code)), nil)
 	}
-	l.refs = 1
-	l.device = device
-	l.ready = true
-	return l.releaseFn(), nil
+	l.refs[device] = 1
+	l.active[device] = true
+	return l.releaseFn(device), nil
 }
 
-func (l *gdsLoader) releaseFn() func() {
+func (l *gdsLoader) releaseFn(device int) func() {
 	released := false
 	return func() {
 		l.mu.Lock()
@@ -767,13 +945,14 @@ func (l *gdsLoader) releaseFn() func() {
 			return
 		}
 		released = true
-		if l.refs > 0 {
-			l.refs--
+		if count := l.refs[device]; count > 1 {
+			l.refs[device] = count - 1
+		} else {
+			delete(l.refs, device)
 		}
-		if l.refs == 0 && l.ready && len(l.allocations) == 0 {
+		if l.totalRefsLocked() == 0 && len(l.allocations) == 0 {
 			_ = C.gds_shutdown()
-			l.ready = false
-			l.device = 0
+			l.active = map[int]bool{}
 		}
 	}
 }
@@ -793,11 +972,10 @@ func (l *gdsLoader) LoadFile(ctx context.Context, req app.GPULoadFileRequest) (a
 	}
 
 	l.mu.Lock()
-	sessionReady := l.ready && l.refs > 0 && l.device == req.Device
+	sessionReady := l.refs[req.Device] > 0
 	l.mu.Unlock()
 	var endSession func()
 	if !sessionReady {
-		var err error
 		endSession, err = l.BeginSession(ctx, req.Device)
 		if err != nil {
 			if req.Strict {
@@ -856,15 +1034,12 @@ func (l *gdsLoader) LoadPersistent(ctx context.Context, req app.GPULoadFileReque
 		return app.GPULoadFileResult{}, app.NewAppError(app.ExitFilesystem, app.ReasonFilesystemError, "failed to stat shard path", err)
 	}
 
+	key := allocKey(req.Device, req.Path)
 	l.mu.Lock()
 	if l.allocations == nil {
 		l.allocations = map[string]*persistentAllocation{}
 	}
-	if alloc, ok := l.allocations[req.Path]; ok {
-		if !l.ready || l.device != req.Device {
-			l.mu.Unlock()
-			return app.GPULoadFileResult{}, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, "persistent allocation exists on different device/session state", nil)
-		}
+	if alloc, ok := l.allocations[key]; ok {
 		alloc.loadRefs++
 		res := app.GPULoadFileResult{
 			Path:      req.Path,
@@ -915,11 +1090,12 @@ func (l *gdsLoader) LoadPersistent(ctx context.Context, req app.GPULoadFileReque
 	if l.allocations == nil {
 		l.allocations = map[string]*persistentAllocation{}
 	}
-	if alloc, ok := l.allocations[req.Path]; ok {
+	if alloc, ok := l.allocations[key]; ok {
 		alloc.loadRefs++
 		duplicate = alloc
 	} else {
-		l.allocations[req.Path] = &persistentAllocation{
+		l.allocations[key] = &persistentAllocation{
+			device:    req.Device,
 			ptr:       ptr,
 			bytes:     int64(total),
 			loadRefs:  1,
@@ -958,18 +1134,16 @@ func (l *gdsLoader) ExportPersistent(ctx context.Context, req app.GPULoadFileReq
 		return app.GPULoadFileResult{}, app.NewAppError(app.ExitRegistry, app.ReasonRegistryTimeout, "context canceled before persistent GPU export", ctx.Err())
 	default:
 	}
+	key := allocKey(req.Device, req.Path)
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.allocations == nil {
 		l.allocations = map[string]*persistentAllocation{}
 	}
-	alloc, ok := l.allocations[req.Path]
+	alloc, ok := l.allocations[key]
 	if !ok {
 		return app.GPULoadFileResult{}, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "persistent allocation not found for shard path", nil)
-	}
-	if !l.ready || l.device != req.Device {
-		return app.GPULoadFileResult{}, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, "persistent allocation exists on a different device/session state", nil)
 	}
 
 	handle := make([]byte, 64)
@@ -1005,18 +1179,16 @@ func (l *gdsLoader) AttachPersistent(ctx context.Context, req app.GPULoadFileReq
 	if clientID == "" {
 		return app.GPULoadFileResult{}, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "client id is required for persistent attach", nil)
 	}
+	key := allocKey(req.Device, req.Path)
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.allocations == nil {
 		l.allocations = map[string]*persistentAllocation{}
 	}
-	alloc, ok := l.allocations[req.Path]
+	alloc, ok := l.allocations[key]
 	if !ok {
 		return app.GPULoadFileResult{}, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "persistent allocation not found for shard path", nil)
-	}
-	if !l.ready || l.device != req.Device {
-		return app.GPULoadFileResult{}, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, "persistent allocation exists on a different device/session state", nil)
 	}
 	if alloc.importers == nil {
 		alloc.importers = map[string]int{}
@@ -1045,13 +1217,14 @@ func (l *gdsLoader) DetachPersistent(ctx context.Context, req app.GPULoadFileReq
 	if clientID == "" {
 		return app.GPULoadFileResult{}, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "client id is required for persistent detach", nil)
 	}
+	key := allocKey(req.Device, req.Path)
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.allocations == nil {
 		l.allocations = map[string]*persistentAllocation{}
 	}
-	alloc, ok := l.allocations[req.Path]
+	alloc, ok := l.allocations[key]
 	if !ok {
 		return app.GPULoadFileResult{
 			Path:     req.Path,
@@ -1059,9 +1232,6 @@ func (l *gdsLoader) DetachPersistent(ctx context.Context, req app.GPULoadFileReq
 			RefCount: 0,
 			Message:  "persistent allocation already absent",
 		}, nil
-	}
-	if !l.ready || l.device != req.Device {
-		return app.GPULoadFileResult{}, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, "persistent allocation exists on a different device/session state", nil)
 	}
 	if alloc.importers == nil {
 		alloc.importers = map[string]int{}
@@ -1095,18 +1265,16 @@ func (l *gdsLoader) UnloadPersistent(ctx context.Context, req app.GPULoadFileReq
 		return app.GPULoadFileResult{}, app.NewAppError(app.ExitRegistry, app.ReasonRegistryTimeout, "context canceled before persistent GPU unload", ctx.Err())
 	default:
 	}
+	key := allocKey(req.Device, req.Path)
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.allocations == nil {
 		l.allocations = map[string]*persistentAllocation{}
 	}
-	alloc, ok := l.allocations[req.Path]
+	alloc, ok := l.allocations[key]
 	if !ok {
 		return app.GPULoadFileResult{}, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "persistent allocation not found for shard path", nil)
-	}
-	if !l.ready || l.device != req.Device {
-		return app.GPULoadFileResult{}, app.NewAppError(app.ExitPolicy, app.ReasonDirectPathIneligible, "persistent allocation exists on a different device", nil)
 	}
 	if alloc.loadRefs > 1 {
 		alloc.loadRefs--
@@ -1137,11 +1305,10 @@ func (l *gdsLoader) UnloadPersistent(ctx context.Context, req app.GPULoadFileReq
 		DevicePtr: devicePtrString(alloc.ptr),
 		Message:   "persistent allocation released",
 	}
-	delete(l.allocations, req.Path)
-	if l.refs == 0 && l.ready && len(l.allocations) == 0 {
+	delete(l.allocations, key)
+	if l.totalRefsLocked() == 0 && len(l.allocations) == 0 {
 		_ = C.gds_shutdown()
-		l.ready = false
-		l.device = 0
+		l.active = map[int]bool{}
 	}
 	return res, nil
 }
@@ -1155,13 +1322,13 @@ func (l *gdsLoader) ListPersistent(_ context.Context, device int) ([]app.GPULoad
 	if len(l.allocations) == 0 {
 		return []app.GPULoadFileResult{}, nil
 	}
-	if !l.ready || l.device != device {
-		return nil, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, fmt.Sprintf("persistent allocations are loaded on device %d", l.device), nil)
-	}
 	out := make([]app.GPULoadFileResult, 0, len(l.allocations))
 	for path, alloc := range l.allocations {
+		if alloc.device != device {
+			continue
+		}
 		out = append(out, app.GPULoadFileResult{
-			Path:      path,
+			Path:      strings.TrimPrefix(path, fmt.Sprintf("%d|", device)),
 			Bytes:     alloc.bytes,
 			Direct:    alloc.direct,
 			Loaded:    true,

@@ -22,6 +22,8 @@ type fakePersistentLoader struct {
 	failLoadPath string
 }
 
+const fakeDeviceUUID0 = "GPU-11111111-2222-3333-4444-555555555555"
+
 type fakePersistentAlloc struct {
 	bytes        int64
 	loadRefs     int
@@ -37,11 +39,32 @@ func (l *fakePersistentLoader) Name() string {
 	return "fake-gpu"
 }
 
+func (l *fakePersistentLoader) ListDevices(_ context.Context) ([]GPUDeviceInfo, error) {
+	return []GPUDeviceInfo{{
+		UUID:  fakeDeviceUUID0,
+		Index: 0,
+		Name:  "fake-gpu-0",
+	}}, nil
+}
+
+func (l *fakePersistentLoader) ResolveDevice(_ context.Context, deviceUUID string) (GPUDeviceInfo, error) {
+	want := strings.TrimSpace(strings.ToLower(deviceUUID))
+	if want != strings.ToLower(fakeDeviceUUID0) {
+		return GPUDeviceInfo{}, NewAppError(ExitValidation, ReasonValidationFailed, fmt.Sprintf("unknown fake device uuid %q", deviceUUID), nil)
+	}
+	return GPUDeviceInfo{
+		UUID:  fakeDeviceUUID0,
+		Index: 0,
+		Name:  "fake-gpu-0",
+	}, nil
+}
+
 func (l *fakePersistentLoader) Probe(_ context.Context, device int) (GPUProbeResult, error) {
 	return GPUProbeResult{
 		Available:   true,
 		Loader:      l.Name(),
-		Device:      device,
+		DeviceUUID:  fakeDeviceUUID0,
+		DeviceIndex: device,
 		DeviceCount: 1,
 		GDSDriver:   true,
 	}, nil
@@ -219,8 +242,8 @@ func (l *fakePersistentLoader) ListPersistent(_ context.Context, _ int) ([]GPULo
 func TestGPULoadInvalidModeRejected(t *testing.T) {
 	svc := &Service{}
 	_, err := svc.GPULoad(context.Background(), GPULoadRequest{
-		Device: 0,
-		Mode:   "unknown",
+		DeviceUUID: fakeDeviceUUID0,
+		Mode:       "unknown",
 	})
 	if err == nil {
 		t.Fatalf("expected error for invalid mode")
@@ -260,7 +283,7 @@ func TestGPULoadPersistentLeaseLifecycle(t *testing.T) {
 		ModelID:     modelID,
 		Digest:      manifest,
 		LeaseHolder: "holder-a",
-		Device:      0,
+		DeviceUUID:  fakeDeviceUUID0,
 		ChunkBytes:  4 * 1024,
 		Mode:        "persistent",
 		Strict:      true,
@@ -279,7 +302,7 @@ func TestGPULoadPersistentLeaseLifecycle(t *testing.T) {
 		ModelID:     modelID,
 		Digest:      manifest,
 		LeaseHolder: "holder-b",
-		Device:      0,
+		DeviceUUID:  fakeDeviceUUID0,
 		ChunkBytes:  4 * 1024,
 		Mode:        "persistent",
 		Strict:      true,
@@ -291,7 +314,7 @@ func TestGPULoadPersistentLeaseLifecycle(t *testing.T) {
 		t.Fatalf("unexpected second file result: %+v", second.Files)
 	}
 
-	status, err := svc.GPUListPersistent(context.Background(), 0)
+	status, err := svc.GPUListPersistent(context.Background(), fakeDeviceUUID0)
 	if err != nil {
 		t.Fatalf("gpu status: %v", err)
 	}
@@ -303,7 +326,7 @@ func TestGPULoadPersistentLeaseLifecycle(t *testing.T) {
 		ModelID:     modelID,
 		Digest:      manifest,
 		LeaseHolder: "holder-a",
-		Device:      0,
+		DeviceUUID:  fakeDeviceUUID0,
 	})
 	if err != nil {
 		t.Fatalf("first unload: %v", err)
@@ -319,7 +342,7 @@ func TestGPULoadPersistentLeaseLifecycle(t *testing.T) {
 		ModelID:     modelID,
 		Digest:      manifest,
 		LeaseHolder: "holder-b",
-		Device:      0,
+		DeviceUUID:  fakeDeviceUUID0,
 	})
 	if err != nil {
 		t.Fatalf("second unload: %v", err)
@@ -331,7 +354,7 @@ func TestGPULoadPersistentLeaseLifecycle(t *testing.T) {
 		t.Fatalf("expected released bytes=%d, got %d", shardSize, secondUnload.ReleasedBytes)
 	}
 
-	status, err = svc.GPUListPersistent(context.Background(), 0)
+	status, err = svc.GPUListPersistent(context.Background(), fakeDeviceUUID0)
 	if err != nil {
 		t.Fatalf("gpu status after unload: %v", err)
 	}
@@ -383,7 +406,7 @@ func TestGPUExportReturnsPersistentIPCHandle(t *testing.T) {
 		ModelID:     modelID,
 		Digest:      manifest,
 		LeaseHolder: "holder-export",
-		Device:      0,
+		DeviceUUID:  fakeDeviceUUID0,
 		ChunkBytes:  4 * 1024,
 		Mode:        "persistent",
 		Strict:      true,
@@ -393,9 +416,9 @@ func TestGPUExportReturnsPersistentIPCHandle(t *testing.T) {
 	}
 
 	res, err := svc.GPUExport(context.Background(), GPUExportRequest{
-		ModelID: modelID,
-		Digest:  manifest,
-		Device:  0,
+		ModelID:    modelID,
+		Digest:     manifest,
+		DeviceUUID: fakeDeviceUUID0,
 	})
 	if err != nil {
 		t.Fatalf("gpu export: %v", err)
@@ -441,7 +464,7 @@ func TestGPUAttachHeartbeatDetachBlocksUnloadUntilDetached(t *testing.T) {
 		ModelID:     modelID,
 		Digest:      manifest,
 		LeaseHolder: "holder-attach",
-		Device:      0,
+		DeviceUUID:  fakeDeviceUUID0,
 		ChunkBytes:  4 * 1024,
 		Mode:        "persistent",
 		Strict:      true,
@@ -453,7 +476,7 @@ func TestGPUAttachHeartbeatDetachBlocksUnloadUntilDetached(t *testing.T) {
 	attachRes, err := svc.GPUAttach(context.Background(), GPUAttachRequest{
 		ModelID:    modelID,
 		Digest:     manifest,
-		Device:     0,
+		DeviceUUID: fakeDeviceUUID0,
 		ClientID:   "client-a",
 		TTLSeconds: 60,
 	})
@@ -470,7 +493,7 @@ func TestGPUAttachHeartbeatDetachBlocksUnloadUntilDetached(t *testing.T) {
 	_, err = svc.GPUHeartbeat(context.Background(), GPUHeartbeatRequest{
 		ModelID:    modelID,
 		Digest:     manifest,
-		Device:     0,
+		DeviceUUID: fakeDeviceUUID0,
 		ClientID:   "client-a",
 		TTLSeconds: 60,
 	})
@@ -482,7 +505,7 @@ func TestGPUAttachHeartbeatDetachBlocksUnloadUntilDetached(t *testing.T) {
 		ModelID:     modelID,
 		Digest:      manifest,
 		LeaseHolder: "holder-attach",
-		Device:      0,
+		DeviceUUID:  fakeDeviceUUID0,
 	})
 	if err == nil {
 		t.Fatalf("expected unload to fail while attachment is active")
@@ -493,10 +516,10 @@ func TestGPUAttachHeartbeatDetachBlocksUnloadUntilDetached(t *testing.T) {
 	}
 
 	detachRes, err := svc.GPUDetach(context.Background(), GPUDetachRequest{
-		ModelID:  modelID,
-		Digest:   manifest,
-		Device:   0,
-		ClientID: "client-a",
+		ModelID:    modelID,
+		Digest:     manifest,
+		DeviceUUID: fakeDeviceUUID0,
+		ClientID:   "client-a",
 	})
 	if err != nil {
 		t.Fatalf("gpu detach: %v", err)
@@ -509,7 +532,7 @@ func TestGPUAttachHeartbeatDetachBlocksUnloadUntilDetached(t *testing.T) {
 		ModelID:     modelID,
 		Digest:      manifest,
 		LeaseHolder: "holder-attach",
-		Device:      0,
+		DeviceUUID:  fakeDeviceUUID0,
 	})
 	if err != nil {
 		t.Fatalf("gpu unload after detach: %v", err)
@@ -572,7 +595,7 @@ func TestGPULoadPersistentRollbackOnShardFailure(t *testing.T) {
 		ModelID:     modelID,
 		Digest:      manifest,
 		LeaseHolder: "holder-rollback",
-		Device:      0,
+		DeviceUUID:  fakeDeviceUUID0,
 		ChunkBytes:  4 * 1024,
 		Mode:        "persistent",
 		Strict:      true,
@@ -588,7 +611,7 @@ func TestGPULoadPersistentRollbackOnShardFailure(t *testing.T) {
 		t.Fatalf("expected rollback to remove all persistent allocations, got %d", allocCount)
 	}
 
-	status, err := svc.GPUListPersistent(context.Background(), 0)
+	status, err := svc.GPUListPersistent(context.Background(), fakeDeviceUUID0)
 	if err != nil {
 		t.Fatalf("gpu status: %v", err)
 	}

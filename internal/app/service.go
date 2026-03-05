@@ -39,7 +39,8 @@ type gpuClientAttachment struct {
 	ModelID         string
 	ManifestDigest  string
 	Path            string
-	Device          int
+	DeviceUUID      string
+	DeviceIndex     int
 	ClientID        string
 	ShardPaths      []string
 	ExpiresAt       time.Time

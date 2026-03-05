@@ -405,9 +405,11 @@ func runProfileInspect(ctx context.Context, svc *app.Service, args []string, glo
 
 func runGPU(ctx context.Context, svc *app.Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "gpu subcommand required: probe|load|unload|status", nil), globalJSON, stderr)
+		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "gpu subcommand required: devices|probe|load|unload|status", nil), globalJSON, stderr)
 	}
 	switch args[0] {
+	case "devices":
+		return runGPUDevices(ctx, svc, args[1:], globalJSON, stdout, stderr)
 	case "probe":
 		return runGPUProbe(ctx, svc, args[1:], globalJSON, stdout, stderr)
 	case "load":
@@ -421,25 +423,48 @@ func runGPU(ctx context.Context, svc *app.Service, args []string, globalJSON boo
 	}
 }
 
+func runGPUDevices(ctx context.Context, svc *app.Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("gpu devices", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	var commandJSON bool
+	fs.BoolVar(&commandJSON, "json", globalJSON, "json output")
+	if err := fs.Parse(args); err != nil {
+		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid gpu devices flags", err), commandJSON, stderr)
+	}
+	devices, err := svc.GPUDevices(ctx)
+	if err != nil {
+		return emitError(err, commandJSON, stderr)
+	}
+	if commandJSON {
+		_ = emitJSON(stdout, devices)
+		return app.ExitSuccess
+	}
+	for _, dev := range devices {
+		fmt.Fprintf(stdout, "uuid=%s index=%d name=%s\n", dev.UUID, dev.Index, dev.Name)
+	}
+	fmt.Fprintf(stdout, "devices=%d\n", len(devices))
+	return app.ExitSuccess
+}
+
 func runGPUProbe(ctx context.Context, svc *app.Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("gpu probe", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	var device int
+	var deviceUUID string
 	var commandJSON bool
-	fs.IntVar(&device, "device", 0, "GPU device index")
+	fs.StringVar(&deviceUUID, "device-uuid", "", "GPU device UUID (GPU-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)")
 	fs.BoolVar(&commandJSON, "json", globalJSON, "json output")
 	if err := fs.Parse(args); err != nil {
 		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid gpu probe flags", err), commandJSON, stderr)
 	}
-	res, err := svc.GPUProbe(ctx, device)
+	res, err := svc.GPUProbe(ctx, deviceUUID)
 	if err != nil {
 		return emitError(err, commandJSON, stderr)
 	}
 	if commandJSON {
 		_ = emitJSON(stdout, res)
 	} else {
-		fmt.Fprintf(stdout, "available=%t loader=%s device=%d device_count=%d gds_driver=%t message=%s\n",
-			res.Available, res.Loader, res.Device, res.DeviceCount, res.GDSDriver, res.Message)
+		fmt.Fprintf(stdout, "available=%t loader=%s device_uuid=%s device_index=%d device_count=%d gds_driver=%t message=%s\n",
+			res.Available, res.Loader, res.DeviceUUID, res.DeviceIndex, res.DeviceCount, res.GDSDriver, res.Message)
 	}
 	if !res.Available {
 		return app.ExitPolicy
@@ -454,7 +479,7 @@ func runGPULoad(ctx context.Context, svc *app.Service, args []string, globalJSON
 	var digest string
 	var path string
 	var leaseHolder string
-	var device int
+	var deviceUUID string
 	var chunkBytes string
 	var maxShards int
 	var strict bool
@@ -464,7 +489,7 @@ func runGPULoad(ctx context.Context, svc *app.Service, args []string, globalJSON
 	fs.StringVar(&digest, "digest", "", "manifest digest")
 	fs.StringVar(&path, "path", "", "local published model path")
 	fs.StringVar(&leaseHolder, "lease-holder", "", "lease holder (required for --mode persistent)")
-	fs.IntVar(&device, "device", 0, "GPU device index")
+	fs.StringVar(&deviceUUID, "device-uuid", "", "GPU device UUID (GPU-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)")
 	fs.StringVar(&chunkBytes, "chunk-bytes", "16MiB", "read chunk bytes")
 	fs.IntVar(&maxShards, "max-shards", 0, "maximum shards to load (0=all)")
 	fs.BoolVar(&strict, "strict", true, "fail if direct GDS read fails instead of fallback")
@@ -507,7 +532,7 @@ func runGPULoad(ctx context.Context, svc *app.Service, args []string, globalJSON
 		Digest:      digest,
 		Path:        path,
 		LeaseHolder: leaseHolder,
-		Device:      device,
+		DeviceUUID:  deviceUUID,
 		ChunkBytes:  chunk,
 		MaxShards:   maxShards,
 		Strict:      strict,
@@ -516,8 +541,8 @@ func runGPULoad(ctx context.Context, svc *app.Service, args []string, globalJSON
 	if commandJSON {
 		_ = emitJSON(stdout, res)
 	} else {
-		fmt.Fprintf(stdout, "status=%s loader=%s mode=%s persistent=%t device=%d bytes=%d files=%d reason=%s message=%s\n",
-			res.Status, res.Loader, res.Mode, res.Persistent, res.Device, res.TotalBytes, len(res.Files), res.ReasonCode, res.Message)
+		fmt.Fprintf(stdout, "status=%s loader=%s mode=%s persistent=%t device_uuid=%s device_index=%d bytes=%d files=%d reason=%s message=%s\n",
+			res.Status, res.Loader, res.Mode, res.Persistent, res.DeviceUUID, res.DeviceIndex, res.TotalBytes, len(res.Files), res.ReasonCode, res.Message)
 	}
 	if err != nil {
 		if commandJSON {
@@ -535,13 +560,13 @@ func runGPUUnload(ctx context.Context, svc *app.Service, args []string, globalJS
 	var digest string
 	var path string
 	var leaseHolder string
-	var device int
+	var deviceUUID string
 	var commandJSON bool
 	fs.StringVar(&modelID, "model-id", "", "model id")
 	fs.StringVar(&digest, "digest", "", "manifest digest")
 	fs.StringVar(&path, "path", "", "local published model path")
 	fs.StringVar(&leaseHolder, "lease-holder", "", "lease holder")
-	fs.IntVar(&device, "device", 0, "GPU device index")
+	fs.StringVar(&deviceUUID, "device-uuid", "", "GPU device UUID (GPU-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)")
 	fs.BoolVar(&commandJSON, "json", globalJSON, "json output")
 	if err := fs.Parse(args); err != nil {
 		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid gpu unload flags", err), commandJSON, stderr)
@@ -551,13 +576,13 @@ func runGPUUnload(ctx context.Context, svc *app.Service, args []string, globalJS
 		Digest:      digest,
 		Path:        path,
 		LeaseHolder: leaseHolder,
-		Device:      device,
+		DeviceUUID:  deviceUUID,
 	})
 	if commandJSON {
 		_ = emitJSON(stdout, res)
 	} else {
-		fmt.Fprintf(stdout, "status=%s loader=%s device=%d released_bytes=%d remaining_leases=%d reason=%s message=%s\n",
-			res.Status, res.Loader, res.Device, res.ReleasedBytes, res.RemainingLeases, res.ReasonCode, res.Message)
+		fmt.Fprintf(stdout, "status=%s loader=%s device_uuid=%s device_index=%d released_bytes=%d remaining_leases=%d reason=%s message=%s\n",
+			res.Status, res.Loader, res.DeviceUUID, res.DeviceIndex, res.ReleasedBytes, res.RemainingLeases, res.ReasonCode, res.Message)
 	}
 	if err != nil {
 		if commandJSON {
@@ -571,14 +596,14 @@ func runGPUUnload(ctx context.Context, svc *app.Service, args []string, globalJS
 func runGPUStatus(ctx context.Context, svc *app.Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("gpu status", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	var device int
+	var deviceUUID string
 	var commandJSON bool
-	fs.IntVar(&device, "device", 0, "GPU device index")
+	fs.StringVar(&deviceUUID, "device-uuid", "", "GPU device UUID (GPU-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)")
 	fs.BoolVar(&commandJSON, "json", globalJSON, "json output")
 	if err := fs.Parse(args); err != nil {
 		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid gpu status flags", err), commandJSON, stderr)
 	}
-	res, err := svc.GPUListPersistent(ctx, device)
+	res, err := svc.GPUListPersistent(ctx, deviceUUID)
 	if err != nil {
 		return emitError(err, commandJSON, stderr)
 	}
@@ -590,7 +615,7 @@ func runGPUStatus(ctx context.Context, svc *app.Service, args []string, globalJS
 			total += f.Bytes
 			fmt.Fprintf(stdout, "path=%s bytes=%d refs=%d ptr=%s direct=%t\n", f.Path, f.Bytes, f.RefCount, f.DevicePtr, f.Direct)
 		}
-		fmt.Fprintf(stdout, "device=%d persistent_files=%d total_bytes=%d\n", device, len(res), total)
+		fmt.Fprintf(stdout, "device_uuid=%s persistent_files=%d total_bytes=%d\n", deviceUUID, len(res), total)
 	}
 	return app.ExitSuccess
 }
@@ -688,6 +713,7 @@ func printUsage(w io.Writer) {
 		"  profile lint",
 		"  profile inspect",
 		"  gpu probe",
+		"  gpu devices",
 		"  gpu load",
 		"  gpu unload",
 		"  gpu status",

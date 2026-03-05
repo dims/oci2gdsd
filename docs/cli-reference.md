@@ -258,18 +258,33 @@ One of `--ref` or `--config` is required.
 
 ---
 
+## `gpu devices`
+
+Lists visible GPUs with canonical UUID and local CUDA index. Use this to pick a
+`--device-uuid` for all GPU commands.
+
+```bash
+oci2gdsd gpu devices --json
+```
+
+Flags:
+
+- `--json`
+
+---
+
 ## `gpu probe`
 
 Probes GPU Direct Storage (GDS) capability for a device. Requires the binary to be
 built with `-tags gds` and a compatible NVIDIA driver stack.
 
 ```bash
-oci2gdsd gpu probe --device 0 --json
+oci2gdsd gpu probe --device-uuid GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --json
 ```
 
 Flags:
 
-- `--device <index>` — GPU device index (default: `0`)
+- `--device-uuid <GPU-...>` — canonical GPU UUID (required)
 - `--json`
 
 Returns non-zero (`ExitPolicy`) when direct GPU path is unavailable.
@@ -286,7 +301,7 @@ reports throughput and progress metadata, then releases GPU memory.
 oci2gdsd gpu load \
   --model-id qwen3-0.6b \
   --digest sha256:abc123... \
-  --device 0 \
+  --device-uuid GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee \
   --mode benchmark \
   --json
 ```
@@ -296,7 +311,7 @@ Flags:
 - `--model-id <id>` — resolve path from local state
 - `--digest sha256:...` — used with `--model-id` to find the model path
 - `--path <published-model-path>` — alternative to `--model-id` + `--digest`
-- `--device <index>` (default: `0`)
+- `--device-uuid <GPU-...>` (required)
 - `--chunk-bytes <size>` (default: `16MiB`) — chunk size for shard reads
 - `--max-shards <n>` — limit to first N shards; `0` means all
 - `--strict` (default: `true`) — fail if direct GDS path is unavailable; `false` is rejected in standalone mode
@@ -319,7 +334,7 @@ oci2gdsd gpu unload \
   --model-id qwen3-0.6b \
   --digest sha256:abc123... \
   --lease-holder my-pod-run-1 \
-  --device 0 \
+  --device-uuid GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee \
   --json
 ```
 
@@ -329,7 +344,7 @@ Flags:
 - `--digest sha256:...`
 - `--path <published-model-path>`
 - `--lease-holder <holder>` (required)
-- `--device <index>` (default: `0`)
+- `--device-uuid <GPU-...>` (required)
 - `--json`
 
 Note: in standalone CLI mode, persistent loads are rejected, so `gpu unload` is primarily
@@ -342,12 +357,12 @@ useful for embedded or daemon integrations.
 Lists persistent GPU allocations tracked by the current process.
 
 ```bash
-oci2gdsd gpu status --device 0 --json
+oci2gdsd gpu status --device-uuid GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --json
 ```
 
 Flags:
 
-- `--device <index>` (default: `0`)
+- `--device-uuid <GPU-...>` (required)
 - `--json`
 
 Note: in one-shot CLI mode this returns an empty list because no cross-invocation state is kept.
@@ -378,13 +393,14 @@ HTTP API surface:
 
 ```
 GET  /healthz
+GET  /v1/gpu/devices
 POST /v1/gpu/load
 POST /v1/gpu/export
 POST /v1/gpu/attach
 POST /v1/gpu/heartbeat
 POST /v1/gpu/detach
 POST /v1/gpu/unload
-GET  /v1/gpu/status?device=<index>
+GET  /v1/gpu/status?device_uuid=<GPU-...>
 ```
 
 ---

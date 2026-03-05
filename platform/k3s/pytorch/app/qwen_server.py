@@ -1,7 +1,9 @@
 import json
 import os
+import re
 import socket
 import shutil
+import subprocess
 import time
 from pathlib import Path
 
@@ -32,6 +34,32 @@ _NATIVE_ERROR = ""
 _IPC_NATIVE_MODULE = None
 _IPC_NATIVE_ERROR = ""
 _CUFILE_ENV_PATH = ""
+_GPU_UUID_PATTERN = re.compile(r"^GPU-[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$")
+
+
+def _resolve_device_uuid(device_index: int) -> str:
+    explicit = os.environ.get("DEVICE_UUID", "").strip()
+    if explicit:
+        if not _GPU_UUID_PATTERN.match(explicit):
+            raise RuntimeError(f"DEVICE_UUID is not a canonical GPU UUID: {explicit}")
+        return explicit
+    visible = os.environ.get("NVIDIA_VISIBLE_DEVICES", "").strip()
+    if visible and visible.lower() not in {"none", "void"}:
+        first = visible.split(",")[0].strip()
+        if _GPU_UUID_PATTERN.match(first):
+            return first
+    out = subprocess.check_output(
+        ["nvidia-smi", "--query-gpu=uuid", "--format=csv,noheader"],
+        text=True,
+        stderr=subprocess.STDOUT,
+    )
+    uuids = [line.strip() for line in out.splitlines() if line.strip()]
+    if device_index < 0 or device_index >= len(uuids):
+        raise RuntimeError(f"device index {device_index} out of range for discovered GPU UUIDs: {uuids}")
+    candidate = uuids[device_index]
+    if not _GPU_UUID_PATTERN.match(candidate):
+        raise RuntimeError(f"nvidia-smi returned non-canonical GPU UUID: {candidate}")
+    return candidate
 
 def _force_no_compat():
     raw = os.environ.get("OCI2GDS_FORCE_NO_COMPAT", "true").strip().lower()
@@ -388,11 +416,12 @@ def _daemon_persistent_probe(model_id, model_digest, lease_holder, device_idx, c
             "socket": socket_path,
         }
     try:
+        device_uuid = _resolve_device_uuid(int(device_idx))
         load_req = {
             "model_id": str(model_id),
             "digest": str(model_digest),
             "lease_holder": str(lease_holder),
-            "device": int(device_idx),
+            "device_uuid": str(device_uuid),
             "chunk_bytes": int(chunk_bytes),
             "strict": False,
             "mode": "persistent",
@@ -417,7 +446,7 @@ def _daemon_persistent_probe(model_id, model_digest, lease_holder, device_idx, c
         export_req = {
             "model_id": str(model_id),
             "digest": str(model_digest),
-            "device": int(device_idx),
+            "device_uuid": str(device_uuid),
             "max_shards": int(max(shard_count, 1)),
         }
         export_code, export_res = _unix_http_json(socket_path, "POST", "/v1/gpu/export", export_req, timeout_seconds=120)
