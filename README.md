@@ -286,5 +286,6 @@ metrics/event exporters. See **[docs/IMPLEMENTATION-NOTES.md](docs/IMPLEMENTATIO
 | [testharness/local-e2e/README.md](testharness/local-e2e/README.md) | New users — automated local lifecycle e2e |
 | [testharness/k3s-e2e/README.md](testharness/k3s-e2e/README.md) | GPU infra — Kubernetes e2e harness |
 | [testharness/host-e2e/README.md](testharness/host-e2e/README.md) | GPU infra — host-only GDS probe |
-| [examples/qwen-hello/README.md](examples/qwen-hello/README.md) | GPU infra — full Kubernetes example |
-| [examples/daemonset/README.md](examples/daemonset/README.md) | GPU infra — daemonset + daemon-client example assets |
+| [examples/README.md](examples/README.md) | Everyone — examples map and entry points |
+| [examples/k3s/qwen-hello/README.md](examples/k3s/qwen-hello/README.md) | GPU infra — full Kubernetes example |
+| [examples/k3s/daemonset/README.md](examples/k3s/daemonset/README.md) | GPU infra — daemonset + daemon-client example assets |

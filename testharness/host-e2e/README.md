@@ -109,11 +109,11 @@ Defaults:
 Assumptions:
 
 - Probe container runs with `--privileged` by default in this harness.
-- Probe compiles native extension from shared source file: `examples/qwen-hello/native/oci2gds_torch_native.cpp`.
+- Probe compiles native extension from shared source file: `examples/k3s/qwen-hello/native/oci2gds_torch_native.cpp`.
 
 Runtime dependency behavior:
 
-- `examples/qwen-hello/app/deps_bootstrap.py` is check-only by default and fails fast when required Python packages are missing.
+- `examples/k3s/qwen-hello/app/deps_bootstrap.py` is check-only by default and fails fast when required Python packages are missing.
 - Optional runtime `pip install` is debug-only via `OCI2GDS_ALLOW_RUNTIME_PIP_INSTALL=true`.
 
 ## Useful overrides

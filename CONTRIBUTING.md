@@ -125,7 +125,7 @@ Before changing core behavior, understand these constraints:
    - `active` — read and used
    - `validation-only` — checked but not used at runtime
    - `reserved` — accepted but currently no-op
-5. Add a `# RESERVED: not yet implemented` comment in `examples/oci2gdsd.yaml`.
+5. Add a `# RESERVED: not yet implemented` comment in `examples/config/oci2gdsd.yaml`.
 
 ---
 

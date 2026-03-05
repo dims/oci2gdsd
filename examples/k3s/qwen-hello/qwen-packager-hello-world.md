@@ -61,4 +61,4 @@ as the `--ref` for `oci2gdsd ensure`.
 
 For a full k3s + Kubernetes hello-world deployment using this artifact, see:
 
-- `examples/qwen-hello/qwen-packager-k3s-hello-world.md`
+- `examples/k3s/qwen-hello/qwen-packager-k3s-hello-world.md`

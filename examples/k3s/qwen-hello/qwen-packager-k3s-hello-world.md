@@ -41,7 +41,7 @@ sudo helm --kubeconfig /etc/rancher/k3s/k3s.yaml upgrade -i \
 ### 2. Deploy in-cluster OCI registry
 
 ```bash
-sudo k3s kubectl apply -f examples/qwen-hello/oci-model-registry.yaml
+sudo k3s kubectl apply -f examples/k3s/qwen-hello/oci-model-registry.yaml
 sudo k3s kubectl -n oci-model-registry rollout status deploy/oci-model-registry --timeout=180s
 ```
 
@@ -97,7 +97,7 @@ export OCI2GDS_PROBE_STRICT="true"
 export OCI2GDS_FORCE_NO_COMPAT="true"
 export MODEL_ROOT_PATH="${OCI2GDSD_ROOT_PATH}/models/${MODEL_ID}/${MODEL_DIGEST//:/-}"
 
-cp examples/qwen-hello/qwen-k3s-hello-deployment.yaml.tpl /tmp/qwen-k3s-hello.yaml
+cp examples/k3s/qwen-hello/qwen-k3s-hello-deployment.yaml.tpl /tmp/qwen-k3s-hello.yaml
 gsed -i "s|__QWEN_HELLO_NAMESPACE__|${QWEN_HELLO_NAMESPACE}|g" /tmp/qwen-k3s-hello.yaml
 gsed -i "s|__MODEL_ID__|${MODEL_ID}|g" /tmp/qwen-k3s-hello.yaml
 gsed -i "s|__MODEL_REF__|${MODEL_REF}|g" /tmp/qwen-k3s-hello.yaml
@@ -113,11 +113,11 @@ gsed -i "s|__LEASE_HOLDER__|${LEASE_HOLDER}|g" /tmp/qwen-k3s-hello.yaml
 
 sudo k3s kubectl create namespace "${QWEN_HELLO_NAMESPACE}" --dry-run=client -o yaml | sudo k3s kubectl apply -f -
 sudo k3s kubectl -n "${QWEN_HELLO_NAMESPACE}" create configmap qwen-hello-app \
-  --from-file=qwen_server.py=examples/qwen-hello/app/qwen_server.py \
-  --from-file=deps_bootstrap.py=examples/qwen-hello/app/deps_bootstrap.py \
+  --from-file=qwen_server.py=examples/k3s/qwen-hello/app/qwen_server.py \
+  --from-file=deps_bootstrap.py=examples/k3s/qwen-hello/app/deps_bootstrap.py \
   --dry-run=client -o yaml | sudo k3s kubectl apply -f -
 sudo k3s kubectl -n "${QWEN_HELLO_NAMESPACE}" create configmap qwen-hello-native \
-  --from-file=oci2gds_torch_native.cpp=examples/qwen-hello/native/oci2gds_torch_native.cpp \
+  --from-file=oci2gds_torch_native.cpp=examples/k3s/qwen-hello/native/oci2gds_torch_native.cpp \
   --dry-run=client -o yaml | sudo k3s kubectl apply -f -
 
 sudo k3s kubectl apply -f /tmp/qwen-k3s-hello.yaml

@@ -5,13 +5,13 @@ as a node-level daemon and validating GPU load/export lifecycle from a workload 
 
 ## Files
 
-- `examples/daemonset/oci2gdsd-daemonset.yaml.tpl`
-- `examples/daemonset/pytorch-daemon-client-job.yaml.tpl`
-- `examples/daemonset/pytorch_daemon_client.py`
-- `examples/daemonset/tensorrt-daemon-client-job.yaml.tpl`
-- `examples/daemonset/tensorrt_daemon_client.py`
-- `examples/daemonset/vllm-daemon-client-job.yaml.tpl`
-- `examples/daemonset/vllm_daemon_client.py`
+- `examples/k3s/daemonset/oci2gdsd-daemonset.yaml.tpl`
+- `examples/k3s/daemonset/pytorch-daemon-client-job.yaml.tpl`
+- `examples/k3s/daemonset/pytorch_daemon_client.py`
+- `examples/k3s/daemonset/tensorrt-daemon-client-job.yaml.tpl`
+- `examples/k3s/daemonset/tensorrt_daemon_client.py`
+- `examples/k3s/daemonset/vllm-daemon-client-job.yaml.tpl`
+- `examples/k3s/daemonset/vllm_daemon_client.py`
 
 ## What this mode does
 

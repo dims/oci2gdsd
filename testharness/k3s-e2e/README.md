@@ -14,7 +14,7 @@ For host-only strict direct-GDS validation (without Kubernetes), see [`testharne
 - PyTorch container reading preloaded model files and running CUDA compute.
 - Optional raw-manifest DaemonSet mode (`E2E_DEPLOY_MODE=daemonset-manifest`) where
   `oci2gdsd serve` is node-level and workloads call daemon GPU APIs directly.
-- Validation of `examples/qwen-hello` FastAPI + PyTorch deployment by issuing a real `/chat` request and verifying `/healthz` `oci2gds_profile` status fields.
+- Validation of `examples/k3s/qwen-hello` FastAPI + PyTorch deployment by issuing a real `/chat` request and verifying `/healthz` `oci2gds_profile` status fields.
 - Optional strict gating on daemon IPC probe status (`REQUIRE_DAEMON_IPC_PROBE=true`).
 - `oci2gdsd release + gc + status` on the same node as workload pod.
 
@@ -115,8 +115,8 @@ make verify-k3s-qwen-smoke
 
 This script only:
 
-- re-renders and reapplies `examples/qwen-hello/qwen-k3s-hello-deployment.yaml.tpl`
-- applies qwen app/native ConfigMaps from standalone files under `examples/qwen-hello/app` and `examples/qwen-hello/native`
+- re-renders and reapplies `examples/k3s/qwen-hello/qwen-k3s-hello-deployment.yaml.tpl`
+- applies qwen app/native ConfigMaps from standalone files under `examples/k3s/qwen-hello/app` and `examples/k3s/qwen-hello/native`
 - waits for rollout
 - probes `/healthz` and `/chat`
 - writes logs to `testharness/k3s-e2e/work/results/qwen-hello.log`
