@@ -71,7 +71,7 @@ TENSORRTLLM_IMAGE="${TENSORRTLLM_IMAGE:-${TENSORRTLLM_RUNTIME_IMAGE}}"
 WORKLOAD_RUNTIME="${WORKLOAD_RUNTIME:-pytorch}"
 QWEN_GDS_RUNTIME_IMAGE="${QWEN_GDS_RUNTIME_IMAGE:-oci2gdsd-qwen-runtime-gds:e2e}"
 BUILD_QWEN_GDS_RUNTIME_IMAGE="${BUILD_QWEN_GDS_RUNTIME_IMAGE:-false}"
-QWEN_GDS_RUNTIME_DOCKERFILE="${QWEN_GDS_RUNTIME_DOCKERFILE:-${REPO_ROOT}/platform/k3s/examples/qwen-hello/Dockerfile.vllm-runtime-gds}"
+QWEN_GDS_RUNTIME_DOCKERFILE="${QWEN_GDS_RUNTIME_DOCKERFILE:-${REPO_ROOT}/platform/k3s/workloads/pytorch/qwen-hello/Dockerfile.vllm-runtime-gds}"
 REQUIRE_STRICT_PROFILE_PROBE="${REQUIRE_STRICT_PROFILE_PROBE:-true}"
 REQUIRE_NO_COMPAT_EVIDENCE="${REQUIRE_NO_COMPAT_EVIDENCE:-true}"
 MIN_PROFILE_PROBE_MIB_S="${MIN_PROFILE_PROBE_MIB_S:-0}"
@@ -432,16 +432,16 @@ if [[ "${OCI2GDSD_ENABLE_GDS_IMAGE}" == "true" && -z "${FORCE_OCI2GDSD_IMAGE_REB
   FORCE_OCI2GDSD_IMAGE_REBUILD="true"
 fi
 if [[ -z "${QWEN_HELLO_TEMPLATE}" ]]; then
-  QWEN_HELLO_TEMPLATE="${REPO_ROOT}/platform/k3s/examples/qwen-hello/qwen-k3s-hello-deployment.yaml.tpl"
+  QWEN_HELLO_TEMPLATE="${REPO_ROOT}/platform/k3s/workloads/pytorch/qwen-hello/qwen-k3s-hello-deployment.yaml.tpl"
 fi
-OCI2GDSD_DAEMON_TEMPLATE="${OCI2GDSD_DAEMON_TEMPLATE:-${REPO_ROOT}/platform/k3s/examples/daemonset/oci2gdsd-daemonset.yaml.tpl}"
-PYTORCH_DAEMON_CLIENT_TEMPLATE="${PYTORCH_DAEMON_CLIENT_TEMPLATE:-${REPO_ROOT}/platform/k3s/examples/daemonset/pytorch-daemon-client-job.yaml.tpl}"
-PYTORCH_DAEMON_CLIENT_SCRIPT="${PYTORCH_DAEMON_CLIENT_SCRIPT:-${REPO_ROOT}/platform/k3s/examples/daemonset/pytorch_daemon_client.py}"
-TENSORRT_DAEMON_CLIENT_TEMPLATE="${TENSORRT_DAEMON_CLIENT_TEMPLATE:-${REPO_ROOT}/platform/k3s/examples/daemonset/tensorrt-daemon-client-job.yaml.tpl}"
-TENSORRT_DAEMON_CLIENT_SCRIPT="${TENSORRT_DAEMON_CLIENT_SCRIPT:-${REPO_ROOT}/platform/k3s/examples/daemonset/tensorrt_daemon_client.py}"
-VLLM_DAEMON_CLIENT_TEMPLATE="${VLLM_DAEMON_CLIENT_TEMPLATE:-${REPO_ROOT}/platform/k3s/examples/daemonset/vllm-daemon-client-job.yaml.tpl}"
-VLLM_DAEMON_CLIENT_SCRIPT="${VLLM_DAEMON_CLIENT_SCRIPT:-${REPO_ROOT}/platform/k3s/examples/daemonset/vllm_daemon_client.py}"
-PYTORCH_DAEMON_NATIVE_CPP="${PYTORCH_DAEMON_NATIVE_CPP:-${REPO_ROOT}/platform/k3s/examples/qwen-hello/native/oci2gds_torch_native.cpp}"
+OCI2GDSD_DAEMON_TEMPLATE="${OCI2GDSD_DAEMON_TEMPLATE:-${REPO_ROOT}/platform/k3s/workloads/shared/oci2gdsd-daemonset.yaml.tpl}"
+PYTORCH_DAEMON_CLIENT_TEMPLATE="${PYTORCH_DAEMON_CLIENT_TEMPLATE:-${REPO_ROOT}/platform/k3s/workloads/pytorch/pytorch-daemon-client-job.yaml.tpl}"
+PYTORCH_DAEMON_CLIENT_SCRIPT="${PYTORCH_DAEMON_CLIENT_SCRIPT:-${REPO_ROOT}/platform/k3s/workloads/pytorch/pytorch_daemon_client.py}"
+TENSORRT_DAEMON_CLIENT_TEMPLATE="${TENSORRT_DAEMON_CLIENT_TEMPLATE:-${REPO_ROOT}/platform/k3s/workloads/tensorrt/tensorrt-daemon-client-job.yaml.tpl}"
+TENSORRT_DAEMON_CLIENT_SCRIPT="${TENSORRT_DAEMON_CLIENT_SCRIPT:-${REPO_ROOT}/platform/k3s/workloads/tensorrt/tensorrt_daemon_client.py}"
+VLLM_DAEMON_CLIENT_TEMPLATE="${VLLM_DAEMON_CLIENT_TEMPLATE:-${REPO_ROOT}/platform/k3s/workloads/vllm/vllm-daemon-client-job.yaml.tpl}"
+VLLM_DAEMON_CLIENT_SCRIPT="${VLLM_DAEMON_CLIENT_SCRIPT:-${REPO_ROOT}/platform/k3s/workloads/vllm/vllm_daemon_client.py}"
+PYTORCH_DAEMON_NATIVE_CPP="${PYTORCH_DAEMON_NATIVE_CPP:-${REPO_ROOT}/platform/k3s/workloads/pytorch/qwen-hello/native/oci2gds_torch_native.cpp}"
 validate_workload_runtime
 configure_workload_runtime
 validate_deploy_assets
@@ -1406,8 +1406,8 @@ assert_profile_probe_perf_gates() {
 
 validate_qwen_hello_example() {
   local template="${QWEN_HELLO_TEMPLATE}"
-  local app_dir="${REPO_ROOT}/platform/k3s/examples/qwen-hello/app"
-  local native_dir="${REPO_ROOT}/platform/k3s/examples/qwen-hello/native"
+  local app_dir="${REPO_ROOT}/platform/k3s/workloads/pytorch/qwen-hello/app"
+  local native_dir="${REPO_ROOT}/platform/k3s/workloads/pytorch/qwen-hello/native"
   if [[ ! -f "${template}" ]]; then
     warn "missing example template: ${template}"
     return 1

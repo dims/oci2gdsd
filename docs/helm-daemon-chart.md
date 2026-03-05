@@ -1,6 +1,6 @@
 # Helm Chart: oci2gdsd Daemon
 
-Chart path: `platform/k3s/deploy/charts/oci2gdsd-daemon`
+Chart path: `charts/oci2gdsd-daemon`
 
 This chart deploys the daemon-only control plane (`oci2gdsd serve`) as a privileged
 DaemonSet. It does not deploy application workloads.
@@ -8,7 +8,7 @@ DaemonSet. It does not deploy application workloads.
 ## Install
 
 ```bash
-helm upgrade --install oci2gdsd-daemon ./platform/k3s/deploy/charts/oci2gdsd-daemon \
+helm upgrade --install oci2gdsd-daemon ./charts/oci2gdsd-daemon \
   --namespace oci2gdsd-daemon \
   --create-namespace \
   --set image.repository=oci2gdsd \

@@ -282,7 +282,7 @@ esac
 wait_for_workload_and_collect
 
 if [[ "${VALIDATE_QWEN_HELLO}" == "true" ]]; then
-  log "validating platform/k3s/examples/qwen-hello deployment"
+  log "validating platform/k3s/workloads/pytorch/qwen-hello deployment"
   if ! validate_qwen_hello_example; then
     collect_debug
     kube -n "${QWEN_HELLO_NAMESPACE}" logs deploy/qwen-hello -c preload-model || true

@@ -286,6 +286,8 @@ metrics/event exporters. See **[docs/IMPLEMENTATION-NOTES.md](docs/IMPLEMENTATIO
 | [platform/local/e2e/README.md](platform/local/e2e/README.md) | New users — automated local lifecycle e2e |
 | [platform/k3s/e2e/README.md](platform/k3s/e2e/README.md) | GPU infra — Kubernetes e2e harness |
 | [platform/host/e2e/README.md](platform/host/e2e/README.md) | GPU infra — host-only GDS probe |
-| [platform/k3s/examples/README.md](platform/k3s/examples/README.md) | Everyone — examples map and entry points |
-| [platform/k3s/examples/qwen-hello/README.md](platform/k3s/examples/qwen-hello/README.md) | GPU infra — full Kubernetes example |
-| [platform/k3s/examples/daemonset/README.md](platform/k3s/examples/daemonset/README.md) | GPU infra — daemonset + daemon-client example assets |
+| [platform/k3s/workloads/README.md](platform/k3s/workloads/README.md) | Everyone — k3s workload map and entry points |
+| [platform/k3s/workloads/pytorch/qwen-hello/README.md](platform/k3s/workloads/pytorch/qwen-hello/README.md) | GPU infra — full Kubernetes example |
+| [platform/k3s/workloads/pytorch/README.md](platform/k3s/workloads/pytorch/README.md) | GPU infra — PyTorch daemon-client + qwen workload assets |
+| [platform/k3s/workloads/tensorrt/README.md](platform/k3s/workloads/tensorrt/README.md) | GPU infra — TensorRT-LLM daemon-client workload assets |
+| [platform/k3s/workloads/vllm/README.md](platform/k3s/workloads/vllm/README.md) | GPU infra — vLLM daemon-client workload assets |

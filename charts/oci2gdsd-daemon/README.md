@@ -5,8 +5,8 @@ model cache and UNIX socket.
 
 Canonical install/values documentation is maintained in:
 
-- [`docs/helm-daemon-chart.md`](../../../../../docs/helm-daemon-chart.md)
+- [`docs/helm-daemon-chart.md`](../../docs/helm-daemon-chart.md)
 
 Chart location:
 
-- `platform/k3s/deploy/charts/oci2gdsd-daemon`
+- `charts/oci2gdsd-daemon`

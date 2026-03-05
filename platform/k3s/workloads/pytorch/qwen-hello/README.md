@@ -68,7 +68,7 @@ To run qwen-hello validation specifically (enabled by default):
 VALIDATE_QWEN_HELLO=true make verify-k3s-qwen-e2e-inline
 ```
 
-Harness docs: [`platform/k3s/e2e/README.md`](../../e2e/README.md)
+Harness docs: [`platform/k3s/e2e/README.md`](../../../e2e/README.md)
 
 ## Manual Walkthrough
 
