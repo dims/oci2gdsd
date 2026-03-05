@@ -40,9 +40,11 @@ If `READY` already exists under `OCI2GDSD_ROOT_PATH/models/${MODEL_ID}/sha256-*`
 the script reuses that digest first.
 
 Defaults are strict direct-GDS. On hosts where `gdscheck -p` reports
-`NVMe : compat/Unsupported`, prereq now attempts non-destructive remediation first
-(GDS tooling/modules + NVMe mount/data-path alignment), then fails if direct path is
-still unavailable.
+`NVMe : compat/Unsupported`, prereq and quick checks require strict functional proof
+(`gdsio -x 0 -I 1`) on the workload path plus NVFS registration evidence
+(`devices` non-empty or `modules` contains `nvme`). The harness attempts non-destructive
+remediation first (GDS tooling/modules + NVMe mount/data-path alignment), then fails
+if neither `gdscheck` nor strict `gdsio` proves direct path.
 
 If host quick fails with:
 
@@ -74,7 +76,7 @@ Base dev toolchain expected on the host for full repo workflows:
 - `c++`/build headers (native extension/probe compilation path)
 
 `make prereq-host-gds` auto-installs host prerequisites by default on Ubuntu/Debian (`INSTALL_MISSING_PREREQS=true`) and executes after stage 0 (`prereq-local`).
-When `REQUIRE_DIRECT_GDS=true`, it also installs GDS user-space tools (`gdscheck`) if missing and
+When `REQUIRE_DIRECT_GDS=true`, it also installs GDS user-space tools (`gdscheck`/`gdsio`) if missing and
 attempts non-destructive remediation unless a hard blocker is detected (for example no guest-visible NVMe).
 It does not mutate GPU driver/kernel packages automatically.
 Set `INSTALL_MISSING_PREREQS=false` to run checks only.

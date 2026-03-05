@@ -20,7 +20,7 @@ Use it together with:
 
 | Symptom | What it usually means | First action |
 |---|---|---|
-| `REQUIRE_DIRECT_GDS=true but direct-GDS platform preflight failed` | Host is not direct-path capable right now | Run `gdscheck -p` and check `NVMe : Supported` |
+| `REQUIRE_DIRECT_GDS=true but direct-GDS platform preflight failed` | Host is not direct-path capable right now, or `gdscheck` is a false negative on this platform | Run `gdscheck -p`, strict `gdsio -x 0 -I 1`, and confirm NVMe is registered in NVFS (`/proc/driver/nvidia-fs/devices` non-empty, or `nvme` entry in `/proc/driver/nvidia-fs/modules`) |
 | Pod `CrashLoopBackOff` with `No help topic for 'enable-cuda-compat'` | NVIDIA container toolkit is too old for runtime hook used by container stack | Upgrade to toolkit `>= 1.18.2`, restart runtime (`docker`, `k3s`) |
 | `error loading config file "/etc/rancher/k3s/k3s.yaml": permission denied` | Non-root user reading k3s kubeconfig without permission | Use `sudo k3s kubectl ...` or configure kubeconfig mode |
 | Runtime image precheck fails with `missing: c++` | Selected runtime image cannot build native extension path | Use `PYTORCH_RUNTIME_IMAGE=nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1` |
@@ -46,7 +46,7 @@ The prereq scripts already check and/or auto-fix common issues:
 - runtime image sanity (`python3`, `c++`, `libcufile`)
 - privileged-container assumptions for GDS workloads
 - storage minimums and optional auto-migration to `/mnt/nvme`
-- direct-path gate (`gdscheck -p`) when `REQUIRE_DIRECT_GDS=true`
+- direct-path gate (`gdscheck -p`, with strict `gdsio -x 0 -I 1` functional fallback) when `REQUIRE_DIRECT_GDS=true`
 - reproducible GPU Operator install via pinned chart (`GPU_OPERATOR_CHART_VERSION`, default `v25.10.1`)
 
 ## 3) Frequently Missing Install/Setup/Config (Fresh Hosts)
@@ -215,7 +215,7 @@ docker info --format '{{.DockerRootDir}}'
 6. Run strict direct functional probe:
 
 ```bash
-sudo /usr/libexec/gds/tools/gdsio -D /mnt/nvme -d 0 -w 1 -s 1G -i 1M -x 0
+sudo /usr/libexec/gds/tools/gdsio -D /mnt/nvme -d 0 -w 1 -s 1G -i 1M -x 0 -I 1
 ```
 
 7. Re-run harness prereqs and quick tests:
@@ -229,8 +229,10 @@ make verify-k3s-qwen-smoke
 
 #### 4.3 Exit criteria
 
-1. Continue on this host only if `gdscheck -p` shows `NVMe : Supported`.
-2. If still not supported after one full remediation attempt (timebox 30 minutes), stop and switch provider/instance type.
+1. Continue on this host if either:
+   - `gdscheck -p` shows `NVMe : Supported`, or
+   - strict functional probe succeeds: `gdsio -x 0 -I 1` on the target NVMe-backed path **and** NVMe registration is visible in NVFS (`devices` non-empty or `modules` includes `nvme`).
+2. If both checks fail after one full remediation attempt (timebox 30 minutes), stop and switch provider/instance type.
 
 ## 5) `enable-cuda-compat` Hook Failure
 

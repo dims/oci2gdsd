@@ -708,9 +708,61 @@ attempt_full_gds_remediation_bundle() {
   return 1
 }
 
+run_strict_gdsio_probe() {
+  local report="$1"
+  local probe_dir="${DIRECT_GDS_PROBE_DIR:-${OCI2GDSD_ROOT_PATH}}"
+  local gdsio
+  gdsio="$(gdsio_binary || true)"
+  if [[ -z "${gdsio}" ]]; then
+    warn "gdsio not found; cannot run strict direct-path functional probe"
+    return 1
+  fi
+  maybe_sudo mkdir -p "${probe_dir}" >/dev/null 2>&1 || true
+  local tmp
+  tmp="$(mktemp)"
+  if ! maybe_sudo "${gdsio}" \
+    -D "${probe_dir}" \
+    -d 0 \
+    -w 1 \
+    -s 1G \
+    -i 1M \
+    -x 0 \
+    -I 1 >"${tmp}" 2>&1; then
+    cat "${tmp}" > "${report}" 2>/dev/null || true
+    rm -f "${tmp}"
+    return 1
+  fi
+  cat "${tmp}" > "${report}" 2>/dev/null || true
+  rm -f "${tmp}"
+  if grep -Eiq 'compat' "${report}"; then
+    return 1
+  fi
+  if ! ls /dev/nvidia-fs* >/dev/null 2>&1; then
+    return 1
+  fi
+  local nvfs_registered=0
+  if [[ -r /proc/driver/nvidia-fs/devices ]] && maybe_sudo test -s /proc/driver/nvidia-fs/devices; then
+    nvfs_registered=1
+  fi
+  if [[ "${nvfs_registered}" -eq 0 ]] && [[ -r /proc/driver/nvidia-fs/modules ]]; then
+    if maybe_sudo grep -Eiq '(^|[[:space:]])nvme([[:space:]]|:)' /proc/driver/nvidia-fs/modules; then
+      nvfs_registered=1
+    fi
+  fi
+  if [[ "${nvfs_registered}" -eq 0 ]]; then
+    return 1
+  fi
+  return 0
+}
+
 check_direct_gds_platform_support() {
   local gdscheck
+  local gdsio_report="${RESULTS_DIR}/gdsio-preflight.txt"
   if ! gdscheck="$(gdscheck_binary)"; then
+    if has_guest_nvme && run_strict_gdsio_probe "${gdsio_report}"; then
+      warn "gdscheck not found, but strict gdsio direct probe succeeded (see ${gdsio_report}); continuing"
+      return 0
+    fi
     warn "gdscheck not found; cannot verify direct GDS platform support"
     emit_direct_gds_remediation
     return 1
@@ -730,12 +782,29 @@ check_direct_gds_platform_support() {
   cat "${tmp_report}" >"${report}"
   rm -f "${tmp_report}"
   if ! grep -Eq 'NVMe[[:space:]]*:[[:space:]]*Supported' "${report}"; then
+    if has_guest_nvme && run_strict_gdsio_probe "${gdsio_report}"; then
+      warn "gdscheck reports NVMe unsupported, but strict gdsio direct probe succeeded (see ${gdsio_report}); continuing"
+      return 0
+    fi
     if attempt_full_gds_remediation_bundle "${gdscheck}"; then
       log "full GDS remediation succeeded; proceeding with strict validation"
       cp "${RESULTS_DIR}/gdscheck-post-remediation.txt" "${report}" || true
-      return 0
+      if grep -Eq 'NVMe[[:space:]]*:[[:space:]]*Supported' "${report}"; then
+        return 0
+      fi
+      if has_guest_nvme && run_strict_gdsio_probe "${gdsio_report}"; then
+        warn "post-remediation gdscheck still reports NVMe unsupported, but strict gdsio direct probe succeeded (see ${gdsio_report}); continuing"
+        return 0
+      fi
+      warn "full remediation completed but neither gdscheck nor strict gdsio proved direct NVMe path"
+      emit_direct_gds_remediation
+      return 1
     fi
     local rc=$?
+    if [[ "${rc}" -ne 2 ]] && has_guest_nvme && run_strict_gdsio_probe "${gdsio_report}"; then
+      warn "full remediation did not mark NVMe supported in gdscheck, but strict gdsio direct probe succeeded (see ${gdsio_report}); continuing"
+      return 0
+    fi
     if [[ "${rc}" -eq 2 ]]; then
       warn "gdscheck direct preflight failed and host has no guest-visible NVMe (/dev/nvme*)"
     elif [[ "${rc}" -eq 3 ]]; then
@@ -912,7 +981,7 @@ runtime_drift_checkpoint() {
     die "runtime drift check failed (${label}): /run/udev missing on host"
   fi
   if ! ls /dev/nvidia-fs* >/dev/null 2>&1; then
-    die "runtime drift check failed (${label}): /dev/nvidia-fs* is missing"
+    warn "runtime drift check (${label}): /dev/nvidia-fs* missing; relying on strict functional direct-path probes"
   fi
   if [[ "${REQUIRE_DIRECT_GDS}" == "true" ]] && ! check_direct_gds_platform_support; then
     die "runtime drift check failed (${label}): direct GDS platform support check failed"

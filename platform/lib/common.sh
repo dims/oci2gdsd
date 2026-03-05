@@ -91,3 +91,27 @@ gdscheck_binary() {
   fi
   return 1
 }
+
+gdsio_binary() {
+  if command -v gdsio >/dev/null 2>&1; then
+    command -v gdsio
+    return 0
+  fi
+  if [[ -x /usr/libexec/gds/tools/gdsio ]]; then
+    echo "/usr/libexec/gds/tools/gdsio"
+    return 0
+  fi
+  if [[ -x /usr/local/cuda/gds/tools/gdsio ]]; then
+    echo "/usr/local/cuda/gds/tools/gdsio"
+    return 0
+  fi
+  if [[ -x /usr/local/cuda-12.8/gds/tools/gdsio ]]; then
+    echo "/usr/local/cuda-12.8/gds/tools/gdsio"
+    return 0
+  fi
+  if [[ -x /usr/local/cuda-12.6/gds/tools/gdsio ]]; then
+    echo "/usr/local/cuda-12.6/gds/tools/gdsio"
+    return 0
+  fi
+  return 1
+}

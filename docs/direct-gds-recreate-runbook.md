@@ -9,7 +9,7 @@ This is the short, versioned runbook for reproducing the bring-up path we used f
 
 | Environment | Status | Summary |
 |---|---|---|
-| A100 host with guest-visible NVMe and NVIDIA kernel stack | Partial pass | Host strict GDS probes passed (`gdscheck -p` showed `NVMe : Supported`; strict `gdsio -x 0` succeeded with O_DIRECT path logs). |
+| A100 host with guest-visible NVMe and NVIDIA kernel stack | Partial pass | Host strict GDS probes passed (either `gdscheck -p` showed `NVMe : Supported`, or strict `gdsio -x 0 -I 1` succeeded on NVMe-backed path). |
 | A100 host without guest-visible NVMe (virtio-only) | Fail | `NVMe : Unsupported`, compat mode remained enabled; true direct NVMe->GPU path unavailable. |
 | Nested containerized Kubernetes | Fail for strict direct | App flow can run, but strict direct-path probe can still fail due to platform/runtime topology. |
 | Host-native `k3s` + NVIDIA runtime | Best integration signal | Use this for quick iteration once host-level direct GDS is already qualified. |
@@ -29,7 +29,9 @@ lsmod | grep nvidia_fs || true
 
 Pass condition:
 
-1. `gdscheck -p` includes `NVMe : Supported`.
+1. At least one direct-path proof succeeds:
+   - `gdscheck -p` includes `NVMe : Supported`, or
+   - strict `gdsio -x 0 -I 1` succeeds on the NVMe-backed workload path and NVMe registration is visible in NVFS (`/proc/driver/nvidia-fs/devices` non-empty, or `/proc/driver/nvidia-fs/modules` contains `nvme`).
 2. NVMe device is visible in guest (`/dev/nvme*`).
 3. Free space gates for harness are satisfied (default):
    - Docker data-root: at least `100 GiB` free (`MIN_FREE_GB_DOCKER`)
@@ -39,7 +41,7 @@ Pass condition:
 Fast fail condition:
 
 1. Only virtio disk (for example `vda`) and no NVMe path.
-2. `NVMe : Unsupported` after one remediation attempt/timebox.
+2. Both direct proofs fail after one remediation attempt/timebox.
 
 Default policy for this repo:
 
@@ -116,7 +118,7 @@ and fail storage gates later.
 Strict gdsio probe:
 
 ```bash
-sudo /usr/libexec/gds/tools/gdsio -D /mnt/nvme -d 0 -w 1 -s 1G -i 1M -x 0
+sudo /usr/libexec/gds/tools/gdsio -D /mnt/nvme -d 0 -w 1 -s 1G -i 1M -x 0 -I 1
 ```
 
 ## 4) Quick Qwen Recreate (k3s Host-Direct)
@@ -140,11 +142,12 @@ Save these for each run:
 
 1. `gdscheck -p` output
 2. strict `gdsio -x 0` output
-3. quick-qwen log (`platform/k3s/work/artifacts/results/qwen-hello.log`)
-4. any `gpu probe`/profile lines reporting direct/fallback counts
+3. NVFS registration evidence (`/proc/driver/nvidia-fs/devices` and `/proc/driver/nvidia-fs/modules`)
+4. quick-qwen log (`platform/k3s/work/artifacts/results/qwen-hello.log`)
+5. any `gpu probe`/profile lines reporting direct/fallback counts
 
 ## 6) Operator Timeboxes
 
 1. Qualification pass: 10 minutes.
 2. Remediation attempts per provider: 30 minutes max.
-3. If still `NVMe : Unsupported` or no guest NVMe path, stop and delete instance.
+3. If both `gdscheck` and strict `gdsio -x 0 -I 1` fail (or no guest NVMe path), stop and delete instance.

@@ -99,7 +99,7 @@ Base dev toolchain expected on the host for full repo workflows:
 
 - checks/installs prerequisites
 - installs host k3s automatically when `k3s` is missing
-- installs GDS user-space tools (`gdscheck`) when `REQUIRE_DIRECT_GDS=true` and missing
+- installs GDS user-space tools (`gdscheck`/`gdsio`) when `REQUIRE_DIRECT_GDS=true` and missing
 - auto-configures storage to `/mnt/nvme` when root disk is too small (unless `AUTO_CONFIGURE_STORAGE=false`)
 - builds and loads `oci2gdsd` image into cluster (unless `AUTO_BUILD_OCI2GDSD_IMAGE=false`)
 - installs GPU Operator if `nvidia.com/gpu` is not allocatable (unless `AUTO_INSTALL_GPU_OPERATOR=false`)
@@ -122,9 +122,11 @@ sudo systemctl restart k3s
 
 After that, `make verify-host-qwen-smoke` validates host direct-GDS with the model now present under `OCI2GDSD_ROOT_PATH`.
 
-By default this harness is strict (`REQUIRE_DIRECT_GDS=true`). If the host is not
-direct-GDS capable (`gdscheck -p` reports `NVMe : compat/Unsupported`), the target
-runs a non-destructive remediation attempt first, then fails if direct NVMe path is still unavailable.
+By default this harness is strict (`REQUIRE_DIRECT_GDS=true`). If `gdscheck -p` reports
+`NVMe : compat/Unsupported`, the target requires strict functional proof from
+`gdsio -x 0 -I 1` on the workload path plus NVFS registration evidence
+(`devices` non-empty or `modules` contains `nvme`). It runs a non-destructive remediation attempt
+first, then fails if neither `gdscheck` nor strict `gdsio` proves direct NVMe path.
 
 If you prefer explicit staged runs:
 
@@ -187,9 +189,10 @@ The quick script enforces NVIDIA runtime compatibility by setting:
 
 and restarting `k3s` only when a change is required.
 
-When `REQUIRE_DIRECT_GDS=true`, quick iterate also runs `gdscheck -p` preflight.
-If preflight is not direct-ready, the harness attempts non-destructive remediation by default.
-It only fails immediately when a hard blocker is detected (for example no guest-visible `/dev/nvme*`).
+When `REQUIRE_DIRECT_GDS=true`, quick iterate runs `gdscheck -p` plus strict
+`gdsio -x 0 -I 1` functional preflight. If preflight is not direct-ready, the harness
+attempts non-destructive remediation by default. It only fails immediately when a hard
+blocker is detected (for example no guest-visible `/dev/nvme*`).
 
 If you want to override the model identity explicitly:
 

@@ -123,8 +123,15 @@ ensure_plain_http_registry_config() {
   local cfg="${WORK_DIR}/generated-host-registry-config.yaml"
   cat > "${cfg}" <<EOF
 root: ${OCI2GDSD_ROOT_PATH}
+model_root: ${OCI2GDSD_ROOT_PATH}/models
+tmp_root: ${OCI2GDSD_ROOT_PATH}/tmp
+locks_root: ${OCI2GDSD_ROOT_PATH}/locks
+journal_dir: ${OCI2GDSD_ROOT_PATH}/journal
+state_db: ${OCI2GDSD_ROOT_PATH}/state.db
 registry:
   plain_http: true
+retention:
+  min_free_bytes: 0
 EOF
   OCI2GDSD_REGISTRY_CONFIG="${cfg}"
   export OCI2GDSD_REGISTRY_CONFIG
@@ -279,6 +286,7 @@ run_gds_preflight() {
   local gdscheck
   gdscheck="$(gdscheck_binary)" || die "gdscheck not found"
   local report="${RESULTS_DIR}/gdscheck-host.txt"
+  local gdsio_report="${RESULTS_DIR}/gdsio-host.txt"
   local tmp_report
   tmp_report="$(mktemp)"
   if ! maybe_sudo "${gdscheck}" -p >"${tmp_report}" 2>&1; then
@@ -290,7 +298,36 @@ run_gds_preflight() {
   rm -f "${tmp_report}"
 
   if ! grep -Eq 'NVMe[[:space:]]*:[[:space:]]*Supported' "${report}"; then
-    die "gdscheck reports NVMe unsupported; see ${report}"
+    local gdsio
+    gdsio="$(gdsio_binary || true)"
+    if [[ -n "${gdsio}" ]]; then
+      maybe_sudo mkdir -p "${OCI2GDSD_ROOT_PATH}" >/dev/null 2>&1 || true
+      if maybe_sudo "${gdsio}" \
+        -D "${OCI2GDSD_ROOT_PATH}" \
+        -d 0 \
+        -w 1 \
+        -s 1G \
+        -i 1M \
+        -x 0 \
+        -I 1 >"${gdsio_report}" 2>&1 && ! grep -Eiq 'compat' "${gdsio_report}"; then
+        local nvfs_registered=0
+        if ls /dev/nvidia-fs* >/dev/null 2>&1; then
+          if [[ -r /proc/driver/nvidia-fs/devices ]] && maybe_sudo test -s /proc/driver/nvidia-fs/devices; then
+            nvfs_registered=1
+          fi
+          if [[ "${nvfs_registered}" -eq 0 ]] && [[ -r /proc/driver/nvidia-fs/modules ]]; then
+            if maybe_sudo grep -Eiq '(^|[[:space:]])nvme([[:space:]]|:)' /proc/driver/nvidia-fs/modules; then
+              nvfs_registered=1
+            fi
+          fi
+        fi
+        if [[ "${nvfs_registered}" -eq 1 ]]; then
+          warn "gdscheck reports NVMe unsupported, but strict gdsio direct probe with NVFS registration succeeded (see ${gdsio_report}); continuing"
+          return 0
+        fi
+      fi
+    fi
+    die "gdscheck reports NVMe unsupported and strict gdsio probe did not pass; see ${report} and ${gdsio_report}"
   fi
   log "gdscheck preflight passed (report: ${report})"
 }
@@ -356,7 +393,9 @@ host_runtime_checkpoint() {
   command -v nvidia-smi >/dev/null 2>&1 || die "host runtime checkpoint failed (${label}): nvidia-smi not found"
   nvidia-smi -L >/dev/null 2>&1 || die "host runtime checkpoint failed (${label}): nvidia-smi -L failed"
   [[ -d /run/udev ]] || die "host runtime checkpoint failed (${label}): /run/udev missing"
-  ls /dev/nvidia-fs* >/dev/null 2>&1 || die "host runtime checkpoint failed (${label}): /dev/nvidia-fs* missing"
+  if ! ls /dev/nvidia-fs* >/dev/null 2>&1; then
+    warn "host runtime checkpoint (${label}): /dev/nvidia-fs* missing; relying on strict functional direct-path probes"
+  fi
   if is_true "${REQUIRE_DIRECT_GDS}"; then
     run_gds_preflight
   fi
