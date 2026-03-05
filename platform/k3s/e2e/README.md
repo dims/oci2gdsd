@@ -14,7 +14,9 @@ For host-only strict direct-GDS validation (without Kubernetes), see [`platform/
 - PyTorch container reading preloaded model files and running CUDA compute.
 - Optional raw-manifest DaemonSet mode (`E2E_DEPLOY_MODE=daemonset-manifest`) where
   `oci2gdsd serve` is node-level and workloads call daemon GPU APIs directly.
-- Validation of `platform/k3s/workloads/pytorch/qwen-hello` FastAPI + PyTorch deployment by issuing a real `/chat` request and verifying `/healthz` `oci2gds_profile` status fields.
+- Validation of the PyTorch qwen workload under `platform/k3s/workloads/pytorch`
+  by issuing a real `/chat` request and verifying `/healthz` `oci2gds_profile`
+  status fields.
 - Optional strict gating on daemon IPC probe status (`REQUIRE_DAEMON_IPC_PROBE=true`).
 - `oci2gdsd release + gc + status` on the same node as workload pod.
 

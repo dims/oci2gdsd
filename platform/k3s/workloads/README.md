@@ -25,3 +25,4 @@ kept separately.
 - TensorRT daemon-client workload: `platform/k3s/workloads/tensorrt/README.md`
 - vLLM daemon-client workload: `platform/k3s/workloads/vllm/README.md`
 - Full harness entrypoint: `platform/k3s/e2e/README.md`
+- Helm daemon chart: `charts/oci2gdsd-daemon/README.md`
