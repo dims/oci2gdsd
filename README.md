@@ -180,6 +180,9 @@ make verify-k3s-qwen-e2e-daemonset
 # Full e2e with raw daemonset manifests + TensorRT-LLM daemon client
 make verify-k3s-tensor-e2e-daemonset
 
+# Full e2e with raw daemonset manifests + vLLM plugin daemon client
+make verify-k3s-vllm-e2e-daemonset
+
 # Fast iteration after first run (reuse existing cluster and model artifact)
 make verify-k3s-qwen-smoke
 ```

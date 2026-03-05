@@ -36,6 +36,30 @@ echo "runtime-image-probe:ok"'
     fi
     return 0
   fi
+  if [[ "${WORKLOAD_RUNTIME}" == "vllm" ]]; then
+    local probe='set -eu
+command -v python3 >/dev/null || { echo "missing: python3"; exit 51; }
+command -v c++ >/dev/null 2>&1 || { echo "missing: c++"; exit 52; }
+python3 -c "import vllm; from vllm import LLM, SamplingParams" >/dev/null 2>&1 || { echo "missing: vllm python package"; exit 53; }
+python3 -c "import safetensors" >/dev/null 2>&1 || { echo "missing: safetensors python package"; exit 54; }
+python3 -c "import fastsafetensors" >/dev/null 2>&1 || echo "warn: fastsafetensors missing; workload will use delegate_load_format=safetensors"
+if [ ! -e /usr/local/cuda/lib64/libcufile.so ] && [ ! -e /usr/local/cuda/lib64/libcufile.so.0 ] && [ ! -e /usr/lib/x86_64-linux-gnu/libcufile.so ]; then
+  echo "missing: libcufile"
+  exit 55
+fi
+echo "runtime-image-probe:ok"'
+    if [[ "${PREPULL_RUNTIME_IMAGE}" == "true" ]]; then
+      log "pre-pulling runtime image ${image}"
+      maybe_sudo docker pull "${image}" >/dev/null
+    fi
+    log "checking vLLM runtime image toolchain: ${image}"
+    if ! maybe_sudo docker run --rm --privileged --gpus all --user 0:0 \
+      "${image}" /bin/sh -lc "${probe}" >"${probe_log}" 2>&1; then
+      cat "${probe_log}" >&2 || true
+      die "vLLM runtime image prerequisite check failed; see ${probe_log}"
+    fi
+    return 0
+  fi
 
   prereq_check_runtime_image_toolchain \
     "${image}" \

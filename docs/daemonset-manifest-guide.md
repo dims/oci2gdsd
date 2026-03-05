@@ -10,6 +10,8 @@ as a node-level daemon and validating GPU load/export lifecycle from a workload 
 - `examples/daemonset/pytorch_daemon_client.py`
 - `examples/daemonset/tensorrt-daemon-client-job.yaml.tpl`
 - `examples/daemonset/tensorrt_daemon_client.py`
+- `examples/daemonset/vllm-daemon-client-job.yaml.tpl`
+- `examples/daemonset/vllm_daemon_client.py`
 
 ## What this mode does
 
@@ -47,6 +49,12 @@ TensorRT-LLM daemon-client run:
 make verify-k3s-tensor-e2e-daemonset
 ```
 
+vLLM daemon-client run (out-of-tree loader plugin):
+
+```bash
+make verify-k3s-vllm-e2e-daemonset
+```
+
 Equivalent explicit mode toggle:
 
 ```bash
@@ -59,7 +67,7 @@ E2E_DEPLOY_MODE=daemonset-manifest make verify-k3s-qwen-e2e-inline
 - `OCI2GDSD_SOCKET_HOST_PATH` (default `/var/run/oci2gdsd`)
 - `OCI2GDSD_ROOT_PATH` (default `/mnt/nvme/oci2gdsd` in host-direct profile)
 - `REQUIRE_DIRECT_GDS` (default `true`)
-- `WORKLOAD_RUNTIME` (`pytorch` or `tensorrt`, default `pytorch`)
+- `WORKLOAD_RUNTIME` (`pytorch`, `tensorrt`, or `vllm`; default `pytorch`)
 
 ## Success markers
 
@@ -84,5 +92,15 @@ TensorRT daemon-client log (`testharness/k3s-e2e/work/results/tensorrt-daemon-cl
 - `TENSORRT_QWEN_INFER_OK`
 - `DAEMON_GPU_UNLOAD_OK`
 - `TENSORRT_DAEMON_CLIENT_SUCCESS`
+
+vLLM daemon-client log (`testharness/k3s-e2e/work/results/vllm-daemon-client.log`) must include:
+
+- `DAEMON_GPU_LOAD_READY`
+- `DAEMON_GPU_STATUS_OK`
+- `VLLM_LOADER_REGISTERED`
+- `VLLM_OCI2GDS_LOAD_OK`
+- `VLLM_QWEN_INFER_OK`
+- `DAEMON_GPU_UNLOAD_OK`
+- `VLLM_DAEMON_CLIENT_SUCCESS`
 
 The harness also checks preload readiness (`"status": "READY"`) and runs release/gc validation.

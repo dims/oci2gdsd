@@ -59,6 +59,8 @@ FORCE_OCI2GDSD_IMAGE_REBUILD_SET="${FORCE_OCI2GDSD_IMAGE_REBUILD+x}"
 FORCE_OCI2GDSD_IMAGE_REBUILD="${FORCE_OCI2GDSD_IMAGE_REBUILD:-false}"
 PACKAGER_IMAGE="${PACKAGER_IMAGE:-oci2gdsd-qwen3-packager:local}"
 VLLM_RUNTIME_IMAGE="${VLLM_RUNTIME_IMAGE:-nvcr.io/nvidia/ai-dynamo/vllm-runtime@sha256:de8ac9afb52711b08169e0f58388528c091efae6fb367a6fcfa119edef4bb233}"
+PRELOAD_VLLM_RUNTIME_IMAGE="${PRELOAD_VLLM_RUNTIME_IMAGE:-true}"
+VLLM_IMAGE="${VLLM_IMAGE:-${VLLM_RUNTIME_IMAGE}}"
 PYTORCH_RUNTIME_IMAGE="${PYTORCH_RUNTIME_IMAGE:-${VLLM_RUNTIME_IMAGE}}"
 PRELOAD_PYTORCH_RUNTIME_IMAGE="${PRELOAD_PYTORCH_RUNTIME_IMAGE:-${PRELOAD_VLLM_RUNTIME_IMAGE:-true}}"
 PRELOAD_WORKLOAD_IMAGE="${PRELOAD_WORKLOAD_IMAGE:-true}"
@@ -325,10 +327,10 @@ validate_deploy_assets() {
 
 validate_workload_runtime() {
   case "${WORKLOAD_RUNTIME}" in
-    pytorch|tensorrt)
+    pytorch|tensorrt|vllm)
       ;;
     *)
-      die "unsupported WORKLOAD_RUNTIME=${WORKLOAD_RUNTIME} (expected pytorch|tensorrt)"
+      die "unsupported WORKLOAD_RUNTIME=${WORKLOAD_RUNTIME} (expected pytorch|tensorrt|vllm)"
       ;;
   esac
 }
@@ -352,6 +354,15 @@ configure_workload_runtime() {
       WORKLOAD_DAEMON_CONFIGMAP="tensorrt-daemon-client-script"
       WORKLOAD_DAEMON_JOB_NAME="oci2gdsd-tensorrt-daemon-client"
       WORKLOAD_DAEMON_CONTAINER_NAME="tensorrt-daemon-client"
+      ;;
+    vllm)
+      WORKLOAD_IMAGE="${VLLM_IMAGE}"
+      WORKLOAD_RUNTIME_IMAGE="${VLLM_RUNTIME_IMAGE}"
+      WORKLOAD_DAEMON_TEMPLATE="${VLLM_DAEMON_CLIENT_TEMPLATE}"
+      WORKLOAD_DAEMON_SCRIPT="${VLLM_DAEMON_CLIENT_SCRIPT}"
+      WORKLOAD_DAEMON_CONFIGMAP="vllm-daemon-client-script"
+      WORKLOAD_DAEMON_JOB_NAME="oci2gdsd-vllm-daemon-client"
+      WORKLOAD_DAEMON_CONTAINER_NAME="vllm-daemon-client"
       ;;
   esac
   export WORKLOAD_IMAGE WORKLOAD_RUNTIME_IMAGE WORKLOAD_DAEMON_TEMPLATE WORKLOAD_DAEMON_SCRIPT \
@@ -428,6 +439,8 @@ PYTORCH_DAEMON_CLIENT_TEMPLATE="${PYTORCH_DAEMON_CLIENT_TEMPLATE:-${REPO_ROOT}/e
 PYTORCH_DAEMON_CLIENT_SCRIPT="${PYTORCH_DAEMON_CLIENT_SCRIPT:-${REPO_ROOT}/examples/daemonset/pytorch_daemon_client.py}"
 TENSORRT_DAEMON_CLIENT_TEMPLATE="${TENSORRT_DAEMON_CLIENT_TEMPLATE:-${REPO_ROOT}/examples/daemonset/tensorrt-daemon-client-job.yaml.tpl}"
 TENSORRT_DAEMON_CLIENT_SCRIPT="${TENSORRT_DAEMON_CLIENT_SCRIPT:-${REPO_ROOT}/examples/daemonset/tensorrt_daemon_client.py}"
+VLLM_DAEMON_CLIENT_TEMPLATE="${VLLM_DAEMON_CLIENT_TEMPLATE:-${REPO_ROOT}/examples/daemonset/vllm-daemon-client-job.yaml.tpl}"
+VLLM_DAEMON_CLIENT_SCRIPT="${VLLM_DAEMON_CLIENT_SCRIPT:-${REPO_ROOT}/examples/daemonset/vllm_daemon_client.py}"
 PYTORCH_DAEMON_NATIVE_CPP="${PYTORCH_DAEMON_NATIVE_CPP:-${REPO_ROOT}/examples/qwen-hello/native/oci2gds_torch_native.cpp}"
 validate_workload_runtime
 configure_workload_runtime
@@ -1146,6 +1159,14 @@ preload_workload_image() {
         cluster_load_image "${TENSORRTLLM_RUNTIME_IMAGE}"
       else
         log "skipping pre-load for ${TENSORRTLLM_RUNTIME_IMAGE}; cluster will pull image on demand"
+      fi
+      ;;
+    vllm)
+      if [[ "${PRELOAD_VLLM_RUNTIME_IMAGE}" == "true" ]]; then
+        ensure_image_local_or_pull "${VLLM_RUNTIME_IMAGE}" "${max_tries}"
+        cluster_load_image "${VLLM_RUNTIME_IMAGE}"
+      else
+        log "skipping pre-load for ${VLLM_RUNTIME_IMAGE}; cluster will pull image on demand"
       fi
       ;;
   esac

@@ -18,6 +18,12 @@ Files:
   builds an engine and uses `ModelRunnerCpp.from_dir(..., use_gpu_direct_storage=True)`.
   The TensorRT workload mounts host `/run/udev` and `/etc/cufile.json` to satisfy
   strict cuFile registration requirements in containers.
+- `vllm-daemon-client-job.yaml.tpl`: job that preloads model via `ensure` init
+  and then runs a vLLM workload in daemonset mode using an out-of-tree loader.
+- `vllm_daemon_client.py`: vLLM daemon-client workload script that registers a
+  custom `load_format=\"oci2gds\"` loader at runtime (without modifying vLLM),
+  delegates to `fastsafetensors` when available (otherwise `safetensors`), and
+  validates generation.
 
 This path is intended for manifest-first deployments and `k3s-e2e` daemonset mode.
 For Helm packaging of the same daemonset stack, see:

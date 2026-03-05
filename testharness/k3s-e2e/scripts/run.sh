@@ -106,6 +106,26 @@ deploy_daemonset_workload_job() {
       kube apply -f "${WORK_DIR}/rendered/tensorrt-daemon-client-job.yaml"
       WORKLOAD_RESULT_LOG="${WORK_DIR}/results/tensorrt-daemon-client.log"
       ;;
+    vllm)
+      apply_configmap_from_files "${E2E_NAMESPACE}" "${WORKLOAD_DAEMON_CONFIGMAP}" \
+        --from-file=vllm_daemon_client.py="${VLLM_DAEMON_CLIENT_SCRIPT}"
+      render_template "${WORKLOAD_DAEMON_TEMPLATE}" "${WORK_DIR}/rendered/vllm-daemon-client-job.yaml" \
+        "E2E_NAMESPACE=${E2E_NAMESPACE}" \
+        "OCI2GDSD_IMAGE=${OCI2GDSD_CLI_IMAGE}" \
+        "VLLM_IMAGE=${VLLM_IMAGE}" \
+        "MODEL_REF=${MODEL_REF}" \
+        "MODEL_ID=${MODEL_ID}" \
+        "MODEL_DIGEST=${MODEL_DIGEST}" \
+        "MODEL_ROOT_PATH=${MODEL_ROOT_PATH}" \
+        "LEASE_HOLDER=${LEASE_HOLDER}" \
+        "OCI2GDSD_ROOT_PATH=${OCI2GDSD_ROOT_PATH}" \
+        "OCI2GDSD_SOCKET_HOST_PATH=${OCI2GDSD_SOCKET_HOST_PATH}" \
+        "REQUIRE_DIRECT_GDS=${REQUIRE_DIRECT_GDS}" \
+        "OCI2GDS_STRICT=${OCI2GDS_STRICT}"
+      kube -n "${E2E_NAMESPACE}" delete "job/${WORKLOAD_DAEMON_JOB_NAME}" --ignore-not-found >/dev/null
+      kube apply -f "${WORK_DIR}/rendered/vllm-daemon-client-job.yaml"
+      WORKLOAD_RESULT_LOG="${WORK_DIR}/results/vllm-daemon-client.log"
+      ;;
     *)
       die "unsupported WORKLOAD_RUNTIME=${WORKLOAD_RUNTIME}"
       ;;
@@ -171,6 +191,17 @@ wait_for_workload_and_collect() {
         "TENSORRT_QWEN_INFER_OK"
         "DAEMON_GPU_UNLOAD_OK"
         "TENSORRT_DAEMON_CLIENT_SUCCESS"
+      )
+      ;;
+    vllm)
+      required_markers=(
+        "DAEMON_GPU_LOAD_READY"
+        "DAEMON_GPU_STATUS_OK"
+        "VLLM_LOADER_REGISTERED"
+        "VLLM_OCI2GDS_LOAD_OK"
+        "VLLM_QWEN_INFER_OK"
+        "DAEMON_GPU_UNLOAD_OK"
+        "VLLM_DAEMON_CLIENT_SUCCESS"
       )
       ;;
     *)
