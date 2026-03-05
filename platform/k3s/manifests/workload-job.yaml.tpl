@@ -14,6 +14,7 @@ spec:
         app.kubernetes.io/name: oci2gdsd-pytorch-smoke
     spec:
       restartPolicy: Never
+      runtimeClassName: nvidia
       tolerations:
       - key: "nvidia.com/gpu"
         operator: "Exists"

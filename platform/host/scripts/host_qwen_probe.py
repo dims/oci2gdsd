@@ -181,6 +181,13 @@ def main() -> None:
             name = str(shard.get("name", "")).strip()
             if not name:
                 continue
+            shard_kind = str(shard.get("kind", "")).strip().lower()
+            # Probe only weight-bearing shard files; runtime metadata/config files are
+            # not part of the direct-GDS data path this check is asserting.
+            is_weight_shard = shard_kind == "weight" or name.endswith(".safetensors") or name.endswith(".bin")
+            if not is_weight_shard:
+                reason_counts["skip_non_weight"] = reason_counts.get("skip_non_weight", 0) + 1
+                continue
             path = model_root / "shards" / name
             if not path.exists():
                 reason_counts["missing_shard"] = reason_counts.get("missing_shard", 0) + 1

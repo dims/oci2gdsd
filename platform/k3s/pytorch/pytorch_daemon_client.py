@@ -91,7 +91,18 @@ def unix_http_json(socket_path: str, method: str, path: str, payload=None, timeo
     status_code = int(parts[1])
     payload_out = {}
     if body_raw.strip():
-        payload_out = json.loads(body_raw.decode("utf-8"))
+        text = body_raw.decode("utf-8", errors="replace").strip()
+        start_obj = [idx for idx in (text.find("{"), text.find("[")) if idx >= 0]
+        if start_obj:
+            text = text[min(start_obj):]
+        try:
+            payload_out = json.loads(text)
+        except json.JSONDecodeError:
+            decoder = json.JSONDecoder()
+            payload_out, consumed = decoder.raw_decode(text)
+            trailing = text[consumed:].strip()
+            if trailing:
+                print(f"WARN_DAEMON_HTTP_TRAILING_BYTES bytes={len(trailing)}")
     return status_code, payload_out
 
 

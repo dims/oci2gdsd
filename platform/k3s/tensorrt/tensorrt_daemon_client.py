@@ -1,3 +1,4 @@
+import gc
 import hashlib
 import json
 import os
@@ -5,6 +6,8 @@ import re
 import shutil
 import socket
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 import torch
@@ -91,7 +94,18 @@ def unix_http_json(socket_path: str, method: str, path: str, payload=None, timeo
     status_code = int(parts[1])
     payload_out = {}
     if body_raw.strip():
-        payload_out = json.loads(body_raw.decode("utf-8"))
+        text = body_raw.decode("utf-8", errors="replace").strip()
+        start_obj = [idx for idx in (text.find("{"), text.find("[")) if idx >= 0]
+        if start_obj:
+            text = text[min(start_obj):]
+        try:
+            payload_out = json.loads(text)
+        except json.JSONDecodeError:
+            decoder = json.JSONDecoder()
+            payload_out, consumed = decoder.raw_decode(text)
+            trailing = text[consumed:].strip()
+            if trailing:
+                print(f"WARN_DAEMON_HTTP_TRAILING_BYTES bytes={len(trailing)}")
     return status_code, payload_out
 
 
@@ -100,6 +114,87 @@ def assert_http_ok(code: int, payload, action: str):
         raise RuntimeError(f"{action} failed: code={code} payload={payload}")
     if isinstance(payload, dict) and str(payload.get("status", "")).upper() == "FAILED":
         raise RuntimeError(f"{action} returned FAILED payload={payload}")
+
+
+def _native_cpp_source_path() -> Path:
+    raw = os.environ.get("OCI2GDS_NATIVE_CPP_PATH", "").strip()
+    if raw:
+        return Path(raw)
+    return Path("/scripts/oci2gds_torch_native.cpp")
+
+
+def _load_native_cpp_source() -> str:
+    source_path = _native_cpp_source_path()
+    if not source_path.exists():
+        raise RuntimeError(f"native C++ source not found: {source_path}")
+    return source_path.read_text(encoding="utf-8")
+
+
+def _native_enabled() -> bool:
+    flag = os.environ.get("OCI2GDS_TORCH_ENABLE_NATIVE", "1").strip().lower()
+    return flag not in {"0", "false", "no"}
+
+
+def _ensure_cuda_linkage_paths():
+    cuda_lib = Path(os.environ.get("CUDA_LIB_DIR", "/usr/local/cuda/lib64"))
+    cufile_soname = cuda_lib / "libcufile.so.0"
+    cufile_link = cuda_lib / "libcufile.so"
+    if not cufile_link.exists() and cufile_soname.exists():
+        cufile_link.symlink_to(cufile_soname.name)
+    usr_link = Path("/usr/lib/x86_64-linux-gnu/libcufile.so")
+    if not usr_link.exists() and cufile_link.exists():
+        usr_link.symlink_to(cufile_link)
+
+    libcuda_soname = cuda_lib / "libcuda.so.1"
+    compat_libcuda = Path("/usr/local/cuda/compat/libcuda.so.1")
+    if not libcuda_soname.exists() and compat_libcuda.exists():
+        libcuda_soname.symlink_to(compat_libcuda)
+
+
+def load_native_module():
+    if not _native_enabled():
+        raise RuntimeError("native backend disabled")
+    if not torch.cuda.is_available():
+        raise RuntimeError("cuda unavailable")
+    try:
+        from torch.utils.cpp_extension import load_inline
+    except Exception as exc:
+        raise RuntimeError(f"torch cpp extension unavailable: {exc}") from exc
+
+    _ensure_cuda_linkage_paths()
+
+    build_dir = Path(os.environ.get("OCI2GDS_TORCH_BUILD_DIR", "/tmp/oci2gds_tensorrt_build"))
+    build_dir.mkdir(parents=True, exist_ok=True)
+
+    include_paths = []
+    cuda_include = os.environ.get("CUDA_INCLUDE_DIR", "").strip()
+    if cuda_include:
+        include_paths.append(cuda_include)
+    ldflags = []
+    cuda_lib = os.environ.get("CUDA_LIB_DIR", "").strip()
+    if cuda_lib:
+        ldflags.append(f"-L{cuda_lib}")
+    ldflags.extend(["-lcuda", "-lcufile"])
+
+    native_cpp = _load_native_cpp_source()
+    verbose = os.environ.get("OCI2GDS_TORCH_NATIVE_VERBOSE", "0").strip() == "1"
+    name = f"oci2gds_tensorrt_native_{os.getpid()}"
+    module = load_inline(
+        name=name,
+        cpp_sources=[native_cpp],
+        functions=None,
+        extra_cflags=["-O3", "-std=c++17"],
+        extra_ldflags=ldflags,
+        extra_include_paths=include_paths,
+        with_cuda=False,
+        build_directory=str(build_dir),
+        verbose=verbose,
+    )
+    if hasattr(module, "init_native"):
+        module.init_native()
+    if not hasattr(module, "import_ipc_copy_to_tensor"):
+        raise RuntimeError("native module missing import_ipc_copy_to_tensor")
+    return module
 
 
 def run_cmd(cmd, cwd=None, timeout_seconds=7200):
@@ -122,26 +217,23 @@ def run_cmd(cmd, cwd=None, timeout_seconds=7200):
     return proc.stdout
 
 
-def build_runtime_dir(model_root: Path) -> Path:
-    profile = json.loads((model_root / "metadata" / "model.json").read_text(encoding="utf-8")).get("profile", {})
+def profile_shards_from_metadata(metadata: dict):
+    profile = metadata.get("profile", {})
     shard_entries = sorted(profile.get("shards", []), key=lambda s: int(s.get("ordinal", 0)))
     if not shard_entries:
         raise RuntimeError("profile.shards is empty")
+    return shard_entries
 
+
+def reset_runtime_dir() -> Path:
     runtime_dir = Path(os.environ.get("LOCAL_MODEL_DIR", "/tmp/oci2gdsd-trt-model"))
     if runtime_dir.exists():
         shutil.rmtree(runtime_dir)
     runtime_dir.mkdir(parents=True, exist_ok=True)
+    return runtime_dir
 
-    for shard in shard_entries:
-        name = str(shard.get("name", "")).strip()
-        if not name:
-            raise RuntimeError("empty shard name in profile")
-        src = model_root / "shards" / name
-        if not src.exists():
-            raise RuntimeError(f"missing shard file: {src}")
-        os.symlink(src, runtime_dir / name)
 
+def link_metadata_assets(model_root: Path, runtime_dir: Path):
     metadata_dir = model_root / "metadata"
     if metadata_dir.is_dir():
         for src in sorted(metadata_dir.iterdir(), key=lambda p: p.name):
@@ -150,10 +242,128 @@ def build_runtime_dir(model_root: Path) -> Path:
             dst = runtime_dir / src.name
             if not dst.exists():
                 os.symlink(src, dst)
-
     if not (runtime_dir / "config.json").exists():
         raise RuntimeError("runtime_dir is missing config.json")
+
+
+def build_runtime_dir_symlink(model_root: Path, shard_entries) -> Path:
+    runtime_dir = reset_runtime_dir()
+    for shard in shard_entries:
+        name = str(shard.get("name", "")).strip()
+        if not name:
+            raise RuntimeError("empty shard name in profile")
+        src = model_root / "shards" / name
+        if not src.exists():
+            raise RuntimeError(f"missing shard file: {src}")
+        os.symlink(src, runtime_dir / name)
+    link_metadata_assets(model_root, runtime_dir)
     return runtime_dir
+
+
+def collect_shard_ipc_map(tensor_map):
+    by_shard = {}
+    for entry in tensor_map:
+        shard_name = str(entry.get("shard_name", "")).strip()
+        if not shard_name:
+            continue
+        handle = str(entry.get("ipc_handle", "")).strip()
+        shard_size = int(entry.get("shard_size", 0))
+        existing = by_shard.get(shard_name)
+        if existing is None:
+            by_shard[shard_name] = {
+                "ipc_handle": handle,
+                "shard_size": shard_size,
+            }
+            continue
+        if existing["ipc_handle"] and handle and existing["ipc_handle"] != handle:
+            raise RuntimeError(f"tensor-map shard {shard_name} has conflicting IPC handles")
+        if not existing["ipc_handle"] and handle:
+            existing["ipc_handle"] = handle
+        if existing["shard_size"] > 0 and shard_size > 0 and existing["shard_size"] != shard_size:
+            raise RuntimeError(f"tensor-map shard {shard_name} has conflicting shard_size values")
+        if existing["shard_size"] <= 0 and shard_size > 0:
+            existing["shard_size"] = shard_size
+    return by_shard
+
+
+def build_runtime_dir_from_ipc(model_root: Path, shard_entries, tensor_map, native_module, device_index: int):
+    if native_module is None:
+        raise RuntimeError("native module required for IPC-backed runtime materialization")
+    runtime_dir = reset_runtime_dir()
+    by_shard = collect_shard_ipc_map(tensor_map)
+    imported_shards = 0
+    imported_bytes = 0
+    linked_runtime_files = 0
+    required_ipc_shards = 0
+    unresolved = []
+
+    for shard in shard_entries:
+        name = str(shard.get("name", "")).strip()
+        if not name:
+            raise RuntimeError("empty shard name in profile")
+        src = model_root / "shards" / name
+        kind = str(shard.get("kind", "")).strip().lower()
+        is_weight_shard = kind == "weight" or name.endswith(".safetensors")
+        if is_weight_shard:
+            required_ipc_shards += 1
+
+        info = by_shard.get(name)
+        if info is None:
+            if (not is_weight_shard) and src.exists():
+                os.symlink(src, runtime_dir / name)
+                linked_runtime_files += 1
+                continue
+            unresolved.append(name)
+            continue
+        handle = str(info.get("ipc_handle", "")).strip()
+        shard_size = int(info.get("shard_size", 0))
+        if not handle or shard_size <= 0:
+            if (not is_weight_shard) and src.exists():
+                os.symlink(src, runtime_dir / name)
+                linked_runtime_files += 1
+                continue
+            unresolved.append(name)
+            continue
+
+        tensor = native_module.import_ipc_copy_to_tensor(handle, shard_size, int(device_index))
+        if not isinstance(tensor, torch.Tensor):
+            raise RuntimeError(f"native import returned non-tensor for shard {name}")
+        if not tensor.is_cuda:
+            raise RuntimeError(f"native import returned non-cuda tensor for shard {name}")
+        data = tensor.detach().cpu().numpy().tobytes()
+        del tensor
+        if len(data) != shard_size:
+            raise RuntimeError(f"native import size mismatch for shard {name}: got={len(data)} want={shard_size}")
+
+        digest = hashlib.sha256(data).hexdigest()
+        expected = str(shard.get("digest", "")).strip()
+        if expected.startswith("sha256:"):
+            want = expected.split(":", 1)[1].strip()
+            if want and digest != want:
+                raise RuntimeError(f"IPC materialized shard digest mismatch for {name}: got={digest} want={want}")
+
+        dst = runtime_dir / name
+        with dst.open("wb") as f:
+            f.write(data)
+        imported_shards += 1
+        imported_bytes += shard_size
+
+    if unresolved:
+        raise RuntimeError(f"IPC materialization missing shard coverage: unresolved={len(unresolved)} {unresolved[:8]}")
+
+    link_metadata_assets(model_root, runtime_dir)
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.synchronize(int(device_index))
+        torch.cuda.empty_cache()
+    return runtime_dir, {
+        "status": "ok",
+        "imported_shards": imported_shards,
+        "imported_bytes": imported_bytes,
+        "linked_runtime_files": linked_runtime_files,
+        "required_ipc_shards": required_ipc_shards,
+        "unresolved_shards": len(unresolved),
+    }
 
 
 def find_qwen_convert_script() -> Path:
@@ -187,18 +397,18 @@ def engine_ready(engine_dir: Path) -> bool:
     return len(plans) > 0
 
 
-def build_engine(runtime_dir: Path, model_root: Path) -> Path:
+def build_engine(runtime_dir: Path, model_root: Path, source_mode: str, force_rebuild_override: bool = False) -> Path:
     cache_root = model_root / ".trt-cache"
     checkpoint_dir = Path(os.environ.get("TRT_CHECKPOINT_DIR", str(cache_root / "checkpoint")))
     engine_dir = Path(os.environ.get("TRT_ENGINE_DIR", str(cache_root / "engine")))
-    force_rebuild = parse_bool_env("TRT_FORCE_REBUILD", False)
+    force_rebuild = parse_bool_env("TRT_FORCE_REBUILD", False) or force_rebuild_override
 
     if force_rebuild:
         shutil.rmtree(checkpoint_dir, ignore_errors=True)
         shutil.rmtree(engine_dir, ignore_errors=True)
 
     if engine_ready(engine_dir):
-        print(f"TENSORRT_ENGINE_BUILD_OK reused=true engine_dir={engine_dir}")
+        print(f"TENSORRT_ENGINE_BUILD_OK reused=true source={source_mode} engine_dir={engine_dir}")
         return engine_dir
 
     convert_script = find_qwen_convert_script()
@@ -254,8 +464,9 @@ def build_engine(runtime_dir: Path, model_root: Path) -> Path:
 
     if not engine_ready(engine_dir):
         raise RuntimeError(f"TensorRT engine build did not produce expected outputs in {engine_dir}")
-    print(f"TENSORRT_ENGINE_BUILD_OK reused=false engine_dir={engine_dir}")
+    print(f"TENSORRT_ENGINE_BUILD_OK reused=false source={source_mode} engine_dir={engine_dir}")
     return engine_dir
+
 
 
 def run_tensorrt_infer(engine_dir: Path, runtime_dir: Path, require_direct: bool, device_index: int) -> str:
@@ -322,6 +533,93 @@ def run_tensorrt_infer(engine_dir: Path, runtime_dir: Path, require_direct: bool
     return answer_sha
 
 
+def validate_tensor_map_handles(tensors, parity_mode: str):
+    missing_handle = 0
+    bad_range = 0
+    mapped = 0
+    total_bytes = 0
+
+    for entry in tensors:
+        handle = str(entry.get("ipc_handle", "")).strip()
+        if not handle:
+            missing_handle += 1
+            continue
+
+        byte_offset = int(entry.get("byte_offset", 0))
+        byte_length = int(entry.get("byte_length", 0))
+        shard_size = int(entry.get("shard_size", 0))
+        if byte_offset < 0 or byte_length <= 0:
+            bad_range += 1
+            continue
+        if shard_size > 0 and (byte_offset + byte_length > shard_size):
+            bad_range += 1
+            continue
+
+        mapped += 1
+        total_bytes += byte_length
+
+    status = "ok"
+    if missing_handle > 0 or bad_range > 0:
+        status = "partial"
+
+    if parity_mode == "full":
+        if status != "ok":
+            raise RuntimeError(
+                f"full parity mode requires complete tensor-map handle coverage; "
+                f"missing_handle={missing_handle} bad_range={bad_range} mapped={mapped} total={len(tensors)}"
+            )
+        if mapped != len(tensors):
+            raise RuntimeError(f"full parity mode requires mapped==total; mapped={mapped} total={len(tensors)}")
+
+    if parity_mode == "partial" and mapped <= 0:
+        raise RuntimeError("partial parity mode requires mapped tensors > 0")
+
+    return {
+        "status": status,
+        "mapped_tensors": mapped,
+        "missing_handle": missing_handle,
+        "bad_range": bad_range,
+        "mapped_bytes": total_bytes,
+        "total_tensors": len(tensors),
+    }
+
+
+class HeartbeatKeeper:
+    def __init__(self, socket_path: str, payload: dict, interval_seconds: int):
+        self.socket_path = socket_path
+        self.payload = dict(payload)
+        self.interval_seconds = max(30, int(interval_seconds))
+        self._stop = threading.Event()
+        self._thread = None
+        self._error = None
+
+    def _loop(self):
+        while not self._stop.wait(self.interval_seconds):
+            try:
+                code, body = unix_http_json(self.socket_path, "POST", "/v1/gpu/heartbeat", self.payload, timeout_seconds=60)
+                assert_http_ok(code, body, "gpu/heartbeat(keepalive)")
+                print(f"DAEMON_GPU_HEARTBEAT_OK keepalive=true expires_at={body.get('expires_at', '')}")
+            except Exception as exc:
+                self._error = exc
+                print(f"DAEMON_GPU_HEARTBEAT_WARN keepalive=true error={exc}")
+                return
+
+    def start(self):
+        self._thread = threading.Thread(target=self._loop, name="oci2gdsd-heartbeat", daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+        if self._error is not None:
+            raise RuntimeError(f"heartbeat keepalive failed: {self._error}") from self._error
+
+    def assert_healthy(self):
+        if self._error is not None:
+            raise RuntimeError(f"heartbeat keepalive failed: {self._error}") from self._error
+
+
 def main():
     model_root = Path(os.environ["MODEL_ROOT_PATH"])
     model_id = os.environ["MODEL_ID"]
@@ -332,6 +630,10 @@ def main():
     device_uuid = resolve_device_uuid(device_index)
     require_direct = parse_bool_env("REQUIRE_DIRECT_GDS", True)
     strict_load = parse_bool_env("OCI2GDS_STRICT", True)
+
+    parity_mode = str(os.environ.get("RUNTIME_PARITY_MODE", "probe")).strip().lower()
+    if parity_mode not in {"off", "probe", "partial", "full"}:
+        raise RuntimeError(f"invalid RUNTIME_PARITY_MODE={parity_mode}; expected off|probe|partial|full")
 
     ready = model_root / "READY"
     metadata_path = model_root / "metadata" / "model.json"
@@ -353,8 +655,27 @@ def main():
     sample_sha = hashlib.sha256(sample).hexdigest()
 
     load_ready = False
+    attached = False
     direct_files = 0
     answer_sha = ""
+    heartbeat = None
+    source_mode = "symlink"
+    fallback_reads = 1
+    map_stats = {
+        "status": "skipped",
+        "mapped_tensors": 0,
+        "missing_handle": 0,
+        "bad_range": 0,
+        "mapped_bytes": 0,
+        "total_tensors": 0,
+    }
+    import_stats = {
+        "status": "skipped",
+        "imported_shards": 0,
+        "imported_bytes": 0,
+        "unresolved_shards": 0,
+    }
+    attach_client_id = f"{lease_holder}-trt-{os.getpid()}"
 
     try:
         load_req = {
@@ -395,9 +716,143 @@ def main():
             raise RuntimeError(f"gpu/status returned no files after load: {status_payload}")
         print(f"DAEMON_GPU_STATUS_OK files={len(status_files)}")
 
-        runtime_dir = build_runtime_dir(model_root)
-        engine_dir = build_engine(runtime_dir, model_root=model_root)
+        attach_req = {
+            "model_id": model_id,
+            "digest": model_digest,
+            "device_uuid": device_uuid,
+            "client_id": attach_client_id,
+            "ttl_seconds": 300,
+        }
+        attach_code, attach_payload = unix_http_json(socket_path, "POST", "/v1/gpu/attach", attach_req, timeout_seconds=120)
+        assert_http_ok(attach_code, attach_payload, "gpu/attach")
+        attached = True
+        print(
+            "DAEMON_GPU_ATTACH_OK "
+            f"client_id={attach_client_id} "
+            f"attached_files={attach_payload.get('attached_files', 0)} "
+            f"expires_at={attach_payload.get('expires_at', '')}"
+        )
+
+        hb_req = {
+            "model_id": model_id,
+            "digest": model_digest,
+            "device_uuid": device_uuid,
+            "client_id": attach_client_id,
+            "ttl_seconds": 300,
+        }
+        hb_code, hb_payload = unix_http_json(socket_path, "POST", "/v1/gpu/heartbeat", hb_req, timeout_seconds=60)
+        assert_http_ok(hb_code, hb_payload, "gpu/heartbeat")
+        print(f"DAEMON_GPU_HEARTBEAT_OK expires_at={hb_payload.get('expires_at', '')}")
+        heartbeat = HeartbeatKeeper(socket_path, hb_req, interval_seconds=90)
+        heartbeat.start()
+
+        tensor_req = {
+            "model_id": model_id,
+            "digest": model_digest,
+            "device_uuid": device_uuid,
+            "max_shards": 0,
+            "max_tensors": int(os.environ.get("MAX_TENSOR_MAP_TENSORS", "0")),
+            "include_handles": True,
+        }
+        tensor_code, tensor_payload = unix_http_json(socket_path, "POST", "/v1/gpu/tensor-map", tensor_req, timeout_seconds=300)
+        assert_http_ok(tensor_code, tensor_payload, "gpu/tensor-map")
+        tensors = tensor_payload.get("tensors", []) if isinstance(tensor_payload, dict) else []
+        if not tensors:
+            raise RuntimeError(f"gpu/tensor-map returned no tensors: {tensor_payload}")
+        tensor_bytes = sum(int(t.get("byte_length", 0)) for t in tensors)
+        print(f"TENSORRT_IPC_TENSOR_MAP_OK tensors={len(tensors)} tensor_bytes={tensor_bytes}")
+
+        map_stats = validate_tensor_map_handles(tensors, parity_mode=parity_mode)
+        print(
+            "TENSORRT_IPC_BIND_OK "
+            f"status={map_stats.get('status', 'unknown')} "
+            f"mapped_tensors={map_stats.get('mapped_tensors', 0)} "
+            f"mapped_bytes={map_stats.get('mapped_bytes', 0)} "
+            f"missing_handle={map_stats.get('missing_handle', 0)} "
+            f"bad_range={map_stats.get('bad_range', 0)} "
+            f"total_tensors={map_stats.get('total_tensors', 0)} "
+            f"parity_mode={parity_mode}"
+        )
+
+        shard_entries = profile_shards_from_metadata(metadata)
+        if parity_mode == "full":
+            native_module = load_native_module()
+            runtime_dir, import_stats = build_runtime_dir_from_ipc(
+                model_root=model_root,
+                shard_entries=shard_entries,
+                tensor_map=tensors,
+                native_module=native_module,
+                device_index=device_index,
+            )
+            source_mode = "ipc_materialized"
+            fallback_reads = 0
+            print(
+                "TENSORRT_IPC_IMPORT_OK "
+                f"status={import_stats.get('status', 'unknown')} "
+                f"imported_shards={import_stats.get('imported_shards', 0)} "
+                f"imported_bytes={import_stats.get('imported_bytes', 0)} "
+                f"linked_runtime_files={import_stats.get('linked_runtime_files', 0)} "
+                f"required_ipc_shards={import_stats.get('required_ipc_shards', 0)} "
+                f"unresolved_shards={import_stats.get('unresolved_shards', 0)} "
+                f"parity_mode={parity_mode}"
+            )
+            print(
+                "TENSORRT_FULL_SOURCE_OK "
+                f"source={source_mode} "
+                f"fallback_reads={fallback_reads} "
+                f"parity_mode={parity_mode}"
+            )
+        else:
+            runtime_dir = build_runtime_dir_symlink(model_root, shard_entries)
+            print(
+                "TENSORRT_IPC_IMPORT_OK "
+                f"status=skipped imported_shards=0 imported_bytes=0 unresolved_shards=0 parity_mode={parity_mode}"
+            )
+            print(
+                "TENSORRT_FULL_SOURCE_OK "
+                f"source={source_mode} "
+                f"fallback_reads={fallback_reads} "
+                f"parity_mode={parity_mode}"
+            )
+
+        if heartbeat is not None:
+            heartbeat.assert_healthy()
+        if parity_mode == "full":
+            if import_stats.get("status") != "ok":
+                raise RuntimeError(f"full parity mode requires import status=ok; got {import_stats}")
+            required_ipc_shards = int(import_stats.get("required_ipc_shards", 0))
+            if int(import_stats.get("imported_shards", 0)) != required_ipc_shards:
+                raise RuntimeError(
+                    f"full parity mode requires imported_shards={required_ipc_shards}; got {import_stats.get('imported_shards', 0)}"
+                )
+            if int(import_stats.get("unresolved_shards", 0)) != 0:
+                raise RuntimeError(f"full parity mode requires unresolved_shards=0; got {import_stats}")
+            if fallback_reads != 0:
+                raise RuntimeError(f"full parity mode requires fallback_reads=0; got {fallback_reads}")
+
+        engine_dir = build_engine(
+            runtime_dir,
+            model_root=model_root,
+            source_mode=source_mode,
+            force_rebuild_override=(parity_mode == "full"),
+        )
+        if heartbeat is not None:
+            heartbeat.assert_healthy()
         answer_sha = run_tensorrt_infer(engine_dir, runtime_dir, require_direct=require_direct, device_index=device_index)
+        if heartbeat is not None:
+            heartbeat.stop()
+            heartbeat = None
+
+        detach_req = {
+            "model_id": model_id,
+            "digest": model_digest,
+            "device_uuid": device_uuid,
+            "client_id": attach_client_id,
+        }
+        detach_code, detach_payload = unix_http_json(socket_path, "POST", "/v1/gpu/detach", detach_req, timeout_seconds=120)
+        assert_http_ok(detach_code, detach_payload, "gpu/detach")
+        attached = False
+        print(f"DAEMON_GPU_DETACH_OK detached_files={detach_payload.get('detached_files', 0)}")
 
         unload_req = {
             "model_id": model_id,
@@ -427,6 +882,32 @@ def main():
         if still_loaded:
             raise RuntimeError(f"model paths still loaded after unload: {still_loaded}")
     finally:
+        if heartbeat is not None:
+            try:
+                heartbeat.stop()
+            except Exception as exc:
+                print(f"DAEMON_GPU_HEARTBEAT_WARN keepalive=true finalizer_error={exc}")
+
+        if attached:
+            detach_req = {
+                "model_id": model_id,
+                "digest": model_digest,
+                "device_uuid": device_uuid,
+                "client_id": attach_client_id,
+            }
+            try:
+                detach_code, detach_payload = unix_http_json(
+                    socket_path,
+                    "POST",
+                    "/v1/gpu/detach",
+                    detach_req,
+                    timeout_seconds=120,
+                )
+                assert_http_ok(detach_code, detach_payload, "gpu/detach(finalizer)")
+                print(f"DAEMON_GPU_DETACH_OK detached_files={detach_payload.get('detached_files', 0)} finalizer=true")
+            except Exception as exc:
+                print(f"DAEMON_GPU_DETACH_WARN error={exc}")
+
         if load_ready:
             unload_req = {
                 "model_id": model_id,
@@ -455,6 +936,13 @@ def main():
         f"sample_sha256={sample_sha} "
         f"direct_files={direct_files} "
         f"answer_sha256={answer_sha} "
+        f"parity_mode={parity_mode} "
+        f"mapped_tensors={map_stats.get('mapped_tensors', 0)} "
+        f"mapped_bytes={map_stats.get('mapped_bytes', 0)} "
+        f"imported_shards={import_stats.get('imported_shards', 0)} "
+        f"imported_bytes={import_stats.get('imported_bytes', 0)} "
+        f"source_mode={source_mode} "
+        f"fallback_reads={fallback_reads} "
         f"cuda_device={cuda_name}"
     )
 

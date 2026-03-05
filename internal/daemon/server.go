@@ -64,6 +64,7 @@ func Serve(ctx context.Context, svc *app.Service, cfg ServerConfig) error {
 	mux.HandleFunc("/v1/gpu/status", h.handleGPUStatus)
 	mux.HandleFunc("/v1/gpu/devices", h.handleGPUDevices)
 	mux.HandleFunc("/v1/gpu/export", h.handleGPUExport)
+	mux.HandleFunc("/v1/gpu/tensor-map", h.handleGPUTensorMap)
 	mux.HandleFunc("/v1/gpu/attach", h.handleGPUAttach)
 	mux.HandleFunc("/v1/gpu/detach", h.handleGPUDetach)
 	mux.HandleFunc("/v1/gpu/heartbeat", h.handleGPUHeartbeat)
@@ -222,6 +223,45 @@ func (h *handler) handleGPUExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := h.svc.GPUExport(r.Context(), req)
+	if err != nil {
+		writeAppErrorWithResult(w, err, res)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (h *handler) handleGPUTensorMap(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w)
+		return
+	}
+	var wireReq struct {
+		ModelID        string `json:"model_id"`
+		Digest         string `json:"digest"`
+		Path           string `json:"path"`
+		DeviceUUID     string `json:"device_uuid"`
+		MaxShards      int    `json:"max_shards"`
+		MaxTensors     int    `json:"max_tensors"`
+		IncludeHandles *bool  `json:"include_handles"`
+	}
+	if err := decodeJSONBody(r, &wireReq); err != nil {
+		writeAppError(w, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid gpu tensor-map request body", err))
+		return
+	}
+	includeHandles := true
+	if wireReq.IncludeHandles != nil {
+		includeHandles = *wireReq.IncludeHandles
+	}
+	req := app.GPUTensorMapRequest{
+		ModelID:        wireReq.ModelID,
+		Digest:         wireReq.Digest,
+		Path:           wireReq.Path,
+		DeviceUUID:     wireReq.DeviceUUID,
+		MaxShards:      wireReq.MaxShards,
+		MaxTensors:     wireReq.MaxTensors,
+		IncludeHandles: includeHandles,
+	}
+	res, err := h.svc.GPUTensorMap(r.Context(), req)
 	if err != nil {
 		writeAppErrorWithResult(w, err, res)
 		return

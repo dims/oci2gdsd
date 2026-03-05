@@ -19,6 +19,8 @@ check_runtime_image_toolchain() {
 command -v python3 >/dev/null || { echo "missing: python3"; exit 41; }
 command -v trtllm-build >/dev/null || { echo "missing: trtllm-build"; exit 42; }
 python3 -c "from tensorrt_llm.runtime import ModelRunnerCpp" >/dev/null 2>&1 || { echo "missing: tensorrt_llm.runtime.ModelRunnerCpp"; exit 43; }
+command -v c++ >/dev/null 2>&1 || { echo "missing: c++"; exit 45; }
+python3 -c "from torch.utils.cpp_extension import load_inline" >/dev/null 2>&1 || { echo "missing: torch cpp extension"; exit 46; }
 if [ ! -e /usr/local/cuda/lib64/libcufile.so ] && [ ! -e /usr/local/cuda/lib64/libcufile.so.0 ] && [ ! -e /usr/lib/x86_64-linux-gnu/libcufile.so ]; then
   echo "missing: libcufile"
   exit 44
@@ -84,6 +86,18 @@ check_privileged_assumptions() {
   fi
   if ! grep -Eq 'privileged:[[:space:]]*true' "${daemon_client_template}"; then
     die "daemon-client template does not declare privileged container securityContext: ${daemon_client_template}"
+  fi
+  if ! grep -Eq 'hostIPC:[[:space:]]*true' "${daemonset_template}"; then
+    die "daemonset template must declare hostIPC: true for cross-pod CUDA IPC handle import: ${daemonset_template}"
+  fi
+  if ! grep -Eq 'hostIPC:[[:space:]]*true' "${daemon_client_template}"; then
+    die "daemon-client template must declare hostIPC: true for cross-pod CUDA IPC handle import: ${daemon_client_template}"
+  fi
+  if ! grep -Eq 'hostPID:[[:space:]]*true' "${daemonset_template}"; then
+    die "daemonset template must declare hostPID: true for cross-pod CUDA IPC handle import: ${daemonset_template}"
+  fi
+  if ! grep -Eq 'hostPID:[[:space:]]*true' "${daemon_client_template}"; then
+    die "daemon-client template must declare hostPID: true for cross-pod CUDA IPC handle import: ${daemon_client_template}"
   fi
 }
 

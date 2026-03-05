@@ -13,6 +13,7 @@ help:
 	@echo "  verify-k3s             Full k3s qwen e2e (inline mode)"
 	@echo "  verify-k3s-daemonset   Full k3s qwen e2e (daemonset mode)"
 	@echo "  verify-k3s-daemonset-all Daemonset mode for qwen + tensorrt + vllm"
+	@echo "  verify-k3s-daemonset-parity-all Full parity-focused daemonset mode for tensorrt + vllm"
 	@echo "  clean-k3s              Delete k3s e2e local harness artifacts"
 	@echo "  demo-local-registry    Self-contained local demo (no GPU, no k8s)"
 	@echo ""
@@ -20,6 +21,7 @@ help:
 	@echo "                  verify-unit verify-local verify-host-qwen-smoke verify-k3s-qwen-smoke"
 	@echo "                  verify-k3s-qwen-e2e-inline verify-k3s-qwen-e2e-daemonset"
 	@echo "                  verify-k3s-tensor-e2e-daemonset verify-k3s-vllm-e2e-daemonset"
+	@echo "                  verify-k3s-tensor-e2e-daemonset-parity verify-k3s-vllm-e2e-daemonset-parity"
 
 .PHONY: build
 build:
@@ -106,6 +108,14 @@ verify-k3s-tensor-e2e-daemonset: prereq-k3s
 verify-k3s-vllm-e2e-daemonset: prereq-k3s
 	E2E_DEPLOY_MODE=daemonset-manifest WORKLOAD_RUNTIME=vllm ./platform/k3s/scripts/run.sh
 
+.PHONY: verify-k3s-tensor-e2e-daemonset-parity
+verify-k3s-tensor-e2e-daemonset-parity: prereq-k3s
+	E2E_DEPLOY_MODE=daemonset-manifest WORKLOAD_RUNTIME=tensorrt RUNTIME_PARITY_MODE=full ./platform/k3s/scripts/run.sh
+
+.PHONY: verify-k3s-vllm-e2e-daemonset-parity
+verify-k3s-vllm-e2e-daemonset-parity: prereq-k3s
+	E2E_DEPLOY_MODE=daemonset-manifest WORKLOAD_RUNTIME=vllm RUNTIME_PARITY_MODE=full REQUIRE_FULL_IPC_BIND=true ./platform/k3s/scripts/run.sh
+
 .PHONY: verify-core
 verify-core: verify-unit verify-local
 
@@ -120,6 +130,9 @@ verify-k3s-daemonset: verify-k3s-qwen-e2e-daemonset
 
 .PHONY: verify-k3s-daemonset-all
 verify-k3s-daemonset-all: verify-k3s-qwen-e2e-daemonset verify-k3s-tensor-e2e-daemonset verify-k3s-vllm-e2e-daemonset
+
+.PHONY: verify-k3s-daemonset-parity-all
+verify-k3s-daemonset-parity-all: verify-k3s-tensor-e2e-daemonset-parity verify-k3s-vllm-e2e-daemonset-parity
 
 .PHONY: clean-k3s
 clean-k3s:

@@ -62,6 +62,7 @@ spec:
         app: qwen-hello
     spec:
       restartPolicy: Always
+      runtimeClassName: nvidia
       tolerations:
       - key: "nvidia.com/gpu"
         operator: "Exists"

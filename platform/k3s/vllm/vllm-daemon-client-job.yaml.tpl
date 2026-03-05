@@ -13,7 +13,10 @@ spec:
       labels:
         app.kubernetes.io/name: oci2gdsd-vllm-daemon-client
     spec:
+      hostIPC: true
+      hostPID: true
       restartPolicy: Never
+      runtimeClassName: nvidia
       tolerations:
       - key: "nvidia.com/gpu"
         operator: "Exists"
@@ -33,6 +36,14 @@ spec:
       - name: oci2gdsd-socket-dir
         hostPath:
           path: __OCI2GDSD_SOCKET_HOST_PATH__
+          type: Directory
+      - name: host-udev
+        hostPath:
+          path: /run/udev
+          type: Directory
+      - name: host-cuda-include
+        hostPath:
+          path: /usr/local/cuda/include
           type: Directory
       initContainers:
       - name: preload-model
@@ -94,6 +105,18 @@ spec:
           value: "__REQUIRE_DIRECT_GDS__"
         - name: OCI2GDS_STRICT
           value: "__OCI2GDS_STRICT__"
+        - name: RUNTIME_PARITY_MODE
+          value: "__RUNTIME_PARITY_MODE__"
+        - name: REQUIRE_FULL_IPC_BIND
+          value: "__REQUIRE_FULL_IPC_BIND__"
+        - name: OCI2GDS_TORCH_ENABLE_NATIVE
+          value: "1"
+        - name: OCI2GDS_NATIVE_CPP_PATH
+          value: "/scripts/oci2gds_torch_native.cpp"
+        - name: CUDA_INCLUDE_DIR
+          value: "/usr/local/cuda/include"
+        - name: CUDA_LIB_DIR
+          value: "/usr/local/cuda/lib64"
         - name: DEVICE_UUID
           value: ""
         - name: DEVICE_INDEX
@@ -116,4 +139,10 @@ spec:
           readOnly: true
         - name: oci2gdsd-socket-dir
           mountPath: /run/oci2gdsd
+          readOnly: true
+        - name: host-udev
+          mountPath: /run/udev
+          readOnly: true
+        - name: host-cuda-include
+          mountPath: /usr/local/cuda/include
           readOnly: true

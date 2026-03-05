@@ -23,12 +23,42 @@ static std::once_flag g_init_once;
 static int g_init_code = 0;
 static std::string g_init_err;
 
+static std::string cu_error_detail(CUresult cu) {
+  const char* name = nullptr;
+  const char* msg = nullptr;
+  (void)cuGetErrorName(cu, &name);
+  (void)cuGetErrorString(cu, &msg);
+  std::ostringstream os;
+  os << "code=" << static_cast<int>(cu);
+  if (name != nullptr) {
+    os << " name=" << name;
+  }
+  if (msg != nullptr) {
+    os << " msg=" << msg;
+  }
+  return os.str();
+}
+
+static std::string cuda_runtime_error_detail(cudaError_t crt) {
+  std::ostringstream os;
+  os << "code=" << static_cast<int>(crt);
+  const char* name = cudaGetErrorName(crt);
+  if (name != nullptr) {
+    os << " name=" << name;
+  }
+  const char* msg = cudaGetErrorString(crt);
+  if (msg != nullptr) {
+    os << " msg=" << msg;
+  }
+  return os.str();
+}
+
 static void ensure_gds_ready() {
   std::call_once(g_init_once, []() {
     CUresult cu = cuInit(0);
     if (cu != CUDA_SUCCESS) {
       g_init_code = 1;
-      g_init_err = "cuInit failed";
+      g_init_err = "cuInit failed: " + cu_error_detail(cu);
       return;
     }
     CUfileError_t st = cuFileDriverOpen();
@@ -276,40 +306,30 @@ static ImportedIPCAllocation open_imported_allocation(int device, const std::str
   if (bytes.size() != sizeof(CUipcMemHandle)) {
     throw std::runtime_error("invalid CUDA IPC handle payload size");
   }
-  CUipcMemHandle handle{};
-  memcpy(&handle, bytes.data(), sizeof(CUipcMemHandle));
+  cudaIpcMemHandle_t handle{};
+  memcpy(&handle, bytes.data(), sizeof(cudaIpcMemHandle_t));
 
-  CUresult cu = cuInit(0);
-  if (cu != CUDA_SUCCESS) {
-    throw std::runtime_error("cuInit failed");
+  cudaError_t crt = cudaSetDevice(device);
+  if (crt != cudaSuccess) {
+    throw std::runtime_error(
+        "cudaSetDevice failed: " + cuda_runtime_error_detail(crt) +
+        " device=" + std::to_string(device));
   }
-  CUdevice dev;
-  cu = cuDeviceGet(&dev, device);
-  if (cu != CUDA_SUCCESS) {
-    throw std::runtime_error("cuDeviceGet failed");
-  }
-  CUcontext retained = nullptr;
-  cu = cuDevicePrimaryCtxRetain(&retained, dev);
-  if (cu != CUDA_SUCCESS) {
-    throw std::runtime_error("cuDevicePrimaryCtxRetain failed");
-  }
-  CUcontext prev = nullptr;
-  cu = cuCtxPushCurrent(retained);
-  if (cu != CUDA_SUCCESS) {
-    (void)cuDevicePrimaryCtxRelease(dev);
-    throw std::runtime_error("cuCtxPushCurrent failed");
+  crt = cudaFree(0);
+  if (crt != cudaSuccess && crt != cudaErrorCudartUnloading) {
+    throw std::runtime_error("cudaFree(0) failed: " + cuda_runtime_error_detail(crt));
   }
 
-  CUdeviceptr imported = 0;
-  cu = cuIpcOpenMemHandle(&imported, handle, CU_IPC_MEM_LAZY_ENABLE_PEER_ACCESS);
-  (void)cuCtxPopCurrent(&prev);
-  (void)cuDevicePrimaryCtxRelease(dev);
-  if (cu != CUDA_SUCCESS) {
-    throw std::runtime_error("cuIpcOpenMemHandle failed");
+  void* imported_ptr = nullptr;
+  crt = cudaIpcOpenMemHandle(&imported_ptr, handle, cudaIpcMemLazyEnablePeerAccess);
+  if (crt != cudaSuccess) {
+    throw std::runtime_error(
+        "cudaIpcOpenMemHandle failed: " + cuda_runtime_error_detail(crt) +
+        " device=" + std::to_string(device));
   }
 
   ImportedIPCAllocation alloc;
-  alloc.ptr = imported;
+  alloc.ptr = reinterpret_cast<CUdeviceptr>(imported_ptr);
   alloc.device = device;
   alloc.refs = 1;
   return alloc;
@@ -317,23 +337,9 @@ static ImportedIPCAllocation open_imported_allocation(int device, const std::str
 
 static void close_imported_allocation(const ImportedIPCAllocation& alloc) {
   if (alloc.ptr == 0 || alloc.device < 0) return;
-  CUresult cu = cuInit(0);
-  if (cu != CUDA_SUCCESS) return;
-  CUdevice dev;
-  cu = cuDeviceGet(&dev, alloc.device);
-  if (cu != CUDA_SUCCESS) return;
-  CUcontext retained = nullptr;
-  cu = cuDevicePrimaryCtxRetain(&retained, dev);
-  if (cu != CUDA_SUCCESS) return;
-  CUcontext prev = nullptr;
-  cu = cuCtxPushCurrent(retained);
-  if (cu != CUDA_SUCCESS) {
-    (void)cuDevicePrimaryCtxRelease(dev);
-    return;
-  }
-  (void)cuIpcCloseMemHandle(alloc.ptr);
-  (void)cuCtxPopCurrent(&prev);
-  (void)cuDevicePrimaryCtxRelease(dev);
+  cudaError_t crt = cudaSetDevice(alloc.device);
+  if (crt != cudaSuccess) return;
+  (void)cudaIpcCloseMemHandle(reinterpret_cast<void*>(alloc.ptr));
 }
 
 static ImportedIPCAllocation acquire_imported_allocation(int device, const std::string& handle_b64) {
@@ -469,53 +475,38 @@ static torch::Tensor import_ipc_copy_to_tensor(const std::string& handle_b64, in
     throw std::runtime_error("length must be > 0");
   }
   auto bytes = decode_b64(handle_b64);
-  if (bytes.size() != sizeof(CUipcMemHandle)) {
+  if (bytes.size() != sizeof(cudaIpcMemHandle_t)) {
     throw std::runtime_error("invalid CUDA IPC handle payload size");
   }
-
-  CUresult cu = cuInit(0);
-  if (cu != CUDA_SUCCESS) {
-    throw std::runtime_error("cuInit failed");
+  cudaError_t crt = cudaSetDevice((int)device);
+  if (crt != cudaSuccess) {
+    throw std::runtime_error("cudaSetDevice failed: " + cuda_runtime_error_detail(crt));
   }
-  CUdevice dev;
-  cu = cuDeviceGet(&dev, (int)device);
-  if (cu != CUDA_SUCCESS) {
-    throw std::runtime_error("cuDeviceGet failed");
-  }
-  CUcontext retained = nullptr;
-  cu = cuDevicePrimaryCtxRetain(&retained, dev);
-  if (cu != CUDA_SUCCESS) {
-    throw std::runtime_error("cuDevicePrimaryCtxRetain failed");
-  }
-  CUcontext prev = nullptr;
-  cu = cuCtxPushCurrent(retained);
-  if (cu != CUDA_SUCCESS) {
-    (void)cuDevicePrimaryCtxRelease(dev);
-    throw std::runtime_error("cuCtxPushCurrent failed");
+  crt = cudaFree(0);
+  if (crt != cudaSuccess && crt != cudaErrorCudartUnloading) {
+    throw std::runtime_error("cudaFree(0) failed: " + cuda_runtime_error_detail(crt));
   }
 
-  CUipcMemHandle handle{};
-  memcpy(&handle, bytes.data(), sizeof(CUipcMemHandle));
-  CUdeviceptr imported = 0;
-  cu = cuIpcOpenMemHandle(&imported, handle, CU_IPC_MEM_LAZY_ENABLE_PEER_ACCESS);
-  if (cu != CUDA_SUCCESS) {
-    (void)cuCtxPopCurrent(&prev);
-    (void)cuDevicePrimaryCtxRelease(dev);
-    throw std::runtime_error("cuIpcOpenMemHandle failed");
+  cudaIpcMemHandle_t handle{};
+  memcpy(&handle, bytes.data(), sizeof(cudaIpcMemHandle_t));
+  void* imported = nullptr;
+  crt = cudaIpcOpenMemHandle(&imported, handle, cudaIpcMemLazyEnablePeerAccess);
+  if (crt != cudaSuccess) {
+    throw std::runtime_error(
+        "cudaIpcOpenMemHandle failed: " + cuda_runtime_error_detail(crt) +
+        " device=" + std::to_string(device));
   }
 
   auto out = torch::empty(
       {length},
       torch::TensorOptions().dtype(torch::kUInt8).device(torch::kCUDA, (int)device));
-  cu = cuMemcpyDtoD((CUdeviceptr)out.data_ptr(), imported, (size_t)length);
-  CUresult close_res = cuIpcCloseMemHandle(imported);
-  (void)cuCtxPopCurrent(&prev);
-  (void)cuDevicePrimaryCtxRelease(dev);
-  if (cu != CUDA_SUCCESS) {
-    throw std::runtime_error("cuMemcpyDtoD failed");
+  crt = cudaMemcpy(out.data_ptr(), imported, (size_t)length, cudaMemcpyDeviceToDevice);
+  cudaError_t close_res = cudaIpcCloseMemHandle(imported);
+  if (crt != cudaSuccess) {
+    throw std::runtime_error("cudaMemcpyDeviceToDevice failed: " + cuda_runtime_error_detail(crt));
   }
-  if (close_res != CUDA_SUCCESS) {
-    throw std::runtime_error("cuIpcCloseMemHandle failed");
+  if (close_res != cudaSuccess) {
+    throw std::runtime_error("cudaIpcCloseMemHandle failed: " + cuda_runtime_error_detail(close_res));
   }
   return out;
 }

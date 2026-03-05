@@ -13,7 +13,10 @@ spec:
       labels:
         app.kubernetes.io/name: oci2gdsd-tensorrt-daemon-client
     spec:
+      hostIPC: true
+      hostPID: true
       restartPolicy: Never
+      runtimeClassName: nvidia
       tolerations:
       - key: "nvidia.com/gpu"
         operator: "Exists"
@@ -42,6 +45,10 @@ spec:
         hostPath:
           path: /etc/cufile.json
           type: File
+      - name: host-cuda-include
+        hostPath:
+          path: /usr/local/cuda/include
+          type: Directory
       initContainers:
       - name: preload-model
         image: __OCI2GDSD_IMAGE__
@@ -100,12 +107,20 @@ spec:
           value: "__REQUIRE_DIRECT_GDS__"
         - name: OCI2GDS_STRICT
           value: "__OCI2GDS_STRICT__"
+        - name: RUNTIME_PARITY_MODE
+          value: "__RUNTIME_PARITY_MODE__"
+        - name: OCI2GDS_NATIVE_CPP_PATH
+          value: "/scripts/oci2gds_torch_native.cpp"
         - name: DEVICE_UUID
           value: ""
         - name: DEVICE_INDEX
           value: "0"
         - name: CUFILE_ENV_PATH_JSON
           value: "/etc/cufile.json"
+        - name: CUDA_INCLUDE_DIR
+          value: "/usr/local/cuda/include"
+        - name: CUDA_LIB_DIR
+          value: "/usr/local/cuda/lib64"
         - name: TRT_MAX_INPUT_LEN
           value: "512"
         - name: TRT_MAX_SEQ_LEN
@@ -133,4 +148,7 @@ spec:
           readOnly: true
         - name: host-cufile-config
           mountPath: /etc/cufile.json
+          readOnly: true
+        - name: host-cuda-include
+          mountPath: /usr/local/cuda/include
           readOnly: true

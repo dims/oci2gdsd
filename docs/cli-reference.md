@@ -396,12 +396,17 @@ GET  /healthz
 GET  /v1/gpu/devices
 POST /v1/gpu/load
 POST /v1/gpu/export
+POST /v1/gpu/tensor-map
 POST /v1/gpu/attach
 POST /v1/gpu/heartbeat
 POST /v1/gpu/detach
 POST /v1/gpu/unload
 GET  /v1/gpu/status?device_uuid=<GPU-...>
 ```
+
+`POST /v1/gpu/tensor-map` returns a safetensors-derived tensor index for each shard
+with byte ranges and optional exported CUDA IPC handle metadata. This endpoint is used by
+the k3s daemon-client runtime parity checks.
 
 ---
 

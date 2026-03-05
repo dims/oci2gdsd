@@ -20,6 +20,13 @@ spec:
       labels:
         app.kubernetes.io/name: __REGISTRY_SERVICE__
     spec:
+      tolerations:
+      - key: "node-role.kubernetes.io/control-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
+      - key: "node-role.kubernetes.io/master"
+        operator: "Exists"
+        effect: "NoSchedule"
       containers:
       - name: registry
         image: registry:2

@@ -4,8 +4,9 @@ package gpu
 
 /*
 #define _GNU_SOURCE
-#cgo LDFLAGS: -lcuda -lcufile
+#cgo LDFLAGS: -lcuda -lcufile -lcudart
 #include <cuda.h>
+#include <cuda_runtime_api.h>
 #include <cufile.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -329,12 +330,14 @@ cleanup:
 
 static int gds_load_persistent(const char* path, int device, long long chunk_bytes, int strict, CUdeviceptr* out_dptr, long long* total_bytes, long long* elapsed_us, int* out_direct) {
 	CUresult cu;
+	cudaError_t crt;
 	CUcontext prev_ctx = NULL;
 	struct stat st;
 	int rc = 0;
 	int fd = -1;
 	CUfileHandle_t cfh;
 	CUdeviceptr dptr = 0;
+	void* dptr_raw = NULL;
 	CUcontext active_ctx = NULL;
 	int handle_registered = 0;
 	int buf_registered = 0;
@@ -347,6 +350,7 @@ static int gds_load_persistent(const char* path, int device, long long chunk_byt
 	off_t file_off = 0;
 	int direct_only = 1;
 	CUdeviceptr tail_dptr = 0;
+	void* tail_raw = NULL;
 	struct timespec t0;
 	struct timespec t1;
 
@@ -400,11 +404,17 @@ static int gds_load_persistent(const char* path, int device, long long chunk_byt
 		goto cleanup;
 	}
 
-	cu = cuMemAlloc(&dptr, (size_t)file_size);
-	if (cu != CUDA_SUCCESS) {
-		rc = 1000 + (int)cu;
+	crt = cudaSetDevice(device);
+	if (crt != cudaSuccess) {
+		rc = 5000 + (int)crt;
 		goto cleanup;
 	}
+	crt = cudaMalloc(&dptr_raw, (size_t)file_size);
+	if (crt != cudaSuccess) {
+		rc = 5000 + (int)crt;
+		goto cleanup;
+	}
+	dptr = (CUdeviceptr)(uintptr_t)dptr_raw;
 
 	direct_size = (off_t)((file_size / 4096) * 4096);
 	if (direct_only) {
@@ -512,14 +522,15 @@ static int gds_load_persistent(const char* path, int device, long long chunk_byt
 		ssize_t n;
 		size_t copy_len;
 
-		cu = cuMemAlloc(&tail_dptr, 4096);
-		if (cu != CUDA_SUCCESS) {
+		crt = cudaMalloc(&tail_raw, 4096);
+		if (crt != cudaSuccess) {
 			if (strict) {
-				rc = 1000 + (int)cu;
+				rc = 5000 + (int)crt;
 				goto cleanup;
 			}
 			direct_only = 0;
 		}
+		tail_dptr = (CUdeviceptr)(uintptr_t)tail_raw;
 		if (direct_only) {
 			ferr = cuFileBufRegister((void*)(uintptr_t)tail_dptr, 4096, 0);
 			if (ferr.err != CU_FILE_SUCCESS) {
@@ -571,8 +582,9 @@ static int gds_load_persistent(const char* path, int device, long long chunk_byt
 			tail_buf_registered = 0;
 		}
 		if (tail_dptr != 0) {
-			(void)cuMemFree(tail_dptr);
+			(void)cudaFree((void*)(uintptr_t)tail_dptr);
 			tail_dptr = 0;
+			tail_raw = NULL;
 		}
 		if (!strict && !direct_only) {
 			if (buf_registered) {
@@ -656,13 +668,13 @@ cleanup:
 		(void)cuFileBufDeregister((void*)(uintptr_t)tail_dptr);
 	}
 	if (tail_dptr != 0) {
-		(void)cuMemFree(tail_dptr);
+		(void)cudaFree((void*)(uintptr_t)tail_dptr);
 	}
 	if (buf_registered) {
 		(void)cuFileBufDeregister((void*)(uintptr_t)dptr);
 	}
 	if (dptr != 0) {
-		(void)cuMemFree(dptr);
+		(void)cudaFree((void*)(uintptr_t)dptr);
 	}
 	if (handle_registered) {
 		(void)cuFileHandleDeregister(cfh);
@@ -675,6 +687,7 @@ cleanup:
 
 static int gds_free_persistent(int device, CUdeviceptr dptr) {
 	CUresult cu;
+	cudaError_t crt;
 	CUcontext prev_ctx = NULL;
 	CUcontext active_ctx = NULL;
 	int rc = 0;
@@ -691,10 +704,16 @@ static int gds_free_persistent(int device, CUdeviceptr dptr) {
 	if (cu != CUDA_SUCCESS) return 1000 + (int)cu;
 	ctx_pushed = 1;
 
-	cu = cuMemFree(dptr);
-	if (cu != CUDA_SUCCESS) {
-		rc = 1000 + (int)cu;
+	crt = cudaSetDevice(device);
+	if (crt != cudaSuccess) {
+		rc = 5000 + (int)crt;
+		goto cleanup;
 	}
+	crt = cudaFree((void*)(uintptr_t)dptr);
+	if (crt != cudaSuccess) {
+		rc = 5000 + (int)crt;
+	}
+cleanup:
 	if (ctx_pushed) {
 		(void)cuCtxPopCurrent(&prev_ctx);
 	}
@@ -703,11 +722,12 @@ static int gds_free_persistent(int device, CUdeviceptr dptr) {
 
 static int gds_export_ipc_handle(int device, CUdeviceptr dptr, unsigned char* out_handle, int out_handle_len) {
 	CUresult cu;
+	cudaError_t crt;
 	CUcontext prev_ctx = NULL;
 	CUcontext active_ctx = NULL;
 	int rc = 0;
 	int ctx_pushed = 0;
-	CUipcMemHandle handle;
+	cudaIpcMemHandle_t handle;
 
 	if (dptr == 0 || out_handle == NULL) {
 		return 3009;
@@ -724,12 +744,17 @@ static int gds_export_ipc_handle(int device, CUdeviceptr dptr, unsigned char* ou
 	if (cu != CUDA_SUCCESS) return 1000 + (int)cu;
 	ctx_pushed = 1;
 
-	cu = cuIpcGetMemHandle(&handle, dptr);
-	if (cu != CUDA_SUCCESS) {
-		rc = 1000 + (int)cu;
+	crt = cudaSetDevice(device);
+	if (crt != cudaSuccess) {
+		rc = 5000 + (int)crt;
 		goto cleanup;
 	}
-	memcpy(out_handle, &handle, sizeof(CUipcMemHandle));
+	crt = cudaIpcGetMemHandle(&handle, (void*)(uintptr_t)dptr);
+	if (crt != cudaSuccess) {
+		rc = 5000 + (int)crt;
+		goto cleanup;
+	}
+	memcpy(out_handle, &handle, sizeof(cudaIpcMemHandle_t));
 
 cleanup:
 	if (ctx_pushed) {
@@ -1385,6 +1410,8 @@ func describeGDSCode(code int) string {
 		return fmt.Sprintf("code=%d (cuFile error=%d)", code, code-2000)
 	case code >= 4000 && code < 5000:
 		return fmt.Sprintf("code=%d (cuFile read status=%d)", code, code-4000)
+	case code >= 5000 && code < 6000:
+		return fmt.Sprintf("code=%d (CUDA runtime error=%d)", code, code-5000)
 	}
 	switch code {
 	case 3001:

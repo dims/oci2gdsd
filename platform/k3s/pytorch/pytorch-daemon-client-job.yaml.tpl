@@ -13,7 +13,10 @@ spec:
       labels:
         app.kubernetes.io/name: oci2gdsd-pytorch-daemon-client
     spec:
+      hostIPC: true
+      hostPID: true
       restartPolicy: Never
+      runtimeClassName: nvidia
       tolerations:
       - key: "nvidia.com/gpu"
         operator: "Exists"
@@ -33,6 +36,10 @@ spec:
       - name: oci2gdsd-socket-dir
         hostPath:
           path: __OCI2GDSD_SOCKET_HOST_PATH__
+          type: Directory
+      - name: host-cuda-include
+        hostPath:
+          path: /usr/local/cuda/include
           type: Directory
       initContainers:
       - name: preload-model
@@ -118,4 +125,7 @@ spec:
           readOnly: true
         - name: oci2gdsd-socket-dir
           mountPath: /run/oci2gdsd
+          readOnly: true
+        - name: host-cuda-include
+          mountPath: /usr/local/cuda/include
           readOnly: true

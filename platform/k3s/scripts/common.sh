@@ -240,7 +240,7 @@ validate_deploy_assets() {
   [[ -f "${OCI2GDSD_DAEMON_TEMPLATE}" ]] || die "missing daemonset template: ${OCI2GDSD_DAEMON_TEMPLATE}"
   [[ -f "${WORKLOAD_DAEMON_TEMPLATE}" ]] || die "missing daemonset workload template: ${WORKLOAD_DAEMON_TEMPLATE}"
   [[ -f "${WORKLOAD_DAEMON_SCRIPT}" ]] || die "missing daemon client script: ${WORKLOAD_DAEMON_SCRIPT}"
-  if [[ "${WORKLOAD_RUNTIME}" == "pytorch" ]]; then
+  if [[ "${WORKLOAD_RUNTIME}" == "pytorch" || "${WORKLOAD_RUNTIME}" == "vllm" || "${WORKLOAD_RUNTIME}" == "tensorrt" ]]; then
     [[ -f "${PYTORCH_DAEMON_NATIVE_CPP}" ]] || die "missing daemon native source: ${PYTORCH_DAEMON_NATIVE_CPP}"
   fi
 }
@@ -844,6 +844,7 @@ install_gpu_operator() {
     --namespace gpu-operator \
     --create-namespace \
     --version "${GPU_OPERATOR_CHART_VERSION}" \
+    --set cdi.enabled=false \
     --set driver.enabled=false \
     --set toolkit.enabled=false \
     --set dcgmExporter.enabled=false \
@@ -856,6 +857,7 @@ install_gpu_operator() {
 
 verify_gpu_pod() {
   log "verifying GPU in a pod"
+  kube -n kube-system delete pod/gpu-smoke --ignore-not-found >/dev/null 2>&1 || true
   cat <<EOF | kube apply -f -
 apiVersion: v1
 kind: Pod
@@ -864,14 +866,18 @@ metadata:
   namespace: kube-system
 spec:
   restartPolicy: Never
+  runtimeClassName: nvidia
   tolerations:
   - key: "nvidia.com/gpu"
     operator: "Exists"
     effect: "NoSchedule"
   containers:
   - name: nvidia-smi
-    image: nvidia/cuda:12.8.0-base-ubuntu22.04
+    image: nvcr.io/nvidia/cuda:12.8.0-base-ubuntu22.04
+    imagePullPolicy: IfNotPresent
     command: ["nvidia-smi", "-L"]
+    securityContext:
+      privileged: true
     resources:
       limits:
         nvidia.com/gpu: 1

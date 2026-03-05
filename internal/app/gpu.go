@@ -127,6 +127,48 @@ type GPUExportResult struct {
 	Message        string              `json:"message,omitempty"`
 }
 
+type GPUTensorMapRequest struct {
+	ModelID        string `json:"model_id"`
+	Digest         string `json:"digest"`
+	Path           string `json:"path"`
+	DeviceUUID     string `json:"device_uuid"`
+	Device         int    `json:"-"`
+	MaxShards      int    `json:"max_shards"`
+	MaxTensors     int    `json:"max_tensors"`
+	IncludeHandles bool   `json:"include_handles"`
+}
+
+type GPUTensorDescriptor struct {
+	Name         string  `json:"name"`
+	DType        string  `json:"dtype"`
+	Shape        []int64 `json:"shape"`
+	ByteOffset   int64   `json:"byte_offset"`
+	ByteLength   int64   `json:"byte_length"`
+	ShardName    string  `json:"shard_name"`
+	ShardPath    string  `json:"shard_path"`
+	ShardDigest  string  `json:"shard_digest,omitempty"`
+	ShardSize    int64   `json:"shard_size"`
+	ShardOrdinal int     `json:"shard_ordinal"`
+	IPCHandle    string  `json:"ipc_handle,omitempty"`
+}
+
+type GPUTensorMapResult struct {
+	Status           string                `json:"status"`
+	ModelID          string                `json:"model_id,omitempty"`
+	ManifestDigest   string                `json:"manifest_digest,omitempty"`
+	Path             string                `json:"path"`
+	DeviceUUID       string                `json:"device_uuid"`
+	DeviceIndex      int                   `json:"device_index"`
+	Loader           string                `json:"loader"`
+	Format           string                `json:"format,omitempty"`
+	Tensors          []GPUTensorDescriptor `json:"tensors"`
+	TensorCount      int                   `json:"tensor_count"`
+	TotalTensorBytes int64                 `json:"total_tensor_bytes"`
+	DurationMS       int64                 `json:"duration_ms"`
+	ReasonCode       ReasonCode            `json:"reason_code"`
+	Message          string                `json:"message,omitempty"`
+}
+
 type GPUAttachRequest struct {
 	ModelID    string `json:"model_id"`
 	Digest     string `json:"digest"`

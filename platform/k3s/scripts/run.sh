@@ -115,6 +115,9 @@ wait_for_workload_and_collect() {
       die "daemon-client workload log is missing marker: ${marker}"
     fi
   done < <(runtime_required_markers)
+  if declare -F runtime_validate_results >/dev/null 2>&1; then
+    runtime_validate_results "${WORKLOAD_RESULT_LOG}"
+  fi
   capture_daemonset_logs "${RESULTS_DIR}/daemonset.log" || true
 }
 

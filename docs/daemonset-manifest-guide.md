@@ -34,9 +34,11 @@ Architecture overview: [architecture-diagram.md](architecture-diagram.md)
 
 For TensorRT-LLM daemon-client mode, the workload:
 
-- Builds a TensorRT engine from the ensured local model files.
+- In `probe`/`partial` mode, builds a TensorRT engine from ensured local model files.
+- In `full` parity mode, materializes runtime shard files from daemon-exported CUDA IPC handles before conversion/build (`source=ipc_materialized`).
 - Runs `ModelRunnerCpp.from_dir(..., use_gpu_direct_storage=True)`.
 - Verifies daemon `gpu/tensor-map` IPC handle coverage for safetensors shards.
+- Verifies native IPC import coverage and zero fallback in `full` mode.
 - Verifies daemon `gpu/load` + `gpu/status` + `gpu/attach` + `gpu/heartbeat` + `gpu/detach` + `gpu/unload` lifecycle.
 - Mounts host `/run/udev` and `/etc/cufile.json` so cuFile device registration
   can succeed for strict direct-GDS engine loading.
@@ -44,7 +46,8 @@ For TensorRT-LLM daemon-client mode, the workload:
 For vLLM daemon-client mode, the workload:
 
 - Registers out-of-tree `load_format=oci2gds`.
-- Uses daemon `gpu/tensor-map` output to drive IPC tensor rebinding checks.
+- Uses daemon `gpu/tensor-map` output to drive IPC-sourced weight loading checks.
+- In `full` parity mode, imports tensor-map entries via CUDA IPC and copies them into vLLM-owned parameter storage (including fused `qkv_proj` and `gate_up_proj` coverage).
 - Supports parity modes (`RUNTIME_PARITY_MODE=off|probe|partial|full`) to gate how strict runtime coupling must be.
 
 ## Harness entrypoint (recommended)
@@ -111,12 +114,19 @@ TensorRT daemon-client log (`platform/k3s/work/artifacts/results/tensorrt-daemon
 - `DAEMON_GPU_HEARTBEAT_OK`
 - `TENSORRT_IPC_TENSOR_MAP_OK`
 - `TENSORRT_IPC_BIND_OK`
+- `TENSORRT_IPC_IMPORT_OK`
 - `TENSORRT_ENGINE_BUILD_OK`
 - `TENSORRT_GDS_RUNNER_READY`
 - `TENSORRT_QWEN_INFER_OK`
 - `DAEMON_GPU_DETACH_OK`
 - `DAEMON_GPU_UNLOAD_OK`
 - `TENSORRT_DAEMON_CLIENT_SUCCESS`
+
+For `RUNTIME_PARITY_MODE=full`, harness also validates:
+
+- `TENSORRT_IPC_BIND_OK status=ok`
+- `TENSORRT_IPC_IMPORT_OK status=ok unresolved_shards=0`
+- `TENSORRT_FULL_SOURCE_OK source=ipc_materialized fallback_reads=0`
 
 vLLM daemon-client log (`platform/k3s/work/artifacts/results/vllm-daemon-client.log`) must include:
 
@@ -132,5 +142,11 @@ vLLM daemon-client log (`platform/k3s/work/artifacts/results/vllm-daemon-client.
 - `DAEMON_GPU_DETACH_OK`
 - `DAEMON_GPU_UNLOAD_OK`
 - `VLLM_DAEMON_CLIENT_SUCCESS`
+
+For `RUNTIME_PARITY_MODE=full`, harness also validates:
+
+- `VLLM_IPC_BIND_OK status=ok`
+- `VLLM_IPC_BIND_OK ... unresolved=0`
+- `VLLM_IPC_BIND_OK ... rebound_params>0`
 
 The harness also checks preload readiness (`"status": "READY"`) and runs release/gc validation.

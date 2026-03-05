@@ -60,6 +60,8 @@ spec:
       labels:
         app.kubernetes.io/name: oci2gdsd-daemon
     spec:
+      hostIPC: true
+      hostPID: true
       runtimeClassName: nvidia
       tolerations:
       - key: "nvidia.com/gpu"

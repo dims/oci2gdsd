@@ -91,7 +91,18 @@ def unix_http_json(socket_path: str, method: str, path: str, payload=None, timeo
     status_code = int(parts[1])
     payload_out = {}
     if body_raw.strip():
-        payload_out = json.loads(body_raw.decode("utf-8"))
+        text = body_raw.decode("utf-8", errors="replace").strip()
+        start_obj = [idx for idx in (text.find("{"), text.find("[")) if idx >= 0]
+        if start_obj:
+            text = text[min(start_obj):]
+        try:
+            payload_out = json.loads(text)
+        except json.JSONDecodeError:
+            decoder = json.JSONDecoder()
+            payload_out, consumed = decoder.raw_decode(text)
+            trailing = text[consumed:].strip()
+            if trailing:
+                print(f"WARN_DAEMON_HTTP_TRAILING_BYTES bytes={len(trailing)}")
     return status_code, payload_out
 
 
@@ -100,6 +111,264 @@ def assert_http_ok(code: int, payload, action: str):
         raise RuntimeError(f"{action} failed: code={code} payload={payload}")
     if isinstance(payload, dict) and str(payload.get("status", "")).upper() == "FAILED":
         raise RuntimeError(f"{action} returned FAILED payload={payload}")
+
+
+def _native_cpp_source_path() -> Path:
+    raw = os.environ.get("OCI2GDS_NATIVE_CPP_PATH", "").strip()
+    if raw:
+        return Path(raw)
+    return Path("/scripts/oci2gds_torch_native.cpp")
+
+
+def _load_native_cpp_source() -> str:
+    source_path = _native_cpp_source_path()
+    if not source_path.exists():
+        raise RuntimeError(f"native C++ source not found: {source_path}")
+    return source_path.read_text(encoding="utf-8")
+
+
+def _native_enabled() -> bool:
+    flag = os.environ.get("OCI2GDS_TORCH_ENABLE_NATIVE", "1").strip().lower()
+    return flag not in {"0", "false", "no"}
+
+
+def _ensure_cuda_linkage_paths():
+    cuda_lib = Path(os.environ.get("CUDA_LIB_DIR", "/usr/local/cuda/lib64"))
+    cufile_soname = cuda_lib / "libcufile.so.0"
+    cufile_link = cuda_lib / "libcufile.so"
+    if not cufile_link.exists() and cufile_soname.exists():
+        cufile_link.symlink_to(cufile_soname.name)
+    usr_link = Path("/usr/lib/x86_64-linux-gnu/libcufile.so")
+    if not usr_link.exists() and cufile_link.exists():
+        usr_link.symlink_to(cufile_link)
+
+    libcuda_soname = cuda_lib / "libcuda.so.1"
+    compat_libcuda = Path("/usr/local/cuda/compat/libcuda.so.1")
+    if not libcuda_soname.exists() and compat_libcuda.exists():
+        libcuda_soname.symlink_to(compat_libcuda)
+
+
+def load_native_module():
+    if not _native_enabled():
+        raise RuntimeError("native backend disabled")
+    if not torch.cuda.is_available():
+        raise RuntimeError("cuda unavailable")
+    try:
+        from torch.utils.cpp_extension import load_inline
+    except Exception as exc:
+        raise RuntimeError(f"torch cpp extension unavailable: {exc}") from exc
+
+    _ensure_cuda_linkage_paths()
+
+    build_dir = Path(os.environ.get("OCI2GDS_TORCH_BUILD_DIR", "/tmp/oci2gds_vllm_build"))
+    build_dir.mkdir(parents=True, exist_ok=True)
+
+    include_paths = []
+    cuda_include = os.environ.get("CUDA_INCLUDE_DIR", "").strip()
+    if cuda_include:
+        include_paths.append(cuda_include)
+
+    ldflags = []
+    cuda_lib = os.environ.get("CUDA_LIB_DIR", "").strip()
+    if cuda_lib:
+        ldflags.append(f"-L{cuda_lib}")
+    ldflags.extend(["-lcuda", "-lcufile"])
+
+    native_cpp = _load_native_cpp_source()
+    verbose = os.environ.get("OCI2GDS_TORCH_NATIVE_VERBOSE", "0").strip() == "1"
+    name = f"oci2gds_vllm_native_{os.getpid()}"
+    module = load_inline(
+        name=name,
+        cpp_sources=[native_cpp],
+        functions=None,
+        extra_cflags=["-O3", "-std=c++17"],
+        extra_ldflags=ldflags,
+        extra_include_paths=include_paths,
+        with_cuda=False,
+        build_directory=str(build_dir),
+        verbose=verbose,
+    )
+    if hasattr(module, "init_native"):
+        module.init_native()
+    if not hasattr(module, "import_ipc_tensor_view"):
+        raise RuntimeError("native module missing import_ipc_tensor_view")
+    return module
+
+
+def torch_dtype_from_safetensors(code: str) -> torch.dtype:
+    code = str(code).strip().upper()
+    if code == "BF16":
+        return torch.bfloat16
+    if code == "F16":
+        return torch.float16
+    if code == "F32":
+        return torch.float32
+    if code == "F64":
+        return torch.float64
+    if code == "I64":
+        return torch.int64
+    if code == "I32":
+        return torch.int32
+    if code == "I16":
+        return torch.int16
+    if code == "I8":
+        return torch.int8
+    if code == "U8":
+        return torch.uint8
+    if code == "BOOL":
+        return torch.bool
+    raise RuntimeError(f"unsupported safetensors dtype: {code}")
+
+
+def bind_parameters_from_tensor_map(model, tensor_map, native_module, device_index: int, require_full: bool):
+    by_name = {}
+    for entry in tensor_map:
+        name = str(entry.get("name", "")).strip()
+        if not name:
+            continue
+        by_name[name] = entry
+
+    imported_source_views = {}
+    imported_source_bytes = {}
+
+    def import_source_tensor(source_name: str, expected_dtype: torch.dtype):
+        if source_name in imported_source_views:
+            return imported_source_views[source_name], imported_source_bytes[source_name]
+
+        spec = by_name.get(source_name)
+        if spec is None:
+            return None, 0
+
+        handle = str(spec.get("ipc_handle", "")).strip()
+        if not handle:
+            raise RuntimeError(f"tensor {source_name} is missing ipc_handle")
+
+        shape = [int(x) for x in spec.get("shape", [])]
+        if not shape:
+            raise RuntimeError(f"tensor {source_name} has empty shape in tensor map")
+
+        dtype_code = str(spec.get("dtype", "")).strip()
+        source_dtype = torch_dtype_from_safetensors(dtype_code)
+        if source_dtype != expected_dtype:
+            raise RuntimeError(
+                f"dtype mismatch for {source_name}: map={source_dtype} expected={expected_dtype}"
+            )
+
+        byte_offset = int(spec.get("byte_offset", 0))
+        byte_length = int(spec.get("byte_length", 0))
+        if byte_offset < 0 or byte_length <= 0:
+            raise RuntimeError(
+                f"invalid byte range for {source_name}: offset={byte_offset} length={byte_length}"
+            )
+
+        view = native_module.import_ipc_tensor_view(
+            handle,
+            int(byte_offset),
+            shape,
+            dtype_code,
+            int(device_index),
+        )
+        if view.dtype != expected_dtype:
+            raise RuntimeError(
+                f"imported view dtype mismatch for {source_name}: view={view.dtype} expected={expected_dtype}"
+            )
+
+        imported_source_views[source_name] = view
+        imported_source_bytes[source_name] = byte_length
+        return view, byte_length
+
+    def maybe_import_fused_tensor(param_name: str, expected_dtype: torch.dtype):
+        if ".self_attn.qkv_proj.weight" in param_name:
+            prefix = param_name.rsplit(".self_attn.qkv_proj.weight", 1)[0]
+            source_names = [
+                f"{prefix}.self_attn.q_proj.weight",
+                f"{prefix}.self_attn.k_proj.weight",
+                f"{prefix}.self_attn.v_proj.weight",
+            ]
+        elif ".mlp.gate_up_proj.weight" in param_name:
+            prefix = param_name.rsplit(".mlp.gate_up_proj.weight", 1)[0]
+            source_names = [
+                f"{prefix}.mlp.gate_proj.weight",
+                f"{prefix}.mlp.up_proj.weight",
+            ]
+        else:
+            return None
+
+        parts = []
+        total_bytes = 0
+        for source_name in source_names:
+            view, byte_length = import_source_tensor(source_name, expected_dtype)
+            if view is None:
+                return None
+            parts.append(view)
+            total_bytes += byte_length
+
+        if not parts:
+            return None
+        return torch.cat(parts, dim=0), total_bytes
+
+    rebound_names = set()
+    rebound_ptrs = set()
+    rebound_params = 0
+    rebound_bytes = 0
+    fused_params = 0
+    unresolved = []
+
+    for name, param in model.named_parameters():
+        spec = by_name.get(name)
+        if spec is None:
+            fused = maybe_import_fused_tensor(name, param.dtype)
+            if fused is None:
+                if require_full:
+                    unresolved.append(name)
+                continue
+            view, byte_length = fused
+            fused_params += 1
+        else:
+            view, byte_length = import_source_tensor(name, param.dtype)
+            if view is None:
+                if require_full:
+                    unresolved.append(name)
+                continue
+
+        if tuple(view.shape) != tuple(param.shape):
+            raise RuntimeError(f"shape mismatch for {name}: view={tuple(view.shape)} model={tuple(param.shape)}")
+        if view.dtype != param.dtype:
+            raise RuntimeError(f"dtype mismatch for {name}: view={view.dtype} model={param.dtype}")
+
+        param.data.copy_(view)
+        param.requires_grad_(False)
+
+        rebound_names.add(name)
+        rebound_ptrs.add(int(param.data_ptr()))
+        rebound_params += 1
+        rebound_bytes += byte_length
+
+    if hasattr(model, "tie_weights"):
+        model.tie_weights()
+
+    unresolved_after_tie = []
+    for name, param in model.named_parameters():
+        if name in rebound_names:
+            continue
+        if int(param.data_ptr()) in rebound_ptrs:
+            continue
+        unresolved_after_tie.append(name)
+
+    if require_full and unresolved_after_tie:
+        raise RuntimeError(f"unresolved parameters not rebound from IPC: {unresolved_after_tie[:10]}")
+
+    status = "ok"
+    if not require_full and unresolved_after_tie:
+        status = "partial"
+
+    return {
+        "status": status,
+        "rebound_params": rebound_params,
+        "rebound_bytes": rebound_bytes,
+        "fused_params": fused_params,
+        "unresolved": len(unresolved_after_tie),
+    }
 
 
 def build_runtime_dir(model_root: Path) -> Path:
@@ -141,6 +410,19 @@ def build_runtime_dir(model_root: Path) -> Path:
     return runtime_dir
 
 
+OCI2GDS_BIND_STATS = {
+    "status": "skipped",
+    "rebound_params": 0,
+    "rebound_bytes": 0,
+    "fused_params": 0,
+    "unresolved": 0,
+}
+OCI2GDS_NATIVE_MODULE = None
+OCI2GDS_PARITY_MODE = "probe"
+OCI2GDS_TENSOR_MAP = []
+OCI2GDS_DEVICE_INDEX = 0
+
+
 def register_oci2gds_loader():
     if getattr(register_oci2gds_loader, "_done", False):
         return
@@ -156,6 +438,14 @@ def register_oci2gds_loader():
             super().__init__(load_config)
             extra = dict(load_config.model_loader_extra_config or {})
             self._resolved_path = str(extra.get("resolved_model_path", "")).strip()
+            self._parity_mode = str(extra.get("oci2gds_parity_mode", OCI2GDS_PARITY_MODE)).strip().lower()
+            self._device_index = int(extra.get("oci2gds_device_index", OCI2GDS_DEVICE_INDEX))
+            self._bind_stats_path = str(extra.get("oci2gds_bind_stats_path", "")).strip()
+            tensor_map_path = str(extra.get("oci2gds_tensor_map_path", "")).strip()
+            if tensor_map_path:
+                self._tensor_map = json.loads(Path(tensor_map_path).read_text(encoding="utf-8"))
+            else:
+                self._tensor_map = list(extra.get("oci2gds_tensor_map", OCI2GDS_TENSOR_MAP) or [])
             self._delegate_format = str(extra.get("delegate_load_format", "safetensors")).strip().lower()
             if not self._delegate_format:
                 self._delegate_format = "safetensors"
@@ -222,42 +512,98 @@ def register_oci2gds_loader():
             self._run_with_resolved_model(model_config, lambda: self._delegate.download_model(model_config))
 
         def load_weights(self, model, model_config) -> None:
-            self._run_with_resolved_model(model_config, lambda: self._delegate.load_weights(model, model_config))
+            global OCI2GDS_BIND_STATS
+            global OCI2GDS_NATIVE_MODULE
+
+            parity_mode = str(self._parity_mode).strip().lower()
+            require_full = parity_mode == "full"
+            use_ipc = parity_mode in {"partial", "full"}
+
+            if not use_ipc:
+                self._run_with_resolved_model(model_config, lambda: self._delegate.load_weights(model, model_config))
+                OCI2GDS_BIND_STATS = {
+                    "status": "skipped",
+                    "rebound_params": 0,
+                    "rebound_bytes": 0,
+                    "fused_params": 0,
+                    "unresolved": 0,
+                }
+                return
+
+            if OCI2GDS_NATIVE_MODULE is None:
+                OCI2GDS_NATIVE_MODULE = load_native_module()
+            if not self._tensor_map:
+                raise RuntimeError("parity mode requires non-empty tensor map")
+
+            if not require_full:
+                self._run_with_resolved_model(model_config, lambda: self._delegate.load_weights(model, model_config))
+
+            stats = bind_parameters_from_tensor_map(
+                model=model,
+                tensor_map=self._tensor_map,
+                native_module=OCI2GDS_NATIVE_MODULE,
+                device_index=int(self._device_index),
+                require_full=require_full,
+            )
+            OCI2GDS_BIND_STATS = stats
+            if self._bind_stats_path:
+                Path(self._bind_stats_path).write_text(json.dumps(stats), encoding="utf-8")
 
     register_oci2gds_loader._done = True
 
 
-def run_vllm_infer(model_id: str, model_digest: str, runtime_dir: Path, device_index: int) -> tuple[str, int]:
+def run_vllm_infer(model_id: str, model_digest: str, runtime_dir: Path, device_index: int, parity_mode: str, tensor_map):
+    global OCI2GDS_NATIVE_MODULE
+    global OCI2GDS_PARITY_MODE
+    global OCI2GDS_TENSOR_MAP
+    global OCI2GDS_DEVICE_INDEX
+
     from vllm import LLM, SamplingParams
 
     delegate_load_format = os.environ.get("VLLM_DELEGATE_LOAD_FORMAT", "").strip().lower()
     if not delegate_load_format:
-        # Prefer fastsafetensors only when available in the runtime image.
         delegate_load_format = "fastsafetensors" if find_spec("fastsafetensors") else "safetensors"
+
+    OCI2GDS_PARITY_MODE = str(parity_mode).strip().lower()
+    OCI2GDS_TENSOR_MAP = list(tensor_map)
+    OCI2GDS_DEVICE_INDEX = int(device_index)
 
     register_oci2gds_loader()
     print(
         "VLLM_LOADER_REGISTERED "
-        f"load_format=oci2gds delegate={delegate_load_format} runtime_dir={runtime_dir}"
+        f"load_format=oci2gds delegate={delegate_load_format} runtime_dir={runtime_dir} parity_mode={OCI2GDS_PARITY_MODE}"
     )
 
     prompt = os.environ.get(
         "PROMPT",
-        "Say hello from a vLLM loader plugin that resolves a preloaded OCI model path.",
+        "Say hello from a vLLM loader plugin that consumes daemon-exported IPC tensors.",
     )
     model_ref = f"oci2gds://{model_id}@{model_digest}"
     model_path = str(runtime_dir)
+    bind_stats_path = Path(
+        os.environ.get("OCI2GDS_VLLM_BIND_STATS_PATH", "/tmp/oci2gdsd-vllm-bind-stats.json")
+    )
+    tensor_map_path = Path(
+        os.environ.get("OCI2GDS_VLLM_TENSOR_MAP_PATH", "/tmp/oci2gdsd-vllm-tensor-map.json")
+    )
+    try:
+        bind_stats_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+    tensor_map_path.write_text(json.dumps(OCI2GDS_TENSOR_MAP), encoding="utf-8")
 
     sampling = SamplingParams(max_tokens=64, temperature=0.0)
     llm = LLM(
-        # Keep model as a local directory so Transformers config discovery does not
-        # reject a custom URI scheme before vLLM invokes our loader.
         model=model_path,
         load_format="oci2gds",
         model_loader_extra_config={
             "resolved_model_path": str(runtime_dir),
             "delegate_load_format": delegate_load_format,
             "oci2gds_model_ref": model_ref,
+            "oci2gds_parity_mode": OCI2GDS_PARITY_MODE,
+            "oci2gds_tensor_map_path": str(tensor_map_path),
+            "oci2gds_device_index": OCI2GDS_DEVICE_INDEX,
+            "oci2gds_bind_stats_path": str(bind_stats_path),
         },
         trust_remote_code=True,
         tensor_parallel_size=1,
@@ -276,13 +622,21 @@ def run_vllm_infer(model_id: str, model_digest: str, runtime_dir: Path, device_i
 
     answer_sha = hashlib.sha256(answer.encode("utf-8")).hexdigest()
     answer_len = len(answer)
+
+    bind_stats = dict(OCI2GDS_BIND_STATS)
+    if bind_stats_path.exists():
+        try:
+            bind_stats = json.loads(bind_stats_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
     del llm
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.synchronize(device_index)
         torch.cuda.empty_cache()
 
-    return answer_sha, answer_len
+    return answer_sha, answer_len, bind_stats
 
 
 def main():
@@ -295,6 +649,10 @@ def main():
     device_uuid = resolve_device_uuid(device_index)
     strict_load = parse_bool_env("OCI2GDS_STRICT", True)
     require_direct = parse_bool_env("REQUIRE_DIRECT_GDS", True)
+
+    parity_mode = str(os.environ.get("RUNTIME_PARITY_MODE", "probe")).strip().lower()
+    if parity_mode not in {"off", "probe", "partial", "full"}:
+        raise RuntimeError(f"invalid RUNTIME_PARITY_MODE={parity_mode}; expected off|probe|partial|full")
 
     ready = model_root / "READY"
     metadata_path = model_root / "metadata" / "model.json"
@@ -316,9 +674,18 @@ def main():
     sample_sha = hashlib.sha256(sample).hexdigest()
 
     load_ready = False
+    attached = False
     direct_files = 0
     answer_sha = ""
     answer_len = 0
+    bind_stats = {
+        "status": "skipped",
+        "rebound_params": 0,
+        "rebound_bytes": 0,
+        "fused_params": 0,
+        "unresolved": 0,
+    }
+    attach_client_id = f"{lease_holder}-vllm-{os.getpid()}"
 
     try:
         load_req = {
@@ -359,9 +726,89 @@ def main():
             raise RuntimeError(f"gpu/status returned no files after load: {status_payload}")
         print(f"DAEMON_GPU_STATUS_OK files={len(status_files)}")
 
+        attach_req = {
+            "model_id": model_id,
+            "digest": model_digest,
+            "device_uuid": device_uuid,
+            "client_id": attach_client_id,
+            "ttl_seconds": 300,
+        }
+        attach_code, attach_payload = unix_http_json(socket_path, "POST", "/v1/gpu/attach", attach_req, timeout_seconds=120)
+        assert_http_ok(attach_code, attach_payload, "gpu/attach")
+        attached = True
+        print(
+            "DAEMON_GPU_ATTACH_OK "
+            f"client_id={attach_client_id} "
+            f"attached_files={attach_payload.get('attached_files', 0)} "
+            f"expires_at={attach_payload.get('expires_at', '')}"
+        )
+
+        hb_req = {
+            "model_id": model_id,
+            "digest": model_digest,
+            "device_uuid": device_uuid,
+            "client_id": attach_client_id,
+            "ttl_seconds": 300,
+        }
+        hb_code, hb_payload = unix_http_json(socket_path, "POST", "/v1/gpu/heartbeat", hb_req, timeout_seconds=60)
+        assert_http_ok(hb_code, hb_payload, "gpu/heartbeat")
+        print(f"DAEMON_GPU_HEARTBEAT_OK expires_at={hb_payload.get('expires_at', '')}")
+
+        tensor_req = {
+            "model_id": model_id,
+            "digest": model_digest,
+            "device_uuid": device_uuid,
+            "max_shards": 0,
+            "max_tensors": int(os.environ.get("MAX_TENSOR_MAP_TENSORS", "0")),
+            "include_handles": True,
+        }
+        tensor_code, tensor_payload = unix_http_json(socket_path, "POST", "/v1/gpu/tensor-map", tensor_req, timeout_seconds=300)
+        assert_http_ok(tensor_code, tensor_payload, "gpu/tensor-map")
+        tensors = tensor_payload.get("tensors", []) if isinstance(tensor_payload, dict) else []
+        if not tensors:
+            raise RuntimeError(f"gpu/tensor-map returned no tensors: {tensor_payload}")
+        tensor_bytes = sum(int(t.get("byte_length", 0)) for t in tensors)
+        print(f"VLLM_IPC_TENSOR_MAP_OK tensors={len(tensors)} tensor_bytes={tensor_bytes}")
+
         runtime_dir = build_runtime_dir(model_root)
-        answer_sha, answer_len = run_vllm_infer(model_id, model_digest, runtime_dir, device_index)
+        answer_sha, answer_len, bind_stats = run_vllm_infer(
+            model_id=model_id,
+            model_digest=model_digest,
+            runtime_dir=runtime_dir,
+            device_index=device_index,
+            parity_mode=parity_mode,
+            tensor_map=tensors,
+        )
+
+        print(
+            "VLLM_IPC_BIND_OK "
+            f"status={bind_stats.get('status', 'unknown')} "
+            f"rebound_params={bind_stats.get('rebound_params', 0)} "
+            f"rebound_bytes={bind_stats.get('rebound_bytes', 0)} "
+            f"fused_params={bind_stats.get('fused_params', 0)} "
+            f"unresolved={bind_stats.get('unresolved', 0)} "
+            f"parity_mode={parity_mode}"
+        )
+        if parity_mode == "full":
+            if bind_stats.get("status") != "ok":
+                raise RuntimeError(f"full parity mode requires status=ok; got {bind_stats}")
+            if int(bind_stats.get("rebound_params", 0)) <= 0:
+                raise RuntimeError("full parity mode requires rebound_params > 0")
+            if int(bind_stats.get("unresolved", 0)) != 0:
+                raise RuntimeError(f"full parity mode requires unresolved=0; got {bind_stats}")
+
         print(f"VLLM_QWEN_INFER_OK answer_sha256={answer_sha} answer_len={answer_len}")
+
+        detach_req = {
+            "model_id": model_id,
+            "digest": model_digest,
+            "device_uuid": device_uuid,
+            "client_id": attach_client_id,
+        }
+        detach_code, detach_payload = unix_http_json(socket_path, "POST", "/v1/gpu/detach", detach_req, timeout_seconds=120)
+        assert_http_ok(detach_code, detach_payload, "gpu/detach")
+        attached = False
+        print(f"DAEMON_GPU_DETACH_OK detached_files={detach_payload.get('detached_files', 0)}")
 
         unload_req = {
             "model_id": model_id,
@@ -391,6 +838,26 @@ def main():
         if still_loaded:
             raise RuntimeError(f"model paths still loaded after unload: {still_loaded}")
     finally:
+        if attached:
+            detach_req = {
+                "model_id": model_id,
+                "digest": model_digest,
+                "device_uuid": device_uuid,
+                "client_id": attach_client_id,
+            }
+            try:
+                detach_code, detach_payload = unix_http_json(
+                    socket_path,
+                    "POST",
+                    "/v1/gpu/detach",
+                    detach_req,
+                    timeout_seconds=120,
+                )
+                assert_http_ok(detach_code, detach_payload, "gpu/detach(finalizer)")
+                print(f"DAEMON_GPU_DETACH_OK detached_files={detach_payload.get('detached_files', 0)} finalizer=true")
+            except Exception as exc:
+                print(f"DAEMON_GPU_DETACH_WARN error={exc}")
+
         if load_ready:
             unload_req = {
                 "model_id": model_id,
@@ -422,6 +889,10 @@ def main():
         f"direct_files={direct_files} "
         f"answer_sha256={answer_sha} "
         f"answer_len={answer_len} "
+        f"parity_mode={parity_mode} "
+        f"rebound_params={bind_stats.get('rebound_params', 0)} "
+        f"rebound_bytes={bind_stats.get('rebound_bytes', 0)} "
+        f"fused_params={bind_stats.get('fused_params', 0)} "
         f"cuda_device={cuda_name}"
     )
 
