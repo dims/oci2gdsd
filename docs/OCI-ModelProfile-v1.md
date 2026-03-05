@@ -153,7 +153,7 @@ oras resolve registry.example.com/models/qwen3-0.6b:v1
 # sha256:abcdef1234...
 ```
 
-See [packaging/qwen3-oci-modelprofile-v1/README.md](../packaging/qwen3-oci-modelprofile-v1/README.md)
+See [models/packaging/qwen3-oci-modelprofile-v1/README.md](../models/packaging/qwen3-oci-modelprofile-v1/README.md)
 for the full Hugging Face → OCI packaging workflow.
 
 ---

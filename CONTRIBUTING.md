@@ -18,7 +18,7 @@ go test ./...
 ```
 
 All unit tests pass without a GPU or a running registry. The integration harnesses
-(`testharness/`) require real hardware — see their READMEs.
+(`platform/`) require real hardware — see their READMEs.
 
 ---
 
@@ -76,10 +76,16 @@ internal/
   daemon/              # Unix socket daemon server
   fsutil/              # Filesystem utilities (symlink-safe path ops)
   apperr/              # Structured error types with exit codes
-docs/                  # All user-facing documentation
-examples/              # Example configs and Kubernetes manifests
-packaging/             # Reproducible model packaging workflow (Qwen3)
-testharness/           # Integration test harnesses (requires GPU hardware)
+docs/                          # All user-facing documentation
+models/
+  packaging/                   # Reproducible model packaging workflow (Qwen3)
+  profiles/                    # Example config/profile payloads
+platform/
+  local/e2e/                   # Local CLI integration harness (no GPU required)
+  host/e2e/                    # Host direct-GDS integration harness
+  k3s/e2e/                     # k3s integration harness
+  k3s/examples/                # Kubernetes example manifests/workloads
+  k3s/deploy/charts/           # Helm chart for daemonset deployment
 ```
 
 ---
@@ -125,7 +131,7 @@ Before changing core behavior, understand these constraints:
    - `active` — read and used
    - `validation-only` — checked but not used at runtime
    - `reserved` — accepted but currently no-op
-5. Add a `# RESERVED: not yet implemented` comment in `examples/config/oci2gdsd.yaml`.
+5. Add a `# RESERVED: not yet implemented` comment in `models/profiles/oci2gdsd.yaml`.
 
 ---
 

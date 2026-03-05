@@ -33,7 +33,7 @@ install:
 clean:
 	@echo "==> Removing local artifacts..."
 	@rm -f ./oci2gdsd
-	@rm -rf ./testharness/local-e2e/work ./testharness/k3s-e2e/work ./testharness/host-e2e/work
+	@rm -rf ./platform/local/e2e/work ./platform/k3s/e2e/work ./platform/host/e2e/work
 	@find . -type d \( -name '__pycache__' -o -name '.pytest_cache' -o -name '.mypy_cache' \) -prune -exec rm -rf {} +
 	@find . -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
 	@echo "==> Done"
@@ -61,48 +61,48 @@ demo-local-registry: build
 
 .PHONY: prereq-local
 prereq-local:
-	./testharness/local-e2e/scripts/prereq-check.sh
+	./platform/local/e2e/scripts/prereq-check.sh
 
 .PHONY: verify-local
 verify-local: prereq-local
-	./testharness/local-e2e/scripts/run.sh
-	./testharness/local-e2e/scripts/negative-tests.sh
+	./platform/local/e2e/scripts/run.sh
+	./platform/local/e2e/scripts/negative-tests.sh
 
 .PHONY: prereq-host-gds
 prereq-host-gds: prereq-local
-	./testharness/host-e2e/scripts/prereq-check.sh
+	./platform/host/e2e/scripts/prereq-check.sh
 
 .PHONY: prereq-k3s
 prereq-k3s: prereq-host-gds
-	./testharness/k3s-e2e/scripts/prereq-check.sh
+	./platform/k3s/e2e/scripts/prereq-check.sh
 
 .PHONY: prereq-all
 prereq-all: prereq-local prereq-host-gds prereq-k3s
 
 .PHONY: verify-host-qwen-smoke
 verify-host-qwen-smoke: prereq-host-gds
-	./testharness/host-e2e/scripts/quick-qwen.sh
+	./platform/host/e2e/scripts/quick-qwen.sh
 
 .PHONY: verify-k3s-qwen-smoke
 verify-k3s-qwen-smoke: prereq-k3s
-	./testharness/k3s-e2e/scripts/quick-qwen.sh
+	./platform/k3s/e2e/scripts/quick-qwen.sh
 
 .PHONY: verify-k3s-qwen-e2e-inline
 verify-k3s-qwen-e2e-inline: prereq-k3s
-	./testharness/k3s-e2e/scripts/run.sh
+	./platform/k3s/e2e/scripts/run.sh
 
 .PHONY: verify-k3s-qwen-e2e-daemonset
 verify-k3s-qwen-e2e-daemonset: prereq-k3s
-	E2E_DEPLOY_MODE=daemonset-manifest ./testharness/k3s-e2e/scripts/run.sh
+	E2E_DEPLOY_MODE=daemonset-manifest ./platform/k3s/e2e/scripts/run.sh
 
 .PHONY: verify-k3s-tensor-e2e-daemonset
 verify-k3s-tensor-e2e-daemonset: prereq-k3s
-	E2E_DEPLOY_MODE=daemonset-manifest WORKLOAD_RUNTIME=tensorrt ./testharness/k3s-e2e/scripts/run.sh
+	E2E_DEPLOY_MODE=daemonset-manifest WORKLOAD_RUNTIME=tensorrt ./platform/k3s/e2e/scripts/run.sh
 
 .PHONY: verify-k3s-vllm-e2e-daemonset
 verify-k3s-vllm-e2e-daemonset: prereq-k3s
-	E2E_DEPLOY_MODE=daemonset-manifest WORKLOAD_RUNTIME=vllm ./testharness/k3s-e2e/scripts/run.sh
+	E2E_DEPLOY_MODE=daemonset-manifest WORKLOAD_RUNTIME=vllm ./platform/k3s/e2e/scripts/run.sh
 
 .PHONY: clean-k3s
 clean-k3s:
-	./testharness/k3s-e2e/scripts/cleanup.sh
+	./platform/k3s/e2e/scripts/cleanup.sh

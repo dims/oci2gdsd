@@ -191,7 +191,7 @@ Notes:
 - GPU Operator auto-install in the harness is chart-version pinned by default (`GPU_OPERATOR_CHART_VERSION=v25.10.1`) for reproducibility.
 - Override the chart version explicitly if your environment requires a different release.
 
-See **[testharness/k3s-e2e/README.md](testharness/k3s-e2e/README.md)** for overrides and expected outputs.
+See **[platform/k3s/e2e/README.md](platform/k3s/e2e/README.md)** for overrides and expected outputs.
 
 ---
 
@@ -219,7 +219,7 @@ oci2gdsd gpu load \
 ```
 
 Host qualification runbook: **[docs/direct-gds-recreate-runbook.md](docs/direct-gds-recreate-runbook.md)**
-Host-only GDS probe: **[testharness/host-e2e/README.md](testharness/host-e2e/README.md)**
+Host-only GDS probe: **[platform/host/e2e/README.md](platform/host/e2e/README.md)**
 
 GPU load contract in this repo:
 
@@ -235,7 +235,7 @@ GPU load contract in this repo:
 To push an existing model (e.g. Qwen3 from Hugging Face) as an OCI artifact:
 
 ```bash
-cd packaging/qwen3-oci-modelprofile-v1
+cd models/packaging/qwen3-oci-modelprofile-v1
 # Build the packager image and run it with your HF token
 docker build -t oci2gdsd-packager .
 docker run --rm \
@@ -244,7 +244,7 @@ docker run --rm \
   oci2gdsd-packager
 ```
 
-See **[packaging/qwen3-oci-modelprofile-v1/README.md](packaging/qwen3-oci-modelprofile-v1/README.md)**
+See **[models/packaging/qwen3-oci-modelprofile-v1/README.md](models/packaging/qwen3-oci-modelprofile-v1/README.md)**
 for the full workflow and how to get the immutable digest for `oci2gdsd ensure --ref`.
 
 ---
@@ -283,9 +283,9 @@ metrics/event exporters. See **[docs/IMPLEMENTATION-NOTES.md](docs/IMPLEMENTATIO
 | [docs/daemonset-manifest-guide.md](docs/daemonset-manifest-guide.md) | Operators — raw daemonset deployment flow |
 | [docs/helm-daemon-chart.md](docs/helm-daemon-chart.md) | Operators — helm deployment of node daemon |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contributors — dev setup, tests, PR guide |
-| [testharness/local-e2e/README.md](testharness/local-e2e/README.md) | New users — automated local lifecycle e2e |
-| [testharness/k3s-e2e/README.md](testharness/k3s-e2e/README.md) | GPU infra — Kubernetes e2e harness |
-| [testharness/host-e2e/README.md](testharness/host-e2e/README.md) | GPU infra — host-only GDS probe |
-| [examples/README.md](examples/README.md) | Everyone — examples map and entry points |
-| [examples/k3s/qwen-hello/README.md](examples/k3s/qwen-hello/README.md) | GPU infra — full Kubernetes example |
-| [examples/k3s/daemonset/README.md](examples/k3s/daemonset/README.md) | GPU infra — daemonset + daemon-client example assets |
+| [platform/local/e2e/README.md](platform/local/e2e/README.md) | New users — automated local lifecycle e2e |
+| [platform/k3s/e2e/README.md](platform/k3s/e2e/README.md) | GPU infra — Kubernetes e2e harness |
+| [platform/host/e2e/README.md](platform/host/e2e/README.md) | GPU infra — host-only GDS probe |
+| [platform/k3s/examples/README.md](platform/k3s/examples/README.md) | Everyone — examples map and entry points |
+| [platform/k3s/examples/qwen-hello/README.md](platform/k3s/examples/qwen-hello/README.md) | GPU infra — full Kubernetes example |
+| [platform/k3s/examples/daemonset/README.md](platform/k3s/examples/daemonset/README.md) | GPU infra — daemonset + daemon-client example assets |

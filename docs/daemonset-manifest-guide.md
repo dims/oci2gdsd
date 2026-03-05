@@ -5,13 +5,13 @@ as a node-level daemon and validating GPU load/export lifecycle from a workload 
 
 ## Files
 
-- `examples/k3s/daemonset/oci2gdsd-daemonset.yaml.tpl`
-- `examples/k3s/daemonset/pytorch-daemon-client-job.yaml.tpl`
-- `examples/k3s/daemonset/pytorch_daemon_client.py`
-- `examples/k3s/daemonset/tensorrt-daemon-client-job.yaml.tpl`
-- `examples/k3s/daemonset/tensorrt_daemon_client.py`
-- `examples/k3s/daemonset/vllm-daemon-client-job.yaml.tpl`
-- `examples/k3s/daemonset/vllm_daemon_client.py`
+- `platform/k3s/examples/daemonset/oci2gdsd-daemonset.yaml.tpl`
+- `platform/k3s/examples/daemonset/pytorch-daemon-client-job.yaml.tpl`
+- `platform/k3s/examples/daemonset/pytorch_daemon_client.py`
+- `platform/k3s/examples/daemonset/tensorrt-daemon-client-job.yaml.tpl`
+- `platform/k3s/examples/daemonset/tensorrt_daemon_client.py`
+- `platform/k3s/examples/daemonset/vllm-daemon-client-job.yaml.tpl`
+- `platform/k3s/examples/daemonset/vllm_daemon_client.py`
 
 ## What this mode does
 
@@ -71,7 +71,7 @@ E2E_DEPLOY_MODE=daemonset-manifest make verify-k3s-qwen-e2e-inline
 
 ## Success markers
 
-The daemon-client workload log (`testharness/k3s-e2e/work/results/pytorch-daemon-client.log`) must include:
+The daemon-client workload log (`platform/k3s/e2e/work/results/pytorch-daemon-client.log`) must include:
 
 - `DAEMON_GPU_LOAD_READY`
 - `DAEMON_GPU_EXPORT_OK`
@@ -83,7 +83,7 @@ The daemon-client workload log (`testharness/k3s-e2e/work/results/pytorch-daemon
 - `DAEMON_GPU_UNLOAD_OK`
 - `PYTORCH_DAEMON_CLIENT_SUCCESS`
 
-TensorRT daemon-client log (`testharness/k3s-e2e/work/results/tensorrt-daemon-client.log`) must include:
+TensorRT daemon-client log (`platform/k3s/e2e/work/results/tensorrt-daemon-client.log`) must include:
 
 - `DAEMON_GPU_LOAD_READY`
 - `DAEMON_GPU_STATUS_OK`
@@ -93,7 +93,7 @@ TensorRT daemon-client log (`testharness/k3s-e2e/work/results/tensorrt-daemon-cl
 - `DAEMON_GPU_UNLOAD_OK`
 - `TENSORRT_DAEMON_CLIENT_SUCCESS`
 
-vLLM daemon-client log (`testharness/k3s-e2e/work/results/vllm-daemon-client.log`) must include:
+vLLM daemon-client log (`platform/k3s/e2e/work/results/vllm-daemon-client.log`) must include:
 
 - `DAEMON_GPU_LOAD_READY`
 - `DAEMON_GPU_STATUS_OK`
