@@ -60,6 +60,19 @@ Daemon deployment docs:
 - Helm chart: [docs/helm-daemon-chart.md](docs/helm-daemon-chart.md)
 - Harness/runtime knobs: [platform/k3s/README.md](platform/k3s/README.md)
 
+## Runtime Support (Kubernetes DaemonSet Path)
+
+The k3s daemonset integration currently supports all three runtime tracks:
+
+- PyTorch (`WORKLOAD_RUNTIME=pytorch`, default): `make verify-k3s-daemonset`
+- TensorRT-LLM (`WORKLOAD_RUNTIME=tensorrt`): `make verify-k3s-tensor-e2e-daemonset`
+- vLLM (`WORKLOAD_RUNTIME=vllm`): `make verify-k3s-vllm-e2e-daemonset`
+
+Convenience aggregate targets:
+
+- `make verify-k3s-daemonset-all` (PyTorch + TensorRT-LLM + vLLM)
+- `make verify-k3s-daemonset-parity-all` (TensorRT-LLM + vLLM parity-focused checks)
+
 ## System Model
 
 `oci2gdsd` has two operating styles:
@@ -166,6 +179,12 @@ For direct-GDS qualification and remediation, use:
 - [docs/direct-gds-runbook.md](docs/direct-gds-runbook.md)
 - [docs/troubleshooting.md](docs/troubleshooting.md)
 - [platform/host/README.md](platform/host/README.md)
+
+Official NVIDIA GPUDirect Storage references:
+
+- [GDS Overview Guide](https://docs.nvidia.com/gpudirect-storage/overview-guide/index.html)
+- [GDS Troubleshooting Guide](https://docs.nvidia.com/gpudirect-storage/troubleshooting-guide/index.html)
+- [GDS Release Notes](https://docs.nvidia.com/gpudirect-storage/release-notes/index.html)
 
 Key point: this repo is biased toward strict direct-GDS validation for GPU flows. If host/provider capability is insufficient, verification targets should fail fast rather than silently accept compat-only paths.
 

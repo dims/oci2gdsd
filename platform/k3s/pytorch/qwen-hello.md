@@ -68,7 +68,7 @@ To run qwen-hello validation specifically (enabled by default):
 VALIDATE_QWEN_HELLO=true make verify-k3s
 ```
 
-Harness docs: [`platform/k3s/README.md`](../../README.md)
+Harness docs: [`platform/k3s/README.md`](../README.md)
 
 ## Manual Walkthrough
 

@@ -83,10 +83,16 @@ models/
 charts/                        # Helm charts
   oci2gdsd-daemon/             # Daemonset chart
 platform/
-  local/e2e/                   # Local CLI integration harness (no GPU required)
-  host/e2e/                    # Host direct-GDS integration harness
-  k3s/e2e/                     # k3s integration harness
-  k3s/workloads/               # Kubernetes workload manifests/scripts
+  local/                       # Local CLI integration harness (no GPU required)
+    scripts/
+  host/                        # Host direct-GDS integration harness
+    scripts/
+  k3s/                         # k3s integration harness + runtime assets
+    scripts/
+    shared/
+    pytorch/
+    tensorrt/
+    vllm/
 ```
 
 ---

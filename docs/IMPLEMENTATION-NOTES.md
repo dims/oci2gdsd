@@ -37,7 +37,7 @@
 
 ## Not Yet Implemented
 
-- Per-blob parallel chunked range download engine from Section 37.
+- Per-blob parallel chunked range download engine.
 - Signature verification backend integration (strict signature toggle is present, verifier integration is pending).
 - Metrics/event exporter endpoints.
 - Full mirror failover policy with per-host telemetry and reason-class counters.

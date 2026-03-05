@@ -13,6 +13,12 @@ Policy:
 - re-test after each step
 - timebox per host/provider (max 30 minutes)
 
+Authoritative GPUDirect Storage references:
+
+- [NVIDIA GDS Overview Guide](https://docs.nvidia.com/gpudirect-storage/overview-guide/index.html)
+- [NVIDIA GDS Troubleshooting Guide](https://docs.nvidia.com/gpudirect-storage/troubleshooting-guide/index.html)
+- [NVIDIA GDS Release Notes](https://docs.nvidia.com/gpudirect-storage/release-notes/index.html)
+
 ---
 
 ## 1) Success Criteria (Strict)
@@ -206,7 +212,7 @@ Run in order:
 1. `make verify-unit`
 2. `make verify-local`
 3. `make verify-smoke`
-4. `make verify-k3s-qwen-e2e-daemonset`
+4. `make verify-k3s-daemonset`
 5. `make verify-k3s-tensor-e2e-daemonset`
 6. `make verify-k3s-vllm-e2e-daemonset`
 7. `make verify-k3s-daemonset-all`
@@ -282,4 +288,3 @@ sudo cat /proc/driver/nvidia-fs/modules || true
 sudo cat /proc/driver/nvidia-fs/devices || true
 sudo cat /proc/driver/nvidia-fs/stats || true
 ```
-
