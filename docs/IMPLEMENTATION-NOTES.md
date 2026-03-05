@@ -50,4 +50,4 @@
 
 ## Operational Runbooks
 
-- Direct GDS recreate runbook: [direct-gds-recreate-runbook.md](direct-gds-recreate-runbook.md)
+- Direct GDS environment bring-up runbook: [direct-gds-runbook.md](direct-gds-runbook.md)

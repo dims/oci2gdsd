@@ -12,7 +12,7 @@ This guide is for failures we repeatedly observed while running:
 
 Use it together with:
 
-- [docs/direct-gds-recreate-runbook.md](direct-gds-recreate-runbook.md)
+- [docs/direct-gds-runbook.md](direct-gds-runbook.md)
 - [platform/k3s/README.md](../platform/k3s/README.md)
 - [platform/host/README.md](../platform/host/README.md)
 

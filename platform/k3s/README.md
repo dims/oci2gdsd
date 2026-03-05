@@ -3,7 +3,7 @@
 This harness targets host-native `k3s` (works on Brev GPU instances), preloads an OCI model with `oci2gdsd` in an init container, runs a GPU-backed workload (PyTorch, TensorRT-LLM, or vLLM daemon-client mode), and validates model lifecycle transitions (`READY` -> `RELEASED`).
 It is designed to run directly by an operator on a machine and does not require GitHub Actions.
 
-For host/provider qualification and strict direct-GDS recreate steps, see [`docs/direct-gds-recreate-runbook.md`](../../docs/direct-gds-recreate-runbook.md).
+For host/provider qualification and strict direct-GDS environment bring-up steps, see [`docs/direct-gds-runbook.md`](../../docs/direct-gds-runbook.md).
 For host-only strict direct-GDS validation (without Kubernetes), see [`platform/host/README.md`](../host/README.md).
 
 ## What it validates
@@ -58,6 +58,7 @@ Raw-manifest DaemonSet path (no Helm):
 ```bash
 make verify-k3s-daemonset
 make verify-k3s-daemonset-all
+make verify-k3s-daemonset-parity-all
 ```
 
 `make prereq-k3s` validates cluster/runtime/image prerequisites and auto-installs host packages by default (`INSTALL_MISSING_PREREQS=true`) after running stages 0 and 1.
@@ -225,6 +226,11 @@ make verify-k3s-tensor-e2e-daemonset
 # Run full e2e in raw-manifest daemonset mode with vLLM plugin workload
 make verify-k3s-vllm-e2e-daemonset
 
+# Run parity-focused daemonset checks (runtime-specific strict IPC tensor-map gates)
+make verify-k3s-tensor-e2e-daemonset-parity
+make verify-k3s-vllm-e2e-daemonset-parity
+make verify-k3s-daemonset-parity-all
+
 # Equivalent via explicit mode toggle
 E2E_DEPLOY_MODE=daemonset-manifest make verify-k3s
 
@@ -249,6 +255,10 @@ PRELOAD_VLLM_RUNTIME_IMAGE=true make verify-k3s-vllm-e2e-daemonset
 # Optional: require daemon IPC probe to report status=ok
 # (default: true when OCI2GDSD_ENABLE_GDS_IMAGE=true, otherwise false)
 REQUIRE_DAEMON_IPC_PROBE=true make verify-k3s
+
+# Runtime parity strictness for TensorRT/vLLM daemon-client modes
+RUNTIME_PARITY_MODE=probe make verify-k3s-vllm-e2e-daemonset
+RUNTIME_PARITY_MODE=full REQUIRE_FULL_IPC_BIND=true make verify-k3s-vllm-e2e-daemonset
 
 # Default behavior is fail-fast GDS mode:
 # - REQUIRE_DIRECT_GDS=true

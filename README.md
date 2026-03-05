@@ -1,233 +1,192 @@
 # oci2gdsd
 
-`oci2gdsd` downloads AI model artifacts from OCI registries to a local cache with
-strict integrity guarantees and atomic write semantics — so the model your pod starts
-with is provably identical to what was pushed, every time.
+`oci2gdsd` is a model delivery daemon/CLI for OCI-packaged model artifacts with strict integrity, atomic publish semantics, and GPU-aware preload flows.
 
-Think of it as a deterministic, GPU-aware alternative to "just download the weights at
-startup." It handles retries, digest verification, concurrency locks, lease tracking, and
-garbage collection so your serving code doesn't have to.
+It gives you a deterministic lifecycle for model bytes:
 
-## Who this is for
+- pull by immutable digest (not floating tags)
+- verify bytes against OCI metadata
+- publish atomically behind a `READY` contract
+- track leases so GC cannot evict in-use models
+- preload to GPU memory through strict GDS-oriented paths
 
-- **ML platform / GPU infrastructure teams** deploying large models on Kubernetes
-- **Anyone who wants reproducible, auditable model artifacts** (digest-pinned, not `:latest`)
-- **Contributors** curious about the internals — no GPU required to run tests or try the core CLI
+## What this repo is for
 
----
+- Platform teams running GPU workloads on Kubernetes.
+- Teams that need reproducible, auditable model delivery from OCI registries.
+- Contributors who want to work on model lifecycle and GPU preload infrastructure.
 
-## Prerequisites
+## Start Here
 
-| Requirement | Version | Notes |
-|-------------|---------|-------|
-| Go | 1.23+ | Required for `make verify-unit`, local source builds, and `make verify-local` when binary is not prebuilt |
-| `make` | any recent | Used by all top-level test/e2e targets |
-| C/C++ toolchain (`c++`, headers) | any recent | Needed for native probe/extension builds in qwen host/k3s e2e paths |
-| Docker or Podman | any recent | For local registry and packaging workflows |
-| `oras` CLI | v1.2+ | For pushing OCI artifacts; see [oras.land](https://oras.land) |
-| Linux host with A100 + NVMe | — | **Only for GPU/GDS workflows** (see [GPU section](#gpu--gds-acceleration)) |
+Choose the path that matches your environment.
 
-No GPU is needed to run `ensure`, `status`, `verify`, `release`, `gc`, or `profile` commands.
-
----
-
-## Concepts
-
-| Term | What it means |
-|------|--------------|
-| **Digest-pinned ref** | A registry reference like `registry/models/qwen3@sha256:abc...` — immutable, no floating tags |
-| **OCI-ModelProfile-v1** | A JSON metadata blob pushed alongside model weights that describes shards, digests, sizes, and load hints |
-| **READY marker** | A sentinel file written last during publish; consumers must see it before reading shards |
-| **Lease holder** | An identifier (e.g. pod name) that "holds" a model so GC won't delete it while it's in use |
-| **GDS / cuFile** | NVIDIA GPU Direct Storage — loads model weights from NVMe directly into VRAM, bypassing CPU |
-| **ORAS** | OCI Registry As Storage — the library used to push/pull arbitrary artifacts to any OCI registry |
-
----
-
-## Try it locally (no GPU needed)
-
-See **[docs/getting-started.md](docs/getting-started.md)** for a self-contained walkthrough:
-build the binary, spin up a local registry, push a tiny test artifact, and run the full
-`ensure → status → verify → release → gc` lifecycle in under 10 minutes.
-
-For an automated version of that lifecycle:
+### 1) No GPU, no Kubernetes (core lifecycle)
 
 ```bash
 make verify-local
 ```
 
-This now includes:
-- positive lifecycle checks
-- idempotency + concurrency checks
-- negative/failure-path assertions
+This validates `ensure -> status -> verify -> release -> gc` plus negative tests.
 
----
+Guide: [docs/getting-started.md](docs/getting-started.md)
 
-## Install / Build
+### 2) A100 host, strict GDS smoke
 
 ```bash
-# Standard build (no GPU support)
-git clone https://github.com/dims/oci2gdsd
-cd oci2gdsd
-go build ./cmd/oci2gdsd
+make prereq
+make verify-smoke
+```
 
-# Install to $GOPATH/bin
+This runs local, host-GDS, and k3s smoke gates in order.
+
+Guide: [docs/quickstart-a100.md](docs/quickstart-a100.md)
+
+### 3) Kubernetes DaemonSet end-to-end
+
+```bash
+# PyTorch/qwen daemonset path
+make verify-k3s-daemonset
+
+# Daemonset matrix (qwen + TensorRT-LLM + vLLM)
+make verify-k3s-daemonset-all
+
+# Runtime parity-focused daemonset checks (TensorRT-LLM + vLLM)
+make verify-k3s-daemonset-parity-all
+```
+
+Daemon deployment docs:
+
+- Raw manifests: [docs/daemonset-manifest-guide.md](docs/daemonset-manifest-guide.md)
+- Helm chart: [docs/helm-daemon-chart.md](docs/helm-daemon-chart.md)
+- Harness/runtime knobs: [platform/k3s/README.md](platform/k3s/README.md)
+
+## System Model
+
+`oci2gdsd` has two operating styles:
+
+1. Standalone CLI lifecycle (`ensure`, `verify`, `gc`, `gpu load --mode benchmark`).
+2. Daemon mode (`serve`) where workloads call a Unix-socket API for persistent GPU allocations and IPC handoff metadata.
+
+Core guarantees:
+
+- Digest-pinned OCI refs required for reliable identity.
+- Transaction journal + atomic publish + `READY` marker as read boundary.
+- Lease-aware model lifecycle and GC policy controls.
+- Crash-safe recovery of staged transactions.
+
+## Prerequisites
+
+| Requirement | Version | Why |
+|---|---|---|
+| Go | 1.23+ | Build and unit tests |
+| `make` | recent | Top-level verify/prereq targets |
+| C/C++ toolchain (`c++`, headers) | recent | Native probe/extension builds in GPU paths |
+| Docker | recent | Local registry flows, image builds, harness assets |
+| `oras` CLI | v1.2+ | OCI artifact push/pull workflows |
+| Linux GPU host + NVMe | required for GDS flows | Strict direct-GDS validation paths |
+
+GPU is not required for core lifecycle commands and local e2e.
+
+## Build and Install
+
+```bash
+# Source build
+cd /path/to/oci2gdsd
+go build -buildvcs=false ./cmd/oci2gdsd
+
+# Install
 make install
 
-# Build with GPU Direct Storage support (Linux + CUDA/cuFile required)
+# Build with GDS support (Linux + CUDA/cuFile toolchain present)
 CGO_ENABLED=1 go build -tags gds ./cmd/oci2gdsd
 ```
 
----
+## CLI Overview
 
-## CLI Commands
+| Command | Purpose |
+|---|---|
+| `ensure` | Pull and publish model bytes from OCI ref, acquire lease |
+| `status` | Read model state record |
+| `list` | List local records |
+| `verify` | Re-check `READY` + shard digests |
+| `release` | Drop lease holder |
+| `gc` | Evict releasable models by policy |
+| `profile lint` | Validate OCI-ModelProfile-v1 config |
+| `profile inspect` | Summarize profile metadata |
+| `gpu devices` | List visible GPUs |
+| `gpu probe` | Validate GDS capability for a GPU |
+| `gpu load` | Benchmark or persistent load path (mode-dependent) |
+| `gpu status` / `gpu unload` | Inspect and release daemon-managed GPU allocations |
+| `serve` | Start daemon Unix socket API |
 
-| Command | Description |
-|---------|-------------|
-| `ensure` | Download and pin a model; acquire a lease so GC won't remove it |
-| `status` | Query the local record for a specific model+digest |
-| `list` | List all locally cached model records |
-| `release` | Remove a lease holder; model becomes eligible for GC when no leases remain |
-| `gc` | Delete releasable (zero-lease) models to free disk space |
-| `verify` | Re-check READY contract and shard digests for a cached model |
-| `profile lint` | Validate an OCI-ModelProfile-v1 metadata blob |
-| `profile inspect` | Print a summary of model id, framework, shards, and total bytes |
-| `gpu devices` | List visible GPUs (UUID + local index) |
-| `gpu probe` | Check whether GPU Direct Storage is available on a specific GPU UUID |
-| `gpu load` | Benchmark shard loading throughput via GDS |
-| `gpu unload` | Release persistent GPU allocations (daemon mode) |
-| `gpu status` | List current persistent GPU allocations (daemon mode) |
-| `serve` | Run a long-lived daemon exposing a Unix socket HTTP API |
+Reference: [docs/cli-reference.md](docs/cli-reference.md)
 
-Full flag documentation: **[docs/cli-reference.md](docs/cli-reference.md)**
-
-### Quick example
+### CLI lifecycle example
 
 ```bash
-# Download and cache a model
 oci2gdsd ensure \
   --ref registry.example.com/models/qwen3-0.6b@sha256:abc123... \
   --model-id qwen3-0.6b \
-  --lease-holder my-pod-1 \
+  --lease-holder pod-a \
   --wait --json
 
-# Check it arrived
 oci2gdsd status --model-id qwen3-0.6b --digest sha256:abc123... --json
 oci2gdsd verify --model-id qwen3-0.6b --digest sha256:abc123... --json
 
-# Clean up when done
-oci2gdsd release --model-id qwen3-0.6b --digest sha256:abc123... --lease-holder my-pod-1
+oci2gdsd release --model-id qwen3-0.6b --digest sha256:abc123... --lease-holder pod-a
 oci2gdsd gc --policy lru_no_lease --min-free-bytes 200G --json
 ```
 
 ### Exit codes
 
 | Code | Meaning |
-|------|---------|
+|---|---|
 | `0` | Success |
 | `2` | Validation failure |
 | `3` | Auth failure |
-| `4` | Registry / network failure |
-| `5` | Integrity failure (digest/size mismatch) |
+| `4` | Registry/network failure |
+| `5` | Integrity failure |
 | `6` | Filesystem failure |
 | `7` | Policy rejection |
 | `8` | State corruption |
 
----
+## Kubernetes Modes
 
-## Local Cache Layout
+There are two test/deployment modes in the k3s harness.
 
-```text
-/var/lib/oci2gdsd/
-  state.db                        # lease and status records
-  locks/                          # per-model file locks
-  tmp/                            # staging area during download
-  journal/                        # transaction markers for crash recovery
-  models/
-    <model-id>/
-      <manifest-digest>/
-        metadata/model.json       # OCI-ModelProfile-v1
-        shards/                   # weight files
-        READY                     # written last; read contract boundary
-```
+1. Inline workload mode (`verify-k3s`): preload and workload flow is driven in the e2e job path.
+2. DaemonSet manifest mode (`verify-k3s-daemonset*`): node-local `oci2gdsd serve` DaemonSet + daemon-client workloads.
 
----
+The DaemonSet mode is the primary integration path for node-local preload lifecycle.
 
-## Kubernetes Quick Start
+## Strict GDS Guidance
 
-Minimal beginner flow on a fresh A100 host:
+For direct-GDS qualification and remediation, use:
 
-```bash
-# Full prereq chain (local -> host -> k3s)
-make prereq
+- [docs/direct-gds-runbook.md](docs/direct-gds-runbook.md)
+- [docs/troubleshooting.md](docs/troubleshooting.md)
+- [platform/host/README.md](platform/host/README.md)
 
-# Unit + local + host smoke + k3s smoke
-make verify-smoke
+Key point: this repo is biased toward strict direct-GDS validation for GPU flows. If host/provider capability is insufficient, verification targets should fail fast rather than silently accept compat-only paths.
 
-# Full inline k3s e2e
-make verify-k3s
+## GPU Load Contract
 
-# Full daemonset qwen e2e
-make verify-k3s-daemonset
+Current contract in this repo:
 
-# Full daemonset matrix (qwen + TensorRT-LLM + vLLM)
-make verify-k3s-daemonset-all
-```
+- `gpu load --mode benchmark` (CLI): throughput probe path; GPU buffers are released before command exit.
+- Daemon API persistent mode (`serve` + `/v1/gpu/load`): daemon owns persistent allocations for process lifetime and can export CUDA IPC metadata.
+- Daemon API lifecycle includes attach/heartbeat/detach endpoints and tensor-map metadata used by runtime integration checks.
 
-Notes:
-- GPU Operator auto-install in the harness is chart-version pinned by default (`GPU_OPERATOR_CHART_VERSION=v25.10.1`) for reproducibility.
-- Override the chart version explicitly if your environment requires a different release.
-- Defaults and override knobs are in `platform/k3s/.env.defaults` and `platform/k3s/.env.example`.
+## Packaging Models as OCI Artifacts
 
-See **[docs/quickstart-a100.md](docs/quickstart-a100.md)** for the full fast-start flow, and **[platform/k3s/README.md](platform/k3s/README.md)** for deep runtime overrides.
+Qwen3 packaging assets are provided here:
 
----
+- [models/qwen3-oci-modelprofile-v1/README.md](models/qwen3-oci-modelprofile-v1/README.md)
 
-## GPU / GDS Acceleration
-
-GPU Direct Storage (GDS) loads model weight files from NVMe directly into GPU memory,
-bypassing the CPU and system RAM. This is optional — the core CLI works without it.
-
-Requirements for GDS:
-- Linux host with NVIDIA A100 (or compatible) GPU
-- Local NVMe storage (`gdscheck -p` must report `NVMe : Supported`)
-- NVIDIA driver + `nvidia-fs` module + GDS userspace tools
-- Build with `-tags gds` (see Install section)
-
-```bash
-# Discover GPU UUIDs and pick one
-oci2gdsd gpu devices --json
-
-# Probe GDS capability on a specific GPU UUID
-oci2gdsd gpu probe --device-uuid GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --json
-
-# Benchmark shard loading throughput
-oci2gdsd gpu load \
-  --model-id qwen3-0.6b \
-  --digest sha256:abc123... \
-  --device-uuid GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee \
-  --mode benchmark --json
-```
-
-Host qualification runbook: **[docs/direct-gds-recreate-runbook.md](docs/direct-gds-recreate-runbook.md)**
-Host-only GDS probe: **[platform/host/README.md](platform/host/README.md)**
-
-GPU load contract in this repo:
-
-- `gpu load --mode benchmark` (standalone CLI): direct-path throughput probe only; VRAM buffers are freed before command exit.
-- `serve` + `/v1/gpu/load` (`mode=persistent`): daemon keeps allocations alive for the daemon process lifetime and can export CUDA IPC handles.
-- Daemon persistent lifecycle now supports explicit client ownership over the Unix socket API: `/v1/gpu/attach`, `/v1/gpu/heartbeat`, `/v1/gpu/detach`.
-- Daemonset PyTorch example remaps model parameter storage to daemon-exported CUDA IPC tensor views before inference.
-
----
-
-## Packaging Models
-
-To push an existing model (e.g. Qwen3 from Hugging Face) as an OCI artifact:
+Typical flow:
 
 ```bash
 cd models/qwen3-oci-modelprofile-v1
-# Build the packager image and run it with your HF token
 docker build -t oci2gdsd-packager .
 docker run --rm \
   -e HF_TOKEN=hf_... \
@@ -235,50 +194,87 @@ docker run --rm \
   oci2gdsd-packager
 ```
 
-See **[models/qwen3-oci-modelprofile-v1/README.md](models/qwen3-oci-modelprofile-v1/README.md)**
-for the full workflow and how to get the immutable digest for `oci2gdsd ensure --ref`.
+## Local Cache Layout
 
----
+```text
+/var/lib/oci2gdsd/
+  state.db
+  locks/
+  tmp/
+  journal/
+  models/
+    <model-id>/
+      <manifest-digest>/
+        metadata/model.json
+        shards/
+        READY
+```
 
-## What works today
+## Make Target Map
 
-- Digest-pinned refs required for `ensure` (no floating tags)
-- ORAS-based registry pull with Docker credential-store support
-- OCI-ModelProfile-v1 parsing, linting, and shard verification
-- Idempotent `ensure` with per-model file locks (safe to call concurrently)
-- Transactional publish: journal markers + `READY` as final read-contract boundary
-- Lease-aware lifecycle: `ensure/status/release/gc`
-- Crash recovery: stale transactions cleaned up at startup
-- JSON output and stable exit codes throughout
-- GPU Direct Storage loader behind `-tags gds`
-- Long-running daemon (`serve`) with Unix socket HTTP API for persistent GPU allocations
+Primary targets:
 
-Not yet implemented: per-blob parallel chunked downloads, signature verification backend,
-metrics/event exporters. See **[docs/IMPLEMENTATION-NOTES.md](docs/IMPLEMENTATION-NOTES.md)**.
+- `make prereq`
+- `make verify-core`
+- `make verify-smoke`
+- `make verify-k3s`
+- `make verify-k3s-daemonset`
+- `make verify-k3s-daemonset-all`
+- `make verify-k3s-daemonset-parity-all`
 
----
+Useful lower-level targets:
 
-## Documentation
+- `make prereq-local`
+- `make prereq-host-gds`
+- `make prereq-k3s`
+- `make verify-host-qwen-smoke`
+- `make verify-k3s-qwen-smoke`
+- `make clean-k3s`
+- `make clean`
 
-| Document | Audience |
-|----------|----------|
-| [docs/quickstart-a100.md](docs/quickstart-a100.md) | New users on GPU hosts — fastest A100 path |
-| [docs/getting-started.md](docs/getting-started.md) | New users — try it without a GPU |
-| [docs/cli-reference.md](docs/cli-reference.md) | All users — full flag and command reference |
-| [docs/config-reference.md](docs/config-reference.md) | Operators — config fields and their status |
-| [docs/OCI-ModelProfile-v1.md](docs/OCI-ModelProfile-v1.md) | Packagers — artifact spec and schema |
-| [docs/design-rationale.md](docs/design-rationale.md) | Contributors — why the design is the way it is |
-| [docs/troubleshooting.md](docs/troubleshooting.md) | Everyone — symptom-based fix guide |
-| [docs/direct-gds-recreate-runbook.md](docs/direct-gds-recreate-runbook.md) | GPU infra — host qualification steps |
-| [docs/IMPLEMENTATION-NOTES.md](docs/IMPLEMENTATION-NOTES.md) | Contributors — what's implemented vs planned |
-| [docs/security-hardening-checklist.md](docs/security-hardening-checklist.md) | Security — controls implemented |
-| [docs/daemonset-manifest-guide.md](docs/daemonset-manifest-guide.md) | Operators — raw daemonset deployment flow |
-| [docs/helm-daemon-chart.md](docs/helm-daemon-chart.md) | Operators — helm deployment of node daemon |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | Contributors — dev setup, tests, PR guide |
-| [platform/local/README.md](platform/local/README.md) | New users — automated local lifecycle e2e |
-| [platform/k3s/README.md](platform/k3s/README.md) | GPU infra — Kubernetes e2e harness |
-| [platform/host/README.md](platform/host/README.md) | GPU infra — host-only GDS probe |
-| [platform/k3s/pytorch/qwen-hello.md](platform/k3s/pytorch/qwen-hello.md) | GPU infra — full Kubernetes example |
-| [platform/k3s/pytorch/README.md](platform/k3s/pytorch/README.md) | GPU infra — PyTorch daemon-client + qwen workload assets |
-| [platform/k3s/tensorrt/README.md](platform/k3s/tensorrt/README.md) | GPU infra — TensorRT-LLM daemon-client workload assets |
-| [platform/k3s/vllm/README.md](platform/k3s/vllm/README.md) | GPU infra — vLLM daemon-client workload assets |
+Run `make help` for the generated list.
+
+## Documentation Index
+
+Core docs:
+
+- [docs/getting-started.md](docs/getting-started.md)
+- [docs/quickstart-a100.md](docs/quickstart-a100.md)
+- [docs/cli-reference.md](docs/cli-reference.md)
+- [docs/config-reference.md](docs/config-reference.md)
+- [docs/OCI-ModelProfile-v1.md](docs/OCI-ModelProfile-v1.md)
+- [docs/design-rationale.md](docs/design-rationale.md)
+- [docs/security-hardening-checklist.md](docs/security-hardening-checklist.md)
+- [docs/IMPLEMENTATION-NOTES.md](docs/IMPLEMENTATION-NOTES.md)
+
+Operational docs:
+
+- [docs/troubleshooting.md](docs/troubleshooting.md)
+- [docs/direct-gds-runbook.md](docs/direct-gds-runbook.md)
+- [docs/daemonset-manifest-guide.md](docs/daemonset-manifest-guide.md)
+- [docs/helm-daemon-chart.md](docs/helm-daemon-chart.md)
+
+Platform/runtime docs:
+
+- [platform/local/README.md](platform/local/README.md)
+- [platform/host/README.md](platform/host/README.md)
+- [platform/k3s/README.md](platform/k3s/README.md)
+- [platform/k3s/pytorch/README.md](platform/k3s/pytorch/README.md)
+- [platform/k3s/pytorch/qwen-hello.md](platform/k3s/pytorch/qwen-hello.md)
+- [platform/k3s/tensorrt/README.md](platform/k3s/tensorrt/README.md)
+- [platform/k3s/vllm/README.md](platform/k3s/vllm/README.md)
+
+Contributor guide:
+
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+
+## Status Snapshot
+
+Implemented and exercised in repo targets:
+
+- Strict, digest-anchored model lifecycle with journaling and crash-safe publish.
+- Lease-aware GC and lifecycle APIs.
+- Daemon mode with GPU allocation lifecycle and runtime integration test paths.
+- k3s harness covering PyTorch, TensorRT-LLM, and vLLM daemon-client scenarios.
+
+Planned/future areas are tracked in implementation notes and planning docs under `docs/` and `~/notes`.
