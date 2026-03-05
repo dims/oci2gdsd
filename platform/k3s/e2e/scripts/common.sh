@@ -1208,7 +1208,7 @@ cluster_image_present() {
 
 build_packager_image() {
   log "building packager image ${PACKAGER_IMAGE}"
-  docker build -t "${PACKAGER_IMAGE}" "${REPO_ROOT}/models/packaging/qwen3-oci-modelprofile-v1"
+  docker build -t "${PACKAGER_IMAGE}" "${REPO_ROOT}/models/qwen3-oci-modelprofile-v1"
 }
 
 render_template() {

@@ -78,14 +78,15 @@ internal/
   apperr/              # Structured error types with exit codes
 docs/                          # All user-facing documentation
 models/
-  packaging/                   # Reproducible model packaging workflow (Qwen3)
+  qwen3-oci-modelprofile-v1/   # Reproducible model packaging workflow (Qwen3)
   profiles/                    # Example config/profile payloads
+charts/                        # Helm charts
+  oci2gdsd-daemon/             # Daemonset chart
 platform/
   local/e2e/                   # Local CLI integration harness (no GPU required)
   host/e2e/                    # Host direct-GDS integration harness
   k3s/e2e/                     # k3s integration harness
-  k3s/examples/                # Kubernetes example manifests/workloads
-  k3s/deploy/charts/           # Helm chart for daemonset deployment
+  k3s/workloads/               # Kubernetes workload manifests/scripts
 ```
 
 ---

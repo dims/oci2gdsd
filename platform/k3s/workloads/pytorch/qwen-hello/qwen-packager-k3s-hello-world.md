@@ -56,7 +56,7 @@ sudo k3s kubectl -n oci-model-registry port-forward svc/oci-model-registry 5000:
 In another terminal:
 
 ```bash
-docker build -t oci2gdsd-qwen3-packager:local models/packaging/qwen3-oci-modelprofile-v1
+docker build -t oci2gdsd-qwen3-packager:local models/qwen3-oci-modelprofile-v1
 
 export WORK_DIR="$(pwd)/work/qwen-packager-k3s-hello"
 mkdir -p "${WORK_DIR}"

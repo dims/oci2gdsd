@@ -235,7 +235,7 @@ GPU load contract in this repo:
 To push an existing model (e.g. Qwen3 from Hugging Face) as an OCI artifact:
 
 ```bash
-cd models/packaging/qwen3-oci-modelprofile-v1
+cd models/qwen3-oci-modelprofile-v1
 # Build the packager image and run it with your HF token
 docker build -t oci2gdsd-packager .
 docker run --rm \
@@ -244,7 +244,7 @@ docker run --rm \
   oci2gdsd-packager
 ```
 
-See **[models/packaging/qwen3-oci-modelprofile-v1/README.md](models/packaging/qwen3-oci-modelprofile-v1/README.md)**
+See **[models/qwen3-oci-modelprofile-v1/README.md](models/qwen3-oci-modelprofile-v1/README.md)**
 for the full workflow and how to get the immutable digest for `oci2gdsd ensure --ref`.
 
 ---

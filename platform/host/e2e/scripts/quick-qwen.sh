@@ -163,7 +163,7 @@ ensure_local_registry_running() {
 
 build_packager_image() {
   log "building packager image ${PACKAGER_IMAGE}"
-  maybe_sudo docker build -t "${PACKAGER_IMAGE}" "${REPO_ROOT}/models/packaging/qwen3-oci-modelprofile-v1"
+  maybe_sudo docker build -t "${PACKAGER_IMAGE}" "${REPO_ROOT}/models/qwen3-oci-modelprofile-v1"
 }
 
 seed_from_packager_to_local_registry() {

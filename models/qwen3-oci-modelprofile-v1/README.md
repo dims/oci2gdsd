@@ -30,7 +30,7 @@ oci2gdsd ensure --ref <registry>/<repo>@sha256:<digest> --model-id <id> --wait -
 1. Build packager image:
 
 ```bash
-cd /path/to/oci2gdsd/models/packaging/qwen3-oci-modelprofile-v1
+cd /path/to/oci2gdsd/models/qwen3-oci-modelprofile-v1
 docker build -t oci2gdsd-qwen3-packager:local .
 ```
 
