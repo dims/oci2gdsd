@@ -8,7 +8,7 @@ This walkthrough packages `Qwen/Qwen3-0.6B` as an OCI artifact and deploys the
 From repo root:
 
 ```bash
-make verify-k3s-qwen-e2e-inline
+make verify-k3s
 ```
 
 That flow already performs packaging, preload, workload validation, and lifecycle checks.

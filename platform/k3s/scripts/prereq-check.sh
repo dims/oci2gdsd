@@ -13,7 +13,7 @@ PREPULL_RUNTIME_IMAGE="${PREPULL_RUNTIME_IMAGE:-true}"
 
 check_runtime_image_toolchain() {
   local image="$1"
-  local probe_log="${WORK_DIR}/results/runtime-image-prereq.log"
+  local probe_log="${RESULTS_DIR}/runtime-image-prereq.log"
   if [[ "${WORKLOAD_RUNTIME}" == "tensorrt" ]]; then
     local probe='set -eu
 command -v python3 >/dev/null || { echo "missing: python3"; exit 41; }
@@ -126,7 +126,7 @@ prereq_stage_k3s_cluster() {
 
 prereq_stage_k3s_runtime() {
   prereq_stage_begin "k3s-runtime"
-  mkdir -p "${WORK_DIR}/results"
+  mkdir -p "${RESULTS_DIR}"
   check_runtime_image_toolchain "${WORKLOAD_RUNTIME_IMAGE}"
   check_privileged_assumptions
   write_environment_report

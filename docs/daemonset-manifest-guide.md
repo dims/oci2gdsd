@@ -40,7 +40,7 @@ For TensorRT-LLM daemon-client mode, the workload:
 ## Harness entrypoint (recommended)
 
 ```bash
-make verify-k3s-qwen-e2e-daemonset
+make verify-k3s-daemonset
 ```
 
 TensorRT-LLM daemon-client run:
@@ -58,7 +58,7 @@ make verify-k3s-vllm-e2e-daemonset
 Equivalent explicit mode toggle:
 
 ```bash
-E2E_DEPLOY_MODE=daemonset-manifest make verify-k3s-qwen-e2e-inline
+E2E_DEPLOY_MODE=daemonset-manifest make verify-k3s
 ```
 
 ## Key environment variables
@@ -71,7 +71,7 @@ E2E_DEPLOY_MODE=daemonset-manifest make verify-k3s-qwen-e2e-inline
 
 ## Success markers
 
-The daemon-client workload log (`platform/k3s/work/results/pytorch-daemon-client.log`) must include:
+The daemon-client workload log (`platform/k3s/work/artifacts/results/pytorch-daemon-client.log`) must include:
 
 - `DAEMON_GPU_LOAD_READY`
 - `DAEMON_GPU_EXPORT_OK`
@@ -83,7 +83,7 @@ The daemon-client workload log (`platform/k3s/work/results/pytorch-daemon-client
 - `DAEMON_GPU_UNLOAD_OK`
 - `PYTORCH_DAEMON_CLIENT_SUCCESS`
 
-TensorRT daemon-client log (`platform/k3s/work/results/tensorrt-daemon-client.log`) must include:
+TensorRT daemon-client log (`platform/k3s/work/artifacts/results/tensorrt-daemon-client.log`) must include:
 
 - `DAEMON_GPU_LOAD_READY`
 - `DAEMON_GPU_STATUS_OK`
@@ -93,7 +93,7 @@ TensorRT daemon-client log (`platform/k3s/work/results/tensorrt-daemon-client.lo
 - `DAEMON_GPU_UNLOAD_OK`
 - `TENSORRT_DAEMON_CLIENT_SUCCESS`
 
-vLLM daemon-client log (`platform/k3s/work/results/vllm-daemon-client.log`) must include:
+vLLM daemon-client log (`platform/k3s/work/artifacts/results/vllm-daemon-client.log`) must include:
 
 - `DAEMON_GPU_LOAD_READY`
 - `DAEMON_GPU_STATUS_OK`

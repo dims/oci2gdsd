@@ -36,9 +36,17 @@ For host-only strict direct-GDS validation (without Kubernetes), see [`platform/
 From repo root:
 
 ```bash
-make prereq-k3s
-make verify-k3s-qwen-e2e-inline
+make prereq
+make verify-smoke
+make verify-k3s
 ```
+
+Beginner GPU host walkthrough: [`docs/quickstart-a100.md`](../../docs/quickstart-a100.md)
+
+Primary env defaults/overrides:
+
+- `platform/k3s/.env.defaults`
+- `platform/k3s/.env.example`
 
 Prereq hierarchy:
 - Stage 0: `prereq-local`
@@ -48,9 +56,8 @@ Prereq hierarchy:
 Raw-manifest DaemonSet path (no Helm):
 
 ```bash
-make verify-k3s-qwen-e2e-daemonset
-make verify-k3s-tensor-e2e-daemonset
-make verify-k3s-vllm-e2e-daemonset
+make verify-k3s-daemonset
+make verify-k3s-daemonset-all
 ```
 
 `make prereq-k3s` validates cluster/runtime/image prerequisites and auto-installs host packages by default (`INSTALL_MISSING_PREREQS=true`) after running stages 0 and 1.
@@ -132,7 +139,7 @@ This script only:
 - applies qwen app/native ConfigMaps from standalone files under `platform/k3s/pytorch/app` and `platform/k3s/pytorch/native`
 - waits for rollout
 - probes `/healthz` and `/chat`
-- writes logs to `platform/k3s/work/results/qwen-hello.log`
+- writes logs to `platform/k3s/work/artifacts/results/qwen-hello.log`
 
 For host-native k3s quick iteration:
 
@@ -149,7 +156,7 @@ make verify-k3s-qwen-smoke
 By default, missing identity is auto-seeded (`AUTO_SEED_MODEL_IDENTITY=true`).
 There are three supported ways to provide this:
 
-1. Run `make verify-k3s-qwen-e2e-inline` once on the same host.
+1. Run `make verify-k3s` once on the same host.
 This generates `platform/k3s/work/packager/output/manifest-descriptor.json`,
 which quick mode can reuse automatically.
 
@@ -196,18 +203,18 @@ make verify-k3s-qwen-smoke
 
 ```bash
 # Use a different model source
-HF_REPO=Qwen/Qwen3-0.6B HF_REVISION=main make verify-k3s-qwen-e2e-inline
+HF_REPO=Qwen/Qwen3-0.6B HF_REVISION=main make verify-k3s
 
 # Override workload image (default pinned digest of nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1)
-PYTORCH_IMAGE=pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime make verify-k3s-qwen-e2e-inline
+PYTORCH_IMAGE=pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime make verify-k3s
 
 # Reuse an already pushed model artifact and skip package/push
 MODEL_REF_OVERRIDE=oci-model-registry.oci-model-registry.svc.cluster.local:5000/models/qwen3-0.6b@sha256:... \
 MODEL_DIGEST_OVERRIDE=sha256:... \
-make verify-k3s-qwen-e2e-inline
+make verify-k3s
 
 # Run full e2e in raw-manifest daemonset mode
-make verify-k3s-qwen-e2e-daemonset
+make verify-k3s-daemonset
 
 # Run full e2e in raw-manifest daemonset mode with TensorRT-LLM workload
 make verify-k3s-tensor-e2e-daemonset
@@ -216,19 +223,19 @@ make verify-k3s-tensor-e2e-daemonset
 make verify-k3s-vllm-e2e-daemonset
 
 # Equivalent via explicit mode toggle
-E2E_DEPLOY_MODE=daemonset-manifest make verify-k3s-qwen-e2e-inline
+E2E_DEPLOY_MODE=daemonset-manifest make verify-k3s
 
 # Skip qwen-hello example validation (enabled by default)
-VALIDATE_QWEN_HELLO=false make verify-k3s-qwen-e2e-inline
+VALIDATE_QWEN_HELLO=false make verify-k3s
 
 # Skip local host GDS preflight (`gpu probe` + `gpu load --mode benchmark`)
-VALIDATE_LOCAL_GDS=false make verify-k3s-qwen-e2e-inline
+VALIDATE_LOCAL_GDS=false make verify-k3s
 
 # Optional: pre-load workload image(s) into k3s containerd (default true)
-PRELOAD_WORKLOAD_IMAGE=true make verify-k3s-qwen-e2e-inline
+PRELOAD_WORKLOAD_IMAGE=true make verify-k3s
 
 # Optional: pre-load the qwen-hello PyTorch runtime image into k3s containerd (default true)
-PRELOAD_PYTORCH_RUNTIME_IMAGE=true make verify-k3s-qwen-e2e-inline
+PRELOAD_PYTORCH_RUNTIME_IMAGE=true make verify-k3s
 
 # Optional: pre-load TensorRT-LLM runtime image (default true for TensorRT runtime)
 PRELOAD_TENSORRTLLM_RUNTIME_IMAGE=true make verify-k3s-tensor-e2e-daemonset
@@ -238,7 +245,7 @@ PRELOAD_VLLM_RUNTIME_IMAGE=true make verify-k3s-vllm-e2e-daemonset
 
 # Optional: require daemon IPC probe to report status=ok
 # (default: true when OCI2GDSD_ENABLE_GDS_IMAGE=true, otherwise false)
-REQUIRE_DAEMON_IPC_PROBE=true make verify-k3s-qwen-e2e-inline
+REQUIRE_DAEMON_IPC_PROBE=true make verify-k3s
 
 # Default behavior is fail-fast GDS mode:
 # - REQUIRE_DIRECT_GDS=true
@@ -269,25 +276,25 @@ OCI2GDSD_ROOT_PATH=/mnt/nvme/oci2gdsd make verify-k3s-qwen-smoke
 ALLOW_RELAXED_GDS=true REQUIRE_DIRECT_GDS=false OCI2GDS_STRICT=false OCI2GDS_PROBE_STRICT=false OCI2GDS_FORCE_NO_COMPAT=false make verify-k3s-qwen-smoke
 
 # Build a GDS-capable oci2gdsd image for init/daemon containers
-OCI2GDSD_ENABLE_GDS_IMAGE=true REQUIRE_DAEMON_IPC_PROBE=true make verify-k3s-qwen-e2e-inline
+OCI2GDSD_ENABLE_GDS_IMAGE=true REQUIRE_DAEMON_IPC_PROBE=true make verify-k3s
 
 # Build a dedicated qwen runtime image with oci2gdsd + libcufile and load it into k3s
 # (default false; enable explicitly when needed)
-BUILD_QWEN_GDS_RUNTIME_IMAGE=true make verify-k3s-qwen-e2e-inline
+BUILD_QWEN_GDS_RUNTIME_IMAGE=true make verify-k3s
 
-# Or point to a custom Dockerfile for oci2gdsd image builds
-OCI2GDSD_DOCKERFILE=platform/k3s/Dockerfile.oci2gdsd.gds make verify-k3s-qwen-e2e-inline
+# Override the Docker target when using the shared Dockerfile
+OCI2GDSD_DOCKER_TARGET=runtime-gds OCI2GDSD_ENABLE_GDS_IMAGE=true make verify-k3s
 
 # Use a prebuilt oci2gdsd image and skip local build/load into k3s
 # (useful for large CUDA/GDS images pushed to a registry)
 SKIP_OCI2GDSD_IMAGE_BUILD=true SKIP_OCI2GDSD_IMAGE_LOAD=true \
-OCI2GDSD_IMAGE=<registry>/<repo>:<tag> make verify-k3s-qwen-e2e-inline
+OCI2GDSD_IMAGE=<registry>/<repo>:<tag> make verify-k3s
 
 # Force namespace name
-E2E_NAMESPACE=oci2gdsd-e2e make verify-k3s-qwen-e2e-inline
+E2E_NAMESPACE=oci2gdsd-e2e make verify-k3s
 
 # Override CUDA toolkit locations used for local GDS preflight builds
-CUDA_INCLUDE_DIR=/usr/local/cuda/include CUDA_LIB_DIR=/usr/local/cuda/lib64 make verify-k3s-qwen-e2e-inline
+CUDA_INCLUDE_DIR=/usr/local/cuda/include CUDA_LIB_DIR=/usr/local/cuda/lib64 make verify-k3s
 
 # Override storage gates (GiB) if needed
 MIN_FREE_GB_DOCKER=150 MIN_FREE_GB_K3S=80 MIN_FREE_GB_OCI2GDS_ROOT=40 make prereq-k3s
@@ -312,13 +319,13 @@ make clean-k3s
 
 Logs are written under:
 
-- `platform/k3s/work/results/preload.log`
-- `platform/k3s/work/results/pytorch.log`
-- `platform/k3s/work/results/pytorch-daemon-client.log` (daemonset-manifest mode)
-- `platform/k3s/work/results/tensorrt-daemon-client.log` (daemonset-manifest mode with `WORKLOAD_RUNTIME=tensorrt`)
-- `platform/k3s/work/results/vllm-daemon-client.log` (daemonset-manifest mode with `WORKLOAD_RUNTIME=vllm`)
-- `platform/k3s/work/results/daemonset.log` (daemonset-manifest mode)
-- `platform/k3s/work/results/qwen-hello.log`
-- `platform/k3s/work/results/release-gc.log`
-- `platform/k3s/work/results/environment-report.txt`
-- `platform/k3s/work/results/qwen-profile-probe-baseline.json`
+- `platform/k3s/work/artifacts/results/preload.log`
+- `platform/k3s/work/artifacts/results/pytorch.log`
+- `platform/k3s/work/artifacts/results/pytorch-daemon-client.log` (daemonset-manifest mode)
+- `platform/k3s/work/artifacts/results/tensorrt-daemon-client.log` (daemonset-manifest mode with `WORKLOAD_RUNTIME=tensorrt`)
+- `platform/k3s/work/artifacts/results/vllm-daemon-client.log` (daemonset-manifest mode with `WORKLOAD_RUNTIME=vllm`)
+- `platform/k3s/work/artifacts/results/daemonset.log` (daemonset-manifest mode)
+- `platform/k3s/work/artifacts/results/qwen-hello.log`
+- `platform/k3s/work/artifacts/results/release-gc.log`
+- `platform/k3s/work/artifacts/results/environment-report.txt`
+- `platform/k3s/work/artifacts/results/qwen-profile-probe-baseline.json`

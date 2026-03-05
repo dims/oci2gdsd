@@ -3,6 +3,8 @@
 This harness runs a real no-GPU, no-Kubernetes end-to-end validation of core CLI
 semantics:
 
+For GPU-host onboarding and full smoke/e2e chaining, see [`docs/quickstart-a100.md`](../../docs/quickstart-a100.md).
+
 1. start local OCI registry
 2. push a tiny OCI-ModelProfile-v1 artifact
 3. run `ensure`

@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./common.sh
 source "${SCRIPT_DIR}/common.sh"
+# shellcheck source=../runtimes/pytorch.sh
+source "${WORKLOAD_ADAPTER_SCRIPT}"
 
 trap 'stop_registry_port_forward' EXIT
 
@@ -41,7 +43,7 @@ deploy_inline_workload_job() {
   SMOKE_SCRIPT="${HARNESS_DIR}/scripts/pytorch_smoke.py"
   [[ -f "${SMOKE_SCRIPT}" ]] || die "missing pytorch smoke script: ${SMOKE_SCRIPT}"
 
-  render_template "${HARNESS_DIR}/manifests/workload-job.yaml.tpl" "${WORK_DIR}/rendered/workload-job.yaml" \
+  render_template "${HARNESS_DIR}/manifests/workload-job.yaml.tpl" "${RENDERED_DIR}/workload-job.yaml" \
     "E2E_NAMESPACE=${E2E_NAMESPACE}" \
     "OCI2GDSD_IMAGE=${OCI2GDSD_IMAGE}" \
     "PYTORCH_IMAGE=${PYTORCH_IMAGE}" \
@@ -55,81 +57,21 @@ deploy_inline_workload_job() {
   apply_configmap_from_files "${E2E_NAMESPACE}" "pytorch-smoke-script" \
     --from-file=pytorch_smoke.py="${SMOKE_SCRIPT}"
   kube -n "${E2E_NAMESPACE}" delete job/oci2gdsd-pytorch-smoke --ignore-not-found >/dev/null
-  kube apply -f "${WORK_DIR}/rendered/workload-job.yaml"
+  kube apply -f "${RENDERED_DIR}/workload-job.yaml"
 
   WORKLOAD_JOB_NAME="oci2gdsd-pytorch-smoke"
   WORKLOAD_CONTAINER_NAME="pytorch-smoke"
-  WORKLOAD_RESULT_LOG="${WORK_DIR}/results/pytorch.log"
+  WORKLOAD_RESULT_LOG="${RESULTS_DIR}/pytorch.log"
 }
 
 deploy_daemonset_workload_job() {
   apply_daemonset_stack
-  case "${WORKLOAD_RUNTIME}" in
-    pytorch)
-      apply_configmap_from_files "${E2E_NAMESPACE}" "${WORKLOAD_DAEMON_CONFIGMAP}" \
-        --from-file=pytorch_daemon_client.py="${PYTORCH_DAEMON_CLIENT_SCRIPT}" \
-        --from-file=oci2gds_torch_native.cpp="${PYTORCH_DAEMON_NATIVE_CPP}"
-      render_template "${WORKLOAD_DAEMON_TEMPLATE}" "${WORK_DIR}/rendered/pytorch-daemon-client-job.yaml" \
-        "E2E_NAMESPACE=${E2E_NAMESPACE}" \
-        "OCI2GDSD_IMAGE=${OCI2GDSD_CLI_IMAGE}" \
-        "PYTORCH_IMAGE=${PYTORCH_IMAGE}" \
-        "MODEL_REF=${MODEL_REF}" \
-        "MODEL_ID=${MODEL_ID}" \
-        "MODEL_DIGEST=${MODEL_DIGEST}" \
-        "MODEL_ROOT_PATH=${MODEL_ROOT_PATH}" \
-        "LEASE_HOLDER=${LEASE_HOLDER}" \
-        "OCI2GDSD_ROOT_PATH=${OCI2GDSD_ROOT_PATH}" \
-        "OCI2GDSD_SOCKET_HOST_PATH=${OCI2GDSD_SOCKET_HOST_PATH}" \
-        "REQUIRE_DIRECT_GDS=${REQUIRE_DIRECT_GDS}" \
-        "OCI2GDS_STRICT=${OCI2GDS_STRICT}"
-      kube -n "${E2E_NAMESPACE}" delete "job/${WORKLOAD_DAEMON_JOB_NAME}" --ignore-not-found >/dev/null
-      kube apply -f "${WORK_DIR}/rendered/pytorch-daemon-client-job.yaml"
-      WORKLOAD_RESULT_LOG="${WORK_DIR}/results/pytorch-daemon-client.log"
-      ;;
-    tensorrt)
-      apply_configmap_from_files "${E2E_NAMESPACE}" "${WORKLOAD_DAEMON_CONFIGMAP}" \
-        --from-file=tensorrt_daemon_client.py="${TENSORRT_DAEMON_CLIENT_SCRIPT}"
-      render_template "${WORKLOAD_DAEMON_TEMPLATE}" "${WORK_DIR}/rendered/tensorrt-daemon-client-job.yaml" \
-        "E2E_NAMESPACE=${E2E_NAMESPACE}" \
-        "OCI2GDSD_IMAGE=${OCI2GDSD_CLI_IMAGE}" \
-        "TENSORRTLLM_IMAGE=${TENSORRTLLM_IMAGE}" \
-        "MODEL_REF=${MODEL_REF}" \
-        "MODEL_ID=${MODEL_ID}" \
-        "MODEL_DIGEST=${MODEL_DIGEST}" \
-        "MODEL_ROOT_PATH=${MODEL_ROOT_PATH}" \
-        "LEASE_HOLDER=${LEASE_HOLDER}" \
-        "OCI2GDSD_ROOT_PATH=${OCI2GDSD_ROOT_PATH}" \
-        "OCI2GDSD_SOCKET_HOST_PATH=${OCI2GDSD_SOCKET_HOST_PATH}" \
-        "REQUIRE_DIRECT_GDS=${REQUIRE_DIRECT_GDS}" \
-        "OCI2GDS_STRICT=${OCI2GDS_STRICT}"
-      kube -n "${E2E_NAMESPACE}" delete "job/${WORKLOAD_DAEMON_JOB_NAME}" --ignore-not-found >/dev/null
-      kube apply -f "${WORK_DIR}/rendered/tensorrt-daemon-client-job.yaml"
-      WORKLOAD_RESULT_LOG="${WORK_DIR}/results/tensorrt-daemon-client.log"
-      ;;
-    vllm)
-      apply_configmap_from_files "${E2E_NAMESPACE}" "${WORKLOAD_DAEMON_CONFIGMAP}" \
-        --from-file=vllm_daemon_client.py="${VLLM_DAEMON_CLIENT_SCRIPT}"
-      render_template "${WORKLOAD_DAEMON_TEMPLATE}" "${WORK_DIR}/rendered/vllm-daemon-client-job.yaml" \
-        "E2E_NAMESPACE=${E2E_NAMESPACE}" \
-        "OCI2GDSD_IMAGE=${OCI2GDSD_CLI_IMAGE}" \
-        "VLLM_IMAGE=${VLLM_IMAGE}" \
-        "MODEL_REF=${MODEL_REF}" \
-        "MODEL_ID=${MODEL_ID}" \
-        "MODEL_DIGEST=${MODEL_DIGEST}" \
-        "MODEL_ROOT_PATH=${MODEL_ROOT_PATH}" \
-        "LEASE_HOLDER=${LEASE_HOLDER}" \
-        "OCI2GDSD_ROOT_PATH=${OCI2GDSD_ROOT_PATH}" \
-        "OCI2GDSD_SOCKET_HOST_PATH=${OCI2GDSD_SOCKET_HOST_PATH}" \
-        "REQUIRE_DIRECT_GDS=${REQUIRE_DIRECT_GDS}" \
-        "OCI2GDS_STRICT=${OCI2GDS_STRICT}"
-      kube -n "${E2E_NAMESPACE}" delete "job/${WORKLOAD_DAEMON_JOB_NAME}" --ignore-not-found >/dev/null
-      kube apply -f "${WORK_DIR}/rendered/vllm-daemon-client-job.yaml"
-      WORKLOAD_RESULT_LOG="${WORK_DIR}/results/vllm-daemon-client.log"
-      ;;
-    *)
-      die "unsupported WORKLOAD_RUNTIME=${WORKLOAD_RUNTIME}"
-      ;;
-  esac
+  runtime_daemon_apply_configmaps
+  local rendered="${RENDERED_DIR}/${WORKLOAD_RUNTIME}-daemon-client-job.yaml"
+  runtime_daemon_render_job "${rendered}"
+  kube -n "${E2E_NAMESPACE}" delete "job/${WORKLOAD_DAEMON_JOB_NAME}" --ignore-not-found >/dev/null
+  kube apply -f "${rendered}"
+  WORKLOAD_RESULT_LOG="$(runtime_result_log_path)"
   WORKLOAD_JOB_NAME="${WORKLOAD_DAEMON_JOB_NAME}"
   WORKLOAD_CONTAINER_NAME="${WORKLOAD_DAEMON_CONTAINER_NAME}"
 }
@@ -143,7 +85,7 @@ wait_for_workload_and_collect() {
     kube -n "${E2E_NAMESPACE}" logs "job/${WORKLOAD_JOB_NAME}" -c preload-model || true
     kube -n "${E2E_NAMESPACE}" logs "job/${WORKLOAD_JOB_NAME}" -c "${WORKLOAD_CONTAINER_NAME}" || true
     if [[ "${E2E_DEPLOY_MODE}" == "daemonset-manifest" ]]; then
-      capture_daemonset_logs "${WORK_DIR}/results/daemonset.log" || true
+      capture_daemonset_logs "${RESULTS_DIR}/daemonset.log" || true
     fi
     if [[ "${rc}" -eq 2 ]]; then
       die "workload job timed out (${WORKLOAD_JOB_NAME})"
@@ -152,10 +94,10 @@ wait_for_workload_and_collect() {
   fi
   runtime_drift_checkpoint "post-workload-job"
 
-  kube -n "${E2E_NAMESPACE}" logs "job/${WORKLOAD_JOB_NAME}" -c preload-model > "${WORK_DIR}/results/preload.log"
+  kube -n "${E2E_NAMESPACE}" logs "job/${WORKLOAD_JOB_NAME}" -c preload-model > "${RESULTS_DIR}/preload.log"
   kube -n "${E2E_NAMESPACE}" logs "job/${WORKLOAD_JOB_NAME}" -c "${WORKLOAD_CONTAINER_NAME}" > "${WORKLOAD_RESULT_LOG}"
 
-  if ! grep -q '"status": "READY"' "${WORK_DIR}/results/preload.log"; then
+  if ! grep -q '"status": "READY"' "${RESULTS_DIR}/preload.log"; then
     die "preload init container did not report READY"
   fi
 
@@ -167,53 +109,13 @@ wait_for_workload_and_collect() {
   fi
 
   local marker
-  local -a required_markers=()
-  case "${WORKLOAD_RUNTIME}" in
-    pytorch)
-      required_markers=(
-        "DAEMON_GPU_LOAD_READY"
-        "DAEMON_GPU_EXPORT_OK"
-        "DAEMON_GPU_ATTACH_OK"
-        "DAEMON_GPU_HEARTBEAT_OK"
-        "DAEMON_GPU_STATUS_OK"
-        "DAEMON_QWEN_IPC_BIND_OK"
-        "DAEMON_GPU_DETACH_OK"
-        "DAEMON_GPU_UNLOAD_OK"
-        "PYTORCH_DAEMON_CLIENT_SUCCESS"
-      )
-      ;;
-    tensorrt)
-      required_markers=(
-        "DAEMON_GPU_LOAD_READY"
-        "DAEMON_GPU_STATUS_OK"
-        "TENSORRT_ENGINE_BUILD_OK"
-        "TENSORRT_GDS_RUNNER_READY"
-        "TENSORRT_QWEN_INFER_OK"
-        "DAEMON_GPU_UNLOAD_OK"
-        "TENSORRT_DAEMON_CLIENT_SUCCESS"
-      )
-      ;;
-    vllm)
-      required_markers=(
-        "DAEMON_GPU_LOAD_READY"
-        "DAEMON_GPU_STATUS_OK"
-        "VLLM_LOADER_REGISTERED"
-        "VLLM_OCI2GDS_LOAD_OK"
-        "VLLM_QWEN_INFER_OK"
-        "DAEMON_GPU_UNLOAD_OK"
-        "VLLM_DAEMON_CLIENT_SUCCESS"
-      )
-      ;;
-    *)
-      die "unsupported WORKLOAD_RUNTIME=${WORKLOAD_RUNTIME}"
-      ;;
-  esac
-  for marker in "${required_markers[@]}"; do
+  while IFS= read -r marker; do
+    [[ -n "${marker}" ]] || continue
     if ! grep -q "${marker}" "${WORKLOAD_RESULT_LOG}"; then
       die "daemon-client workload log is missing marker: ${marker}"
     fi
-  done
-  capture_daemonset_logs "${WORK_DIR}/results/daemonset.log" || true
+  done < <(runtime_required_markers)
+  capture_daemonset_logs "${RESULTS_DIR}/daemonset.log" || true
 }
 
 log "starting k3s e2e harness"
@@ -256,18 +158,18 @@ else
   package_model_to_registry
 fi
 
-mkdir -p "${WORK_DIR}/rendered" "${WORK_DIR}/results"
+mkdir -p "${RENDERED_DIR}" "${RESULTS_DIR}"
 write_environment_report
 runtime_drift_checkpoint "pre-workload-deploy"
 
-render_template "${HARNESS_DIR}/manifests/namespace.yaml.tpl" "${WORK_DIR}/rendered/namespace.yaml" \
+render_template "${HARNESS_DIR}/manifests/namespace.yaml.tpl" "${RENDERED_DIR}/namespace.yaml" \
   "E2E_NAMESPACE=${E2E_NAMESPACE}"
-render_template "${HARNESS_DIR}/manifests/oci2gdsd-configmap.yaml.tpl" "${WORK_DIR}/rendered/oci2gdsd-configmap.yaml" \
+render_template "${HARNESS_DIR}/manifests/oci2gdsd-configmap.yaml.tpl" "${RENDERED_DIR}/oci2gdsd-configmap.yaml" \
   "E2E_NAMESPACE=${E2E_NAMESPACE}" \
   "OCI2GDSD_ROOT_PATH=${OCI2GDSD_ROOT_PATH}"
 
-kube apply -f "${WORK_DIR}/rendered/namespace.yaml"
-kube apply -f "${WORK_DIR}/rendered/oci2gdsd-configmap.yaml"
+kube apply -f "${RENDERED_DIR}/namespace.yaml"
+kube apply -f "${RENDERED_DIR}/oci2gdsd-configmap.yaml"
 case "${E2E_DEPLOY_MODE}" in
   inline-daemon)
     deploy_inline_workload_job
@@ -306,7 +208,7 @@ if [[ "${E2E_DEPLOY_MODE}" == "daemonset-manifest" ]]; then
   RELEASE_IMAGE="${OCI2GDSD_CLI_IMAGE}"
 fi
 
-render_template "${HARNESS_DIR}/manifests/release-job.yaml.tpl" "${WORK_DIR}/rendered/release-job.yaml" \
+render_template "${HARNESS_DIR}/manifests/release-job.yaml.tpl" "${RENDERED_DIR}/release-job.yaml" \
   "E2E_NAMESPACE=${E2E_NAMESPACE}" \
   "OCI2GDSD_IMAGE=${RELEASE_IMAGE}" \
   "MODEL_ID=${MODEL_ID}" \
@@ -316,7 +218,7 @@ render_template "${HARNESS_DIR}/manifests/release-job.yaml.tpl" "${WORK_DIR}/ren
   "OCI2GDSD_ROOT_PATH=${OCI2GDSD_ROOT_PATH}"
 
 kube -n "${E2E_NAMESPACE}" delete job/oci2gdsd-release-gc --ignore-not-found >/dev/null
-kube apply -f "${WORK_DIR}/rendered/release-job.yaml"
+kube apply -f "${RENDERED_DIR}/release-job.yaml"
 log "waiting for release job completion"
 if ! kube -n "${E2E_NAMESPACE}" wait job/oci2gdsd-release-gc --for=condition=Complete --timeout=600s; then
   collect_debug
@@ -324,19 +226,19 @@ if ! kube -n "${E2E_NAMESPACE}" wait job/oci2gdsd-release-gc --for=condition=Com
   die "release/gc job failed"
 fi
 
-kube -n "${E2E_NAMESPACE}" logs job/oci2gdsd-release-gc > "${WORK_DIR}/results/release-gc.log"
-if ! grep -q '"status": "RELEASED"' "${WORK_DIR}/results/release-gc.log"; then
+kube -n "${E2E_NAMESPACE}" logs job/oci2gdsd-release-gc > "${RESULTS_DIR}/release-gc.log"
+if ! grep -q '"status": "RELEASED"' "${RESULTS_DIR}/release-gc.log"; then
   die "release/gc lifecycle did not end in RELEASED status"
 fi
 
 log "k3s e2e harness completed successfully"
 log "artifacts:"
-log "  ${WORK_DIR}/results/preload.log"
+log "  ${RESULTS_DIR}/preload.log"
 log "  ${WORKLOAD_RESULT_LOG}"
-if [[ -f "${WORK_DIR}/results/qwen-hello.log" ]]; then
-  log "  ${WORK_DIR}/results/qwen-hello.log"
+if [[ -f "${RESULTS_DIR}/qwen-hello.log" ]]; then
+  log "  ${RESULTS_DIR}/qwen-hello.log"
 fi
-if [[ -f "${WORK_DIR}/results/daemonset.log" ]]; then
-  log "  ${WORK_DIR}/results/daemonset.log"
+if [[ -f "${RESULTS_DIR}/daemonset.log" ]]; then
+  log "  ${RESULTS_DIR}/daemonset.log"
 fi
-log "  ${WORK_DIR}/results/release-gc.log"
+log "  ${RESULTS_DIR}/release-gc.log"

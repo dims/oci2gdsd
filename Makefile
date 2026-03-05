@@ -6,24 +6,24 @@ help:
 	@echo "  build                  Build oci2gdsd CLI"
 	@echo "  install                Install oci2gdsd to \$$GOPATH/bin"
 	@echo "  clean                  Remove local build and test harness artifacts"
-	@echo "  prereq-local           Stage 0 prereq: local/base tooling + storage"
-	@echo "  prereq-host-gds        Stage 1 prereq: host strict direct-GDS (extends prereq-local)"
-	@echo "  prereq-k3s             Stage 2 prereq: k3s harness checks (extends prereq-host-gds)"
-	@echo "  prereq-all             Run full prereq chain (local -> host -> k3s)"
-	@echo "  verify-unit            Run Go tests (no GPU required)"
-	@echo "  verify-local           Local CLI lifecycle e2e (positive + negative checks)"
-	@echo "  verify-host-qwen-smoke Host-only strict direct-GDS qwen probe"
-	@echo "  verify-k3s-qwen-smoke  Fast qwen-hello redeploy/probe loop on k3s"
-	@echo "  verify-k3s-qwen-e2e-inline Full k3s e2e in inline mode"
-	@echo "  verify-k3s-qwen-e2e-daemonset Full k3s e2e in daemonset mode"
-	@echo "  verify-k3s-tensor-e2e-daemonset Full k3s e2e in daemonset mode with TensorRT-LLM workload"
-	@echo "  verify-k3s-vllm-e2e-daemonset Full k3s e2e in daemonset mode with vLLM plugin workload"
+	@echo ""
+	@echo "  prereq                 Full prereq chain (local -> host -> k3s)"
+	@echo "  verify-core            verify-unit + verify-local"
+	@echo "  verify-smoke           verify-core + host/k3s qwen smoke"
+	@echo "  verify-k3s             Full k3s qwen e2e (inline mode)"
+	@echo "  verify-k3s-daemonset   Full k3s qwen e2e (daemonset mode)"
+	@echo "  verify-k3s-daemonset-all Daemonset mode for qwen + tensorrt + vllm"
 	@echo "  clean-k3s              Delete k3s e2e local harness artifacts"
 	@echo "  demo-local-registry    Self-contained local demo (no GPU, no k8s)"
+	@echo ""
+	@echo "Advanced targets: prereq-local prereq-host-gds prereq-k3s prereq-all"
+	@echo "                  verify-unit verify-local verify-host-qwen-smoke verify-k3s-qwen-smoke"
+	@echo "                  verify-k3s-qwen-e2e-inline verify-k3s-qwen-e2e-daemonset"
+	@echo "                  verify-k3s-tensor-e2e-daemonset verify-k3s-vllm-e2e-daemonset"
 
 .PHONY: build
 build:
-	go build ./cmd/oci2gdsd
+	go build -buildvcs=false ./cmd/oci2gdsd
 
 .PHONY: install
 install:
@@ -79,6 +79,9 @@ prereq-k3s: prereq-host-gds
 .PHONY: prereq-all
 prereq-all: prereq-local prereq-host-gds prereq-k3s
 
+.PHONY: prereq
+prereq: prereq-all
+
 .PHONY: verify-host-qwen-smoke
 verify-host-qwen-smoke: prereq-host-gds
 	./platform/host/scripts/quick-qwen.sh
@@ -102,6 +105,21 @@ verify-k3s-tensor-e2e-daemonset: prereq-k3s
 .PHONY: verify-k3s-vllm-e2e-daemonset
 verify-k3s-vllm-e2e-daemonset: prereq-k3s
 	E2E_DEPLOY_MODE=daemonset-manifest WORKLOAD_RUNTIME=vllm ./platform/k3s/scripts/run.sh
+
+.PHONY: verify-core
+verify-core: verify-unit verify-local
+
+.PHONY: verify-smoke
+verify-smoke: verify-core verify-host-qwen-smoke verify-k3s-qwen-smoke
+
+.PHONY: verify-k3s
+verify-k3s: verify-k3s-qwen-e2e-inline
+
+.PHONY: verify-k3s-daemonset
+verify-k3s-daemonset: verify-k3s-qwen-e2e-daemonset
+
+.PHONY: verify-k3s-daemonset-all
+verify-k3s-daemonset-all: verify-k3s-qwen-e2e-daemonset verify-k3s-tensor-e2e-daemonset verify-k3s-vllm-e2e-daemonset
 
 .PHONY: clean-k3s
 clean-k3s:

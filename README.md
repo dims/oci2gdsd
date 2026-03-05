@@ -154,44 +154,31 @@ oci2gdsd gc --policy lru_no_lease --min-free-bytes 200G --json
 
 ## Kubernetes Quick Start
 
-Run the local lifecycle e2e, then the GPU/k3s harness:
+Minimal beginner flow on a fresh A100 host:
 
 ```bash
-# Local no-GPU/no-k8s lifecycle e2e
-make verify-local
-```
+# Full prereq chain (local -> host -> k3s)
+make prereq
 
-```bash
-# Prereq hierarchy:
-# Stage 0: base/local prerequisites
-# Stage 1: host direct-GDS prerequisites (extends stage 0)
-# Stage 2: k3s prerequisites (extends stage 1)
-make prereq-k3s
+# Unit + local + host smoke + k3s smoke
+make verify-smoke
 
-# One-shot full prerequisite chain (local -> host -> k3s)
-make prereq-all
+# Full inline k3s e2e
+make verify-k3s
 
-# Full e2e: package Qwen3, push to in-cluster registry, preload, run PyTorch smoke test
-make verify-k3s-qwen-e2e-inline
+# Full daemonset qwen e2e
+make verify-k3s-daemonset
 
-# Full e2e with raw daemonset manifests (node-level oci2gdsd serve)
-make verify-k3s-qwen-e2e-daemonset
-
-# Full e2e with raw daemonset manifests + TensorRT-LLM daemon client
-make verify-k3s-tensor-e2e-daemonset
-
-# Full e2e with raw daemonset manifests + vLLM plugin daemon client
-make verify-k3s-vllm-e2e-daemonset
-
-# Fast iteration after first run (reuse existing cluster and model artifact)
-make verify-k3s-qwen-smoke
+# Full daemonset matrix (qwen + TensorRT-LLM + vLLM)
+make verify-k3s-daemonset-all
 ```
 
 Notes:
 - GPU Operator auto-install in the harness is chart-version pinned by default (`GPU_OPERATOR_CHART_VERSION=v25.10.1`) for reproducibility.
 - Override the chart version explicitly if your environment requires a different release.
+- Defaults and override knobs are in `platform/k3s/.env.defaults` and `platform/k3s/.env.example`.
 
-See **[platform/k3s/README.md](platform/k3s/README.md)** for overrides and expected outputs.
+See **[docs/quickstart-a100.md](docs/quickstart-a100.md)** for the full fast-start flow, and **[platform/k3s/README.md](platform/k3s/README.md)** for deep runtime overrides.
 
 ---
 
@@ -271,6 +258,7 @@ metrics/event exporters. See **[docs/IMPLEMENTATION-NOTES.md](docs/IMPLEMENTATIO
 
 | Document | Audience |
 |----------|----------|
+| [docs/quickstart-a100.md](docs/quickstart-a100.md) | New users on GPU hosts — fastest A100 path |
 | [docs/getting-started.md](docs/getting-started.md) | New users — try it without a GPU |
 | [docs/cli-reference.md](docs/cli-reference.md) | All users — full flag and command reference |
 | [docs/config-reference.md](docs/config-reference.md) | Operators — config fields and their status |

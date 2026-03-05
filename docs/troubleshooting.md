@@ -26,7 +26,7 @@ Use it together with:
 | Runtime image precheck fails with `missing: c++` | Selected runtime image cannot build native extension path | Use `PYTORCH_RUNTIME_IMAGE=nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1` |
 | Space errors during pull/build/apply | Docker/k3s/model root on small boot disk | Move Docker data-root and k3s/model paths to `/mnt/nvme` |
 | Direct probe says ok but NVFS counters stay zero | `nvidia-fs` IO stats disabled | Enable `rw_stats_enabled=1` or keep counter gate disabled |
-| qwen quick fails with missing model digest/ref | Quick mode does not have model identity yet | Run full `make verify-k3s-qwen-e2e-inline` once or pass explicit `MODEL_*_OVERRIDE` |
+| qwen quick fails with missing model digest/ref | Quick mode does not have model identity yet | Run full `make verify-k3s` once or pass explicit `MODEL_*_OVERRIDE` |
 | No `nvidia.com/gpu` allocatable | GPU operator/device plugin not ready | Install/repair GPU operator, then re-check node allocatable |
 | `error: failed to initialize state lock: open ... state.db.lock: permission denied` | Model root path contains root-owned files from init-container flow | `sudo chown -R $USER:$USER /mnt/nvme/oci2gdsd` (or your `OCI2GDSD_ROOT_PATH`) |
 | Docker free-space gates fail unexpectedly after reboot | `/mnt/nvme` was not remounted, so Docker data-root path resolves on `/` | Remount NVMe first, then confirm `docker info --format '{{.DockerRootDir}}'` |
@@ -365,7 +365,7 @@ Repo default now uses `REQUIRE_NVFS_STATS_DELTA_MODE=auto` to avoid false negati
 
 Ways to satisfy:
 
-1. Run `make verify-k3s-qwen-e2e-inline` once to seed identity artifacts.
+1. Run `make verify-k3s` once to seed identity artifacts.
 2. Set explicit overrides:
 
 ```bash
@@ -399,9 +399,9 @@ make verify-host-qwen-smoke
 
 For fast triage, include:
 
-1. `platform/k3s/work/results/gdscheck.txt`
+1. `platform/k3s/work/artifacts/results/gdscheck.txt`
 2. `platform/host/work/results/gdscheck-host.txt`
-3. `platform/k3s/work/results/qwen-hello.log`
+3. `platform/k3s/work/artifacts/results/qwen-hello.log`
 4. `platform/host/work/results/host-qwen-gds.log`
 5. `nvidia-smi` output
 6. `uname -r`

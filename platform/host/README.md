@@ -3,6 +3,8 @@
 This harness runs a host-only strict direct-GDS probe for Qwen.
 It does not require Kubernetes, and can bootstrap model identity itself.
 
+For the shortest end-to-end GPU host flow, start with [`docs/quickstart-a100.md`](../../docs/quickstart-a100.md).
+
 ## Getting a model on disk
 
 **Default path (works from a fresh host):**

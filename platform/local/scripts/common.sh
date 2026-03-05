@@ -43,7 +43,7 @@ resolve_oci2gdsd_bin() {
   local build_root="${REPO_ROOT:-${HARNESS_DIR}/../..}"
   OCI2GDSD_BIN="${WORK_DIR}/oci2gdsd"
   log "building oci2gdsd binary for local e2e"
-  (cd "${build_root}" && go build -o "${OCI2GDSD_BIN}" ./cmd/oci2gdsd)
+  (cd "${build_root}" && go build -buildvcs=false -o "${OCI2GDSD_BIN}" ./cmd/oci2gdsd)
 }
 
 run_cli() {
