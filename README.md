@@ -262,6 +262,7 @@ Core docs:
 - [docs/cli-reference.md](docs/cli-reference.md)
 - [docs/config-reference.md](docs/config-reference.md)
 - [docs/OCI-ModelProfile-v1.md](docs/OCI-ModelProfile-v1.md)
+- [docs/architecture-diagram.md](docs/architecture-diagram.md)
 - [docs/design-rationale.md](docs/design-rationale.md)
 - [docs/security-hardening-checklist.md](docs/security-hardening-checklist.md)
 - [docs/IMPLEMENTATION-NOTES.md](docs/IMPLEMENTATION-NOTES.md)
