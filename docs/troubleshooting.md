@@ -13,8 +13,8 @@ This guide is for failures we repeatedly observed while running:
 Use it together with:
 
 - [docs/direct-gds-recreate-runbook.md](direct-gds-recreate-runbook.md)
-- [platform/k3s/e2e/README.md](../platform/k3s/e2e/README.md)
-- [platform/host/e2e/README.md](../platform/host/e2e/README.md)
+- [platform/k3s/README.md](../platform/k3s/README.md)
+- [platform/host/README.md](../platform/host/README.md)
 
 ## 1) Fast Triage By Symptom
 
@@ -399,10 +399,10 @@ make verify-host-qwen-smoke
 
 For fast triage, include:
 
-1. `platform/k3s/e2e/work/results/gdscheck.txt`
-2. `platform/host/e2e/work/results/gdscheck-host.txt`
-3. `platform/k3s/e2e/work/results/qwen-hello.log`
-4. `platform/host/e2e/work/results/host-qwen-gds.log`
+1. `platform/k3s/work/results/gdscheck.txt`
+2. `platform/host/work/results/gdscheck-host.txt`
+3. `platform/k3s/work/results/qwen-hello.log`
+4. `platform/host/work/results/host-qwen-gds.log`
 5. `nvidia-smi` output
 6. `uname -r`
 7. `nvidia-ctk --version`

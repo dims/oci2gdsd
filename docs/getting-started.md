@@ -284,7 +284,7 @@ The cached model directory is deleted. Confirm with:
 | Use a real YAML config instead of `--root` flags | [docs/config-reference.md](config-reference.md) |
 | See all CLI flags | [docs/cli-reference.md](cli-reference.md) |
 | Package a real model from Hugging Face | [models/qwen3-oci-modelprofile-v1/README.md](../models/qwen3-oci-modelprofile-v1/README.md) |
-| Deploy on Kubernetes with GPU | [platform/k3s/e2e/README.md](../platform/k3s/e2e/README.md) |
+| Deploy on Kubernetes with GPU | [platform/k3s/README.md](../platform/k3s/README.md) |
 | Understand the profile format | [docs/OCI-ModelProfile-v1.md](OCI-ModelProfile-v1.md) |
 | Something not working? | [docs/troubleshooting.md](troubleshooting.md) |
 

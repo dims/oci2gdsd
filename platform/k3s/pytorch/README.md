@@ -18,5 +18,5 @@ Runtime-specific assets for PyTorch paths in k3s daemonset mode.
 
 ## Related docs
 
-- `platform/k3s/workloads/pytorch/qwen-hello.md`
-- `platform/k3s/e2e/README.md`
+- `platform/k3s/pytorch/qwen-hello.md`
+- `platform/k3s/README.md`

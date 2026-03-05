@@ -2,8 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LIB_DIR="$(cd "${SCRIPT_DIR}/../../../lib" && pwd)"
-# shellcheck source=../../../lib/common.sh
+LIB_DIR="$(cd "${SCRIPT_DIR}/../../lib" && pwd)"
+# shellcheck source=../../lib/common.sh
 source "${LIB_DIR}/common.sh"
 
 enforce_strict_gds_policy() {

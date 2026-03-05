@@ -41,7 +41,7 @@ sudo helm --kubeconfig /etc/rancher/k3s/k3s.yaml upgrade -i \
 ### 2. Deploy in-cluster OCI registry
 
 ```bash
-sudo k3s kubectl apply -f platform/k3s/workloads/pytorch/oci-model-registry.yaml
+sudo k3s kubectl apply -f platform/k3s/pytorch/oci-model-registry.yaml
 sudo k3s kubectl -n oci-model-registry rollout status deploy/oci-model-registry --timeout=180s
 ```
 
@@ -79,7 +79,7 @@ export MODEL_REF="oci-model-registry.oci-model-registry.svc.cluster.local:5000/m
 ### 4. Build `oci2gdsd` runtime image
 
 ```bash
-docker build -f platform/k3s/e2e/Dockerfile.oci2gdsd -t oci2gdsd:hello .
+docker build -f platform/k3s/Dockerfile.oci2gdsd -t oci2gdsd:hello .
 docker save oci2gdsd:hello | sudo k3s ctr -n k8s.io images import -
 ```
 
@@ -97,7 +97,7 @@ export OCI2GDS_PROBE_STRICT="true"
 export OCI2GDS_FORCE_NO_COMPAT="true"
 export MODEL_ROOT_PATH="${OCI2GDSD_ROOT_PATH}/models/${MODEL_ID}/${MODEL_DIGEST//:/-}"
 
-cp platform/k3s/workloads/pytorch/qwen-k3s-hello-deployment.yaml.tpl /tmp/qwen-k3s-hello.yaml
+cp platform/k3s/pytorch/qwen-k3s-hello-deployment.yaml.tpl /tmp/qwen-k3s-hello.yaml
 gsed -i "s|__QWEN_HELLO_NAMESPACE__|${QWEN_HELLO_NAMESPACE}|g" /tmp/qwen-k3s-hello.yaml
 gsed -i "s|__MODEL_ID__|${MODEL_ID}|g" /tmp/qwen-k3s-hello.yaml
 gsed -i "s|__MODEL_REF__|${MODEL_REF}|g" /tmp/qwen-k3s-hello.yaml
@@ -113,11 +113,11 @@ gsed -i "s|__LEASE_HOLDER__|${LEASE_HOLDER}|g" /tmp/qwen-k3s-hello.yaml
 
 sudo k3s kubectl create namespace "${QWEN_HELLO_NAMESPACE}" --dry-run=client -o yaml | sudo k3s kubectl apply -f -
 sudo k3s kubectl -n "${QWEN_HELLO_NAMESPACE}" create configmap qwen-hello-app \
-  --from-file=qwen_server.py=platform/k3s/workloads/pytorch/app/qwen_server.py \
-  --from-file=deps_bootstrap.py=platform/k3s/workloads/pytorch/app/deps_bootstrap.py \
+  --from-file=qwen_server.py=platform/k3s/pytorch/app/qwen_server.py \
+  --from-file=deps_bootstrap.py=platform/k3s/pytorch/app/deps_bootstrap.py \
   --dry-run=client -o yaml | sudo k3s kubectl apply -f -
 sudo k3s kubectl -n "${QWEN_HELLO_NAMESPACE}" create configmap qwen-hello-native \
-  --from-file=oci2gds_torch_native.cpp=platform/k3s/workloads/pytorch/native/oci2gds_torch_native.cpp \
+  --from-file=oci2gds_torch_native.cpp=platform/k3s/pytorch/native/oci2gds_torch_native.cpp \
   --dry-run=client -o yaml | sudo k3s kubectl apply -f -
 
 sudo k3s kubectl apply -f /tmp/qwen-k3s-hello.yaml

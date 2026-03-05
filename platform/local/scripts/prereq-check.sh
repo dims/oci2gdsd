@@ -3,11 +3,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HARNESS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-REPO_ROOT="$(cd "${HARNESS_DIR}/../../.." && pwd)"
-LIB_DIR="$(cd "${SCRIPT_DIR}/../../../lib" && pwd)"
-# shellcheck source=../../../lib/common.sh
+REPO_ROOT="$(cd "${HARNESS_DIR}/../.." && pwd)"
+LIB_DIR="$(cd "${SCRIPT_DIR}/../../lib" && pwd)"
+# shellcheck source=../../lib/common.sh
 source "${LIB_DIR}/common.sh"
-# shellcheck source=../../../lib/prereq.sh
+# shellcheck source=../../lib/prereq.sh
 source "${LIB_DIR}/prereq.sh"
 
 WORK_DIR="${HARNESS_DIR}/work"

@@ -20,7 +20,7 @@ Prereq hierarchy:
 - starts/creates a local OCI registry container (`oci2gdsd-host-registry`)
 - builds/runs the Qwen packager
 - pushes `localhost:${HOST_LOCAL_REGISTRY_PORT}/models/qwen3-0.6b:v1`
-- reads digest from `platform/host/e2e/work/packager/output/manifest-descriptor.json`
+- reads digest from `platform/host/work/packager/output/manifest-descriptor.json`
 - generates a local plain-http registry config and runs `oci2gdsd ensure`/`release`
 
 **Alternative path (explicit identity, skips auto-seed):**
@@ -109,11 +109,11 @@ Defaults:
 Assumptions:
 
 - Probe container runs with `--privileged` by default in this harness.
-- Probe compiles native extension from shared source file: `platform/k3s/workloads/pytorch/native/oci2gds_torch_native.cpp`.
+- Probe compiles native extension from shared source file: `platform/k3s/pytorch/native/oci2gds_torch_native.cpp`.
 
 Runtime dependency behavior:
 
-- `platform/k3s/workloads/pytorch/app/deps_bootstrap.py` is check-only by default and fails fast when required Python packages are missing.
+- `platform/k3s/pytorch/app/deps_bootstrap.py` is check-only by default and fails fast when required Python packages are missing.
 - Optional runtime `pip install` is debug-only via `OCI2GDS_ALLOW_RUNTIME_PIP_INSTALL=true`.
 
 ## Useful overrides
@@ -155,15 +155,15 @@ MIN_FREE_GB_DOCKER=120 MIN_FREE_GB_MODEL_ROOT=40 make prereq-host-gds
 
 ## Output
 
-- `platform/host/e2e/work/results/gdscheck-host.txt` (when `REQUIRE_DIRECT_GDS=true`)
-- `platform/host/e2e/work/results/quick-example-status.json`
-- `platform/host/e2e/work/results/quick-example-verify.json`
-- `platform/host/e2e/work/results/quick-example-ensure.json` (only when `MODEL_REF_OVERRIDE` is set)
-- `platform/host/e2e/work/results/quick-example-release.json` (only when `MODEL_REF_OVERRIDE` is set)
-- `platform/host/e2e/work/results/host-qwen-gds.log`
-- `platform/host/e2e/work/results/host-qwen-gds-summary.json`
-- `platform/host/e2e/work/results/host-qwen-probe-baseline.json`
-- `platform/host/e2e/work/results/environment-report.txt`
+- `platform/host/work/results/gdscheck-host.txt` (when `REQUIRE_DIRECT_GDS=true`)
+- `platform/host/work/results/quick-example-status.json`
+- `platform/host/work/results/quick-example-verify.json`
+- `platform/host/work/results/quick-example-ensure.json` (only when `MODEL_REF_OVERRIDE` is set)
+- `platform/host/work/results/quick-example-release.json` (only when `MODEL_REF_OVERRIDE` is set)
+- `platform/host/work/results/host-qwen-gds.log`
+- `platform/host/work/results/host-qwen-gds-summary.json`
+- `platform/host/work/results/host-qwen-probe-baseline.json`
+- `platform/host/work/results/environment-report.txt`
 
 The probe prints a structured summary line:
 

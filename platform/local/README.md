@@ -47,7 +47,7 @@ make verify-local
 - `LEASE_HOLDER=local-e2e`
 - `SECOND_MODEL_ID=test-model-b`
 - `SECOND_LEASE_HOLDER=local-e2e-b`
-- `LOCAL_E2E_ROOT=/mnt/nvme/oci2gdsd-local-e2e` when `/mnt/nvme` exists and is writable, otherwise `platform/local/e2e/work/state`
+- `LOCAL_E2E_ROOT=/mnt/nvme/oci2gdsd-local-e2e` when `/mnt/nvme` exists and is writable, otherwise `platform/local/work/state`
 
 ## Useful overrides
 
@@ -64,26 +64,26 @@ MIN_FREE_GB_DOCKER=20 MIN_FREE_GB_WORK=5 MIN_FREE_GB_LOCAL_ROOT=40 make prereq-l
 
 ## Artifacts
 
-- `platform/local/e2e/work/results/prereq-check.txt`
-- `platform/local/e2e/work/results/environment-report.txt`
-- `platform/local/e2e/work/results/oras-push.log`
-- `platform/local/e2e/work/results/oras-push-second.log`
-- `platform/local/e2e/work/results/ensure.json`
-- `platform/local/e2e/work/results/ensure-idempotent.json`
-- `platform/local/e2e/work/results/ensure-concurrent-a.json`
-- `platform/local/e2e/work/results/ensure-second.json`
-- `platform/local/e2e/work/results/status-ready.json`
-- `platform/local/e2e/work/results/status-second-ready.json`
-- `platform/local/e2e/work/results/list-ready.json`
-- `platform/local/e2e/work/results/verify.json`
-- `platform/local/e2e/work/results/verify-second.json`
-- `platform/local/e2e/work/results/profile-lint.json`
-- `platform/local/e2e/work/results/profile-inspect.json`
-- `platform/local/e2e/work/results/release.json`
-- `platform/local/e2e/work/results/release-second.json`
-- `platform/local/e2e/work/results/release-idempotent.json`
-- `platform/local/e2e/work/results/gc.json`
-- `platform/local/e2e/work/results/status-released.json`
-- `platform/local/e2e/work/results/status-second-released.json`
-- `platform/local/e2e/work/results/negative-summary.txt`
-- `platform/local/e2e/work/results/summary.txt`
+- `platform/local/work/results/prereq-check.txt`
+- `platform/local/work/results/environment-report.txt`
+- `platform/local/work/results/oras-push.log`
+- `platform/local/work/results/oras-push-second.log`
+- `platform/local/work/results/ensure.json`
+- `platform/local/work/results/ensure-idempotent.json`
+- `platform/local/work/results/ensure-concurrent-a.json`
+- `platform/local/work/results/ensure-second.json`
+- `platform/local/work/results/status-ready.json`
+- `platform/local/work/results/status-second-ready.json`
+- `platform/local/work/results/list-ready.json`
+- `platform/local/work/results/verify.json`
+- `platform/local/work/results/verify-second.json`
+- `platform/local/work/results/profile-lint.json`
+- `platform/local/work/results/profile-inspect.json`
+- `platform/local/work/results/release.json`
+- `platform/local/work/results/release-second.json`
+- `platform/local/work/results/release-idempotent.json`
+- `platform/local/work/results/gc.json`
+- `platform/local/work/results/status-released.json`
+- `platform/local/work/results/status-second-released.json`
+- `platform/local/work/results/negative-summary.txt`
+- `platform/local/work/results/summary.txt`

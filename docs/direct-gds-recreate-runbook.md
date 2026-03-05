@@ -140,7 +140,7 @@ Save these for each run:
 
 1. `gdscheck -p` output
 2. strict `gdsio -x 0` output
-3. quick-qwen log (`platform/k3s/e2e/work/results/qwen-hello.log`)
+3. quick-qwen log (`platform/k3s/work/results/qwen-hello.log`)
 4. any `gpu probe`/profile lines reporting direct/fallback counts
 
 ## 6) Operator Timeboxes

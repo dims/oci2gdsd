@@ -3,8 +3,8 @@
 This harness targets host-native `k3s` (works on Brev GPU instances), preloads an OCI model with `oci2gdsd` in an init container, runs a GPU-backed workload (PyTorch, TensorRT-LLM, or vLLM daemon-client mode), and validates model lifecycle transitions (`READY` -> `RELEASED`).
 It is designed to run directly by an operator on a machine and does not require GitHub Actions.
 
-For host/provider qualification and strict direct-GDS recreate steps, see [`docs/direct-gds-recreate-runbook.md`](../../../docs/direct-gds-recreate-runbook.md).
-For host-only strict direct-GDS validation (without Kubernetes), see [`platform/host/e2e/README.md`](../../host/e2e/README.md).
+For host/provider qualification and strict direct-GDS recreate steps, see [`docs/direct-gds-recreate-runbook.md`](../../docs/direct-gds-recreate-runbook.md).
+For host-only strict direct-GDS validation (without Kubernetes), see [`platform/host/README.md`](../host/README.md).
 
 ## What it validates
 
@@ -14,11 +14,22 @@ For host-only strict direct-GDS validation (without Kubernetes), see [`platform/
 - PyTorch container reading preloaded model files and running CUDA compute.
 - Optional raw-manifest DaemonSet mode (`E2E_DEPLOY_MODE=daemonset-manifest`) where
   `oci2gdsd serve` is node-level and workloads call daemon GPU APIs directly.
-- Validation of the PyTorch qwen workload under `platform/k3s/workloads/pytorch`
+- Validation of the PyTorch qwen workload under `platform/k3s/pytorch`
   by issuing a real `/chat` request and verifying `/healthz` `oci2gds_profile`
   status fields.
 - Optional strict gating on daemon IPC probe status (`REQUIRE_DAEMON_IPC_PROBE=true`).
 - `oci2gdsd release + gc + status` on the same node as workload pod.
+
+## Workload Layout
+
+- `platform/k3s/shared/`
+  - `oci2gdsd-daemonset.yaml.tpl`: shared daemonset stack for `oci2gdsd serve`.
+- `platform/k3s/pytorch/`
+  - PyTorch daemon-client assets plus the qwen-hello deployment/app/native sources.
+- `platform/k3s/tensorrt/`
+  - TensorRT-LLM daemon-client manifest and client script.
+- `platform/k3s/vllm/`
+  - vLLM daemon-client manifest and client script.
 
 ## Run
 
@@ -117,11 +128,11 @@ make verify-k3s-qwen-smoke
 
 This script only:
 
-- re-renders and reapplies `platform/k3s/workloads/pytorch/qwen-k3s-hello-deployment.yaml.tpl`
-- applies qwen app/native ConfigMaps from standalone files under `platform/k3s/workloads/pytorch/app` and `platform/k3s/workloads/pytorch/native`
+- re-renders and reapplies `platform/k3s/pytorch/qwen-k3s-hello-deployment.yaml.tpl`
+- applies qwen app/native ConfigMaps from standalone files under `platform/k3s/pytorch/app` and `platform/k3s/pytorch/native`
 - waits for rollout
 - probes `/healthz` and `/chat`
-- writes logs to `platform/k3s/e2e/work/results/qwen-hello.log`
+- writes logs to `platform/k3s/work/results/qwen-hello.log`
 
 For host-native k3s quick iteration:
 
@@ -139,7 +150,7 @@ By default, missing identity is auto-seeded (`AUTO_SEED_MODEL_IDENTITY=true`).
 There are three supported ways to provide this:
 
 1. Run `make verify-k3s-qwen-e2e-inline` once on the same host.
-This generates `platform/k3s/e2e/work/packager/output/manifest-descriptor.json`,
+This generates `platform/k3s/work/packager/output/manifest-descriptor.json`,
 which quick mode can reuse automatically.
 
 2. Pass explicit overrides (recommended for repeatability):
@@ -265,7 +276,7 @@ OCI2GDSD_ENABLE_GDS_IMAGE=true REQUIRE_DAEMON_IPC_PROBE=true make verify-k3s-qwe
 BUILD_QWEN_GDS_RUNTIME_IMAGE=true make verify-k3s-qwen-e2e-inline
 
 # Or point to a custom Dockerfile for oci2gdsd image builds
-OCI2GDSD_DOCKERFILE=platform/k3s/e2e/Dockerfile.oci2gdsd.gds make verify-k3s-qwen-e2e-inline
+OCI2GDSD_DOCKERFILE=platform/k3s/Dockerfile.oci2gdsd.gds make verify-k3s-qwen-e2e-inline
 
 # Use a prebuilt oci2gdsd image and skip local build/load into k3s
 # (useful for large CUDA/GDS images pushed to a registry)
@@ -301,13 +312,13 @@ make clean-k3s
 
 Logs are written under:
 
-- `platform/k3s/e2e/work/results/preload.log`
-- `platform/k3s/e2e/work/results/pytorch.log`
-- `platform/k3s/e2e/work/results/pytorch-daemon-client.log` (daemonset-manifest mode)
-- `platform/k3s/e2e/work/results/tensorrt-daemon-client.log` (daemonset-manifest mode with `WORKLOAD_RUNTIME=tensorrt`)
-- `platform/k3s/e2e/work/results/vllm-daemon-client.log` (daemonset-manifest mode with `WORKLOAD_RUNTIME=vllm`)
-- `platform/k3s/e2e/work/results/daemonset.log` (daemonset-manifest mode)
-- `platform/k3s/e2e/work/results/qwen-hello.log`
-- `platform/k3s/e2e/work/results/release-gc.log`
-- `platform/k3s/e2e/work/results/environment-report.txt`
-- `platform/k3s/e2e/work/results/qwen-profile-probe-baseline.json`
+- `platform/k3s/work/results/preload.log`
+- `platform/k3s/work/results/pytorch.log`
+- `platform/k3s/work/results/pytorch-daemon-client.log` (daemonset-manifest mode)
+- `platform/k3s/work/results/tensorrt-daemon-client.log` (daemonset-manifest mode with `WORKLOAD_RUNTIME=tensorrt`)
+- `platform/k3s/work/results/vllm-daemon-client.log` (daemonset-manifest mode with `WORKLOAD_RUNTIME=vllm`)
+- `platform/k3s/work/results/daemonset.log` (daemonset-manifest mode)
+- `platform/k3s/work/results/qwen-hello.log`
+- `platform/k3s/work/results/release-gc.log`
+- `platform/k3s/work/results/environment-report.txt`
+- `platform/k3s/work/results/qwen-profile-probe-baseline.json`

@@ -191,7 +191,7 @@ Notes:
 - GPU Operator auto-install in the harness is chart-version pinned by default (`GPU_OPERATOR_CHART_VERSION=v25.10.1`) for reproducibility.
 - Override the chart version explicitly if your environment requires a different release.
 
-See **[platform/k3s/e2e/README.md](platform/k3s/e2e/README.md)** for overrides and expected outputs.
+See **[platform/k3s/README.md](platform/k3s/README.md)** for overrides and expected outputs.
 
 ---
 
@@ -219,7 +219,7 @@ oci2gdsd gpu load \
 ```
 
 Host qualification runbook: **[docs/direct-gds-recreate-runbook.md](docs/direct-gds-recreate-runbook.md)**
-Host-only GDS probe: **[platform/host/e2e/README.md](platform/host/e2e/README.md)**
+Host-only GDS probe: **[platform/host/README.md](platform/host/README.md)**
 
 GPU load contract in this repo:
 
@@ -283,11 +283,10 @@ metrics/event exporters. See **[docs/IMPLEMENTATION-NOTES.md](docs/IMPLEMENTATIO
 | [docs/daemonset-manifest-guide.md](docs/daemonset-manifest-guide.md) | Operators — raw daemonset deployment flow |
 | [docs/helm-daemon-chart.md](docs/helm-daemon-chart.md) | Operators — helm deployment of node daemon |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contributors — dev setup, tests, PR guide |
-| [platform/local/e2e/README.md](platform/local/e2e/README.md) | New users — automated local lifecycle e2e |
-| [platform/k3s/e2e/README.md](platform/k3s/e2e/README.md) | GPU infra — Kubernetes e2e harness |
-| [platform/host/e2e/README.md](platform/host/e2e/README.md) | GPU infra — host-only GDS probe |
-| [platform/k3s/workloads/README.md](platform/k3s/workloads/README.md) | Everyone — k3s workload map and entry points |
-| [platform/k3s/workloads/pytorch/qwen-hello.md](platform/k3s/workloads/pytorch/qwen-hello.md) | GPU infra — full Kubernetes example |
-| [platform/k3s/workloads/pytorch/README.md](platform/k3s/workloads/pytorch/README.md) | GPU infra — PyTorch daemon-client + qwen workload assets |
-| [platform/k3s/workloads/tensorrt/README.md](platform/k3s/workloads/tensorrt/README.md) | GPU infra — TensorRT-LLM daemon-client workload assets |
-| [platform/k3s/workloads/vllm/README.md](platform/k3s/workloads/vllm/README.md) | GPU infra — vLLM daemon-client workload assets |
+| [platform/local/README.md](platform/local/README.md) | New users — automated local lifecycle e2e |
+| [platform/k3s/README.md](platform/k3s/README.md) | GPU infra — Kubernetes e2e harness |
+| [platform/host/README.md](platform/host/README.md) | GPU infra — host-only GDS probe |
+| [platform/k3s/pytorch/qwen-hello.md](platform/k3s/pytorch/qwen-hello.md) | GPU infra — full Kubernetes example |
+| [platform/k3s/pytorch/README.md](platform/k3s/pytorch/README.md) | GPU infra — PyTorch daemon-client + qwen workload assets |
+| [platform/k3s/tensorrt/README.md](platform/k3s/tensorrt/README.md) | GPU infra — TensorRT-LLM daemon-client workload assets |
+| [platform/k3s/vllm/README.md](platform/k3s/vllm/README.md) | GPU infra — vLLM daemon-client workload assets |

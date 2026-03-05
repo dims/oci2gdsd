@@ -2,10 +2,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LIB_DIR="$(cd "${SCRIPT_DIR}/../../../lib" && pwd)"
+LIB_DIR="$(cd "${SCRIPT_DIR}/../../lib" && pwd)"
 # shellcheck source=./common.sh
 source "${SCRIPT_DIR}/common.sh"
-# shellcheck source=../../../lib/prereq.sh
+# shellcheck source=../../lib/prereq.sh
 source "${LIB_DIR}/prereq.sh"
 
 INSTALL_MISSING_PREREQS="${INSTALL_MISSING_PREREQS:-true}"
