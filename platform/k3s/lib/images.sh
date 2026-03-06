@@ -143,12 +143,56 @@ cluster_load_image() {
     log "image already present in k3s containerd: ${image}"
     return 0
   fi
+  local tries=0
+  local max_tries=30
+  until maybe_sudo k3s ctr -n k8s.io images ls >/dev/null 2>&1; do
+    tries=$((tries + 1))
+    if [[ "${tries}" -ge "${max_tries}" ]]; then
+      die "k3s containerd is not ready for image operations after ${max_tries} attempts"
+    fi
+    sleep 2
+  done
+  local image_has_registry="false"
+  if [[ "${image}" == */* ]]; then
+    image_has_registry="true"
+  fi
+  if [[ "${force}" != "true" ]] && [[ "${image_has_registry}" == "true" ]]; then
+    log "pulling image directly into k3s containerd: ${image}"
+    local pull_attempt
+    for pull_attempt in 1 2 3; do
+      if maybe_sudo k3s ctr -n k8s.io images pull "${image}" >/dev/null 2>&1; then
+        if cluster_image_present "${image}"; then
+          return 0
+        fi
+        break
+      fi
+      if [[ "${pull_attempt}" -lt 3 ]]; then
+        warn "k3s direct pull attempt ${pull_attempt}/3 failed for ${image}; retrying"
+        sleep 3
+      fi
+    done
+    if [[ "${ALLOW_DOCKER_SAVE_FALLBACK:-false}" != "true" ]]; then
+      die "k3s direct pull failed for ${image}; set ALLOW_DOCKER_SAVE_FALLBACK=true to force docker save/import fallback"
+    fi
+    warn "k3s direct pull failed for ${image}; falling back to docker save/import"
+  fi
   if [[ "${force}" == "true" ]]; then
     log "forcing image import into k3s containerd: ${image}"
   else
     log "importing image into k3s containerd: ${image}"
   fi
-  docker save "${image}" | maybe_sudo k3s ctr -n k8s.io images import -
+  local import_args=()
+  local base_ref="${image%%@*}"
+  if [[ "${image}" == *"@"* ]] && [[ -n "${base_ref}" ]]; then
+    import_args+=(--base-name "${base_ref}" --index-name "${image}")
+  fi
+  docker save "${image}" | maybe_sudo k3s ctr -n k8s.io images import "${import_args[@]}" -
+  if [[ "${force}" != "true" ]] && cluster_image_present "${image}"; then
+    return 0
+  fi
+  if [[ "${force}" != "true" ]]; then
+    warn "image import completed but canonical ref is still not visible in k3s: ${image}"
+  fi
 }
 
 cluster_image_present() {
@@ -158,6 +202,20 @@ cluster_image_present() {
   [[ -n "${refs}" ]] || return 1
   if printf '%s\n' "${refs}" | grep -Fx -- "${image}" >/dev/null 2>&1; then
     return 0
+  fi
+  local base_ref="${image%%@*}"
+  # ctr may record digest-pinned images under tag or digest aliases that share
+  # the same repository prefix but not the exact ref we imported.
+  if [[ "${base_ref}" != "${image}" ]]; then
+    if printf '%s\n' "${refs}" | grep -F -- "${base_ref}@" >/dev/null 2>&1; then
+      return 0
+    fi
+    if printf '%s\n' "${refs}" | grep -F -- "${base_ref}:" >/dev/null 2>&1; then
+      return 0
+    fi
+    if printf '%s\n' "${refs}" | grep -Fx -- "${base_ref}" >/dev/null 2>&1; then
+      return 0
+    fi
   fi
   if [[ "${image}" != */* ]]; then
     if printf '%s\n' "${refs}" | grep -Fx -- "docker.io/library/${image}" >/dev/null 2>&1; then
