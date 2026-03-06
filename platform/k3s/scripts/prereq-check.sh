@@ -69,36 +69,14 @@ echo "runtime-image-probe:ok"'
     "${PREPULL_RUNTIME_IMAGE}"
 }
 
-check_privileged_assumptions() {
-  local qwen_template="${QWEN_HELLO_TEMPLATE}"
-  local workload_template="${HARNESS_DIR}/manifests/workload-job.yaml.tpl"
-  local daemonset_template="${OCI2GDSD_DAEMON_TEMPLATE}"
-  local daemon_client_template="${WORKLOAD_DAEMON_TEMPLATE}"
+check_manifest_contracts() {
+  local validator="${SCRIPT_DIR}/validate-runtime-contract.sh"
+  [[ -x "${validator}" ]] || die "runtime contract validator is missing or not executable: ${validator}"
 
-  if ! grep -Eq 'privileged:[[:space:]]*true' "${qwen_template}"; then
-    die "qwen template does not declare privileged container securityContext: ${qwen_template}"
-  fi
-  if ! grep -Eq 'privileged:[[:space:]]*true' "${workload_template}"; then
-    die "workload template does not declare privileged container securityContext: ${workload_template}"
-  fi
-  if ! grep -Eq 'privileged:[[:space:]]*true' "${daemonset_template}"; then
-    die "daemonset template does not declare privileged container securityContext: ${daemonset_template}"
-  fi
-  if ! grep -Eq 'privileged:[[:space:]]*true' "${daemon_client_template}"; then
-    die "daemon-client template does not declare privileged container securityContext: ${daemon_client_template}"
-  fi
-  if ! grep -Eq 'hostIPC:[[:space:]]*true' "${daemonset_template}"; then
-    die "daemonset template must declare hostIPC: true for cross-pod CUDA IPC handle import: ${daemonset_template}"
-  fi
-  if ! grep -Eq 'hostIPC:[[:space:]]*true' "${daemon_client_template}"; then
-    die "daemon-client template must declare hostIPC: true for cross-pod CUDA IPC handle import: ${daemon_client_template}"
-  fi
-  if ! grep -Eq 'hostPID:[[:space:]]*true' "${daemonset_template}"; then
-    die "daemonset template must declare hostPID: true for cross-pod CUDA IPC handle import: ${daemonset_template}"
-  fi
-  if ! grep -Eq 'hostPID:[[:space:]]*true' "${daemon_client_template}"; then
-    die "daemon-client template must declare hostPID: true for cross-pod CUDA IPC handle import: ${daemon_client_template}"
-  fi
+  "${validator}" \
+    --runtime "${WORKLOAD_RUNTIME}" \
+    --include-qwen \
+    --report "${RESULTS_DIR}/runtime-contract-report.json"
 }
 
 prereq_stage_base_common() {
@@ -142,7 +120,7 @@ prereq_stage_k3s_runtime() {
   prereq_stage_begin "k3s-runtime"
   mkdir -p "${RESULTS_DIR}"
   check_runtime_image_toolchain "${WORKLOAD_RUNTIME_IMAGE}"
-  check_privileged_assumptions
+  check_manifest_contracts
   write_environment_report
   prereq_stage_end "k3s-runtime"
 }

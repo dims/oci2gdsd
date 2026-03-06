@@ -1,0 +1,69 @@
+# Runtime Contract Matrix
+
+This document is the human-readable companion to:
+
+- `platform/k3s/contracts/runtime-contract.v1.json`
+- `platform/k3s/scripts/validate-runtime-contract.sh`
+
+The goal is to keep strict direct-GDS preconditions consistent across daemon-client runtimes (`pytorch`, `tensorrt`, `vllm`) and fail fast on manifest drift.
+
+## Enforcement
+
+Contract checks run in:
+
+1. `make prereq-k3s` via `platform/k3s/scripts/prereq-check.sh`
+2. `make verify-k3s*` run path via `platform/k3s/scripts/run.sh`
+3. Standalone:
+   - `make verify-k3s-runtime-contract`
+   - `make verify-k3s-runtime-contract-all`
+
+Report artifact:
+
+- `platform/k3s/work/artifacts/results/runtime-contract-report.json`
+
+## Baseline Requirements (All daemon-client runtimes)
+
+| Requirement | Status | Why |
+|---|---|---|
+| `hostIPC: true` | REQUIRED | Cross-pod CUDA IPC handle attach semantics in current design. |
+| `hostPID: true` | REQUIRED | Cross-process GPU IPC assumptions in current harness model. |
+| `runtimeClassName: nvidia` | REQUIRED | NVIDIA runtime wiring for GPU access. |
+| `privileged: true` | REQUIRED | Current test harness assumption for strict GDS bring-up. |
+| `nvidia.com/gpu: "1"` requests + limits | REQUIRED | Deterministic GPU scheduling/allocation. |
+| daemon socket mount (`/run/oci2gdsd`) | REQUIRED | Workload must call daemon APIs over UDS. |
+| `DEVICE_UUID` + `DEVICE_INDEX` env | REQUIRED | Stable per-device targeting and logging. |
+| host `/run/udev` mount | REQUIRED | cuFile/NVIDIA userspace device resolution prerequisites. |
+| host `/etc/cufile.json` mount | REQUIRED | Strict no-compat cufile policy source. |
+| `CUFILE_ENV_PATH_JSON=/etc/cufile.json` | REQUIRED | Force cufile policy file for runtime process. |
+| CUDA include mount (`/usr/local/cuda/include`) | REQUIRED | Native extension/toolchain build path in runtime clients. |
+
+## Runtime-Specific Requirements
+
+| Requirement | PyTorch | TensorRT-LLM | vLLM |
+|---|---|---|---|
+| Native torch extension enabled (`OCI2GDS_TORCH_ENABLE_NATIVE`) | REQUIRED | REQUIRED | REQUIRED |
+| Runtime parity mode env (`RUNTIME_PARITY_MODE`) | OPTIONAL | REQUIRED | REQUIRED |
+| TensorRT runner/build env (`TRT_MAX_*`) | NOT-NEEDED | REQUIRED | NOT-NEEDED |
+| vLLM-specific backend env (`VLLM_ATTENTION_BACKEND`) | NOT-NEEDED | NOT-NEEDED | REQUIRED |
+| Full parity bind gate env (`REQUIRE_FULL_IPC_BIND`) | NOT-NEEDED | OPTIONAL | REQUIRED |
+
+## qwen-hello Profile Contract
+
+`qwen-k3s-hello-deployment.yaml.tpl` is validated as a profile contract (separate from daemon-client jobs):
+
+1. `runtimeClassName: nvidia`
+2. `privileged: true`
+3. host `/run/udev` mount
+4. host `/dev` pass-through mount to `/host-dev`
+
+## Updating the Contract
+
+When adding/changing runtime manifests:
+
+1. Update `runtime-contract.v1.json` first.
+2. Update templates.
+3. Run:
+   - `make verify-k3s-runtime-contract-all`
+4. If checks pass, run e2e targets (`verify-k3s*`) to confirm runtime behavior.
+
+If a contract rule is no longer needed, remove it from the contract and document why in this file.

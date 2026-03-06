@@ -4,6 +4,7 @@ This guide describes the raw-manifest deployment path for running `oci2gdsd serv
 as a node-level daemon and validating GPU load/export lifecycle from a workload pod.
 
 Architecture overview: [architecture-diagram.md](architecture-diagram.md)
+Runtime contract matrix: [runtime-contract-matrix.md](runtime-contract-matrix.md)
 
 ## Files
 
@@ -56,6 +57,13 @@ For vLLM daemon-client mode, the workload:
 make verify-k3s-daemonset
 ```
 
+Contract-only validation (fast static gate):
+
+```bash
+make verify-k3s-runtime-contract
+make verify-k3s-runtime-contract-all
+```
+
 TensorRT-LLM daemon-client run:
 
 ```bash
@@ -91,6 +99,16 @@ E2E_DEPLOY_MODE=daemonset-manifest make verify-k3s
 - `WORKLOAD_RUNTIME` (`pytorch`, `tensorrt`, or `vllm`; default `pytorch`)
 - `RUNTIME_PARITY_MODE` (`off`, `probe`, `partial`, `full`; default `probe`)
 - `REQUIRE_FULL_IPC_BIND` (default `false`, currently used by vLLM parity flow)
+
+## Contract enforcement
+
+The harness validates runtime manifest contracts before deployment using:
+
+- `platform/k3s/contracts/runtime-contract.v1.json`
+- `platform/k3s/scripts/validate-runtime-contract.sh`
+
+Checks run during both prereq (`make prereq-k3s`) and k3s e2e run paths.
+Failures emit `platform/k3s/work/artifacts/results/runtime-contract-report.json`.
 
 ## Success markers
 

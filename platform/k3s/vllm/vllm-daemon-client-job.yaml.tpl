@@ -41,6 +41,10 @@ spec:
         hostPath:
           path: /run/udev
           type: Directory
+      - name: host-cufile-config
+        hostPath:
+          path: /etc/cufile.json
+          type: File
       - name: host-cuda-include
         hostPath:
           path: /usr/local/cuda/include
@@ -105,6 +109,8 @@ spec:
           value: "__REQUIRE_DIRECT_GDS__"
         - name: OCI2GDS_STRICT
           value: "__OCI2GDS_STRICT__"
+        - name: CUFILE_ENV_PATH_JSON
+          value: "/etc/cufile.json"
         - name: RUNTIME_PARITY_MODE
           value: "__RUNTIME_PARITY_MODE__"
         - name: REQUIRE_FULL_IPC_BIND
@@ -142,6 +148,9 @@ spec:
           readOnly: true
         - name: host-udev
           mountPath: /run/udev
+          readOnly: true
+        - name: host-cufile-config
+          mountPath: /etc/cufile.json
           readOnly: true
         - name: host-cuda-include
           mountPath: /usr/local/cuda/include

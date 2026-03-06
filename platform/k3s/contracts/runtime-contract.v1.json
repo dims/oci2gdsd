@@ -1,0 +1,66 @@
+{
+  "contract_version": "v1",
+  "description": "Runtime daemon-client manifest contract for strict direct-GDS preconditions.",
+  "baseline": {
+    "required_patterns": [
+      "hostIPC:[[:space:]]*true",
+      "hostPID:[[:space:]]*true",
+      "runtimeClassName:[[:space:]]*nvidia",
+      "privileged:[[:space:]]*true",
+      "nvidia\\.com/gpu:[[:space:]]*\"1\"",
+      "-[[:space:]]+name:[[:space:]]*OCI2GDS_DAEMON_SOCKET",
+      "-[[:space:]]+name:[[:space:]]*DEVICE_UUID",
+      "-[[:space:]]+name:[[:space:]]*DEVICE_INDEX",
+      "-[[:space:]]+name:[[:space:]]*host-udev",
+      "mountPath:[[:space:]]*/run/udev",
+      "-[[:space:]]+name:[[:space:]]*host-cufile-config",
+      "mountPath:[[:space:]]*/etc/cufile\\.json",
+      "-[[:space:]]+name:[[:space:]]*CUFILE_ENV_PATH_JSON",
+      "value:[[:space:]]*\"/etc/cufile\\.json\"",
+      "-[[:space:]]+name:[[:space:]]*host-cuda-include",
+      "mountPath:[[:space:]]*/usr/local/cuda/include",
+      "mountPath:[[:space:]]*/run/oci2gdsd"
+    ]
+  },
+  "runtimes": {
+    "pytorch": {
+      "template": "platform/k3s/pytorch/pytorch-daemon-client-job.yaml.tpl",
+      "required_patterns": [
+        "-[[:space:]]+name:[[:space:]]*OCI2GDS_TORCH_ENABLE_NATIVE",
+        "python[[:space:]]+/scripts/pytorch_daemon_client\\.py"
+      ],
+      "forbidden_patterns": []
+    },
+    "tensorrt": {
+      "template": "platform/k3s/tensorrt/tensorrt-daemon-client-job.yaml.tpl",
+      "required_patterns": [
+        "-[[:space:]]+name:[[:space:]]*RUNTIME_PARITY_MODE",
+        "-[[:space:]]+name:[[:space:]]*TRT_MAX_INPUT_LEN",
+        "python3[[:space:]]+/scripts/tensorrt_daemon_client\\.py"
+      ],
+      "forbidden_patterns": []
+    },
+    "vllm": {
+      "template": "platform/k3s/vllm/vllm-daemon-client-job.yaml.tpl",
+      "required_patterns": [
+        "-[[:space:]]+name:[[:space:]]*RUNTIME_PARITY_MODE",
+        "-[[:space:]]+name:[[:space:]]*REQUIRE_FULL_IPC_BIND",
+        "-[[:space:]]+name:[[:space:]]*VLLM_ATTENTION_BACKEND",
+        "python[[:space:]]+/scripts/vllm_daemon_client\\.py"
+      ],
+      "forbidden_patterns": []
+    }
+  },
+  "qwen_hello": {
+    "template": "platform/k3s/pytorch/qwen-k3s-hello-deployment.yaml.tpl",
+    "required_patterns": [
+      "runtimeClassName:[[:space:]]*nvidia",
+      "privileged:[[:space:]]*true",
+      "-[[:space:]]+name:[[:space:]]*run-udev",
+      "mountPath:[[:space:]]*/run/udev",
+      "-[[:space:]]+name:[[:space:]]*host-dev",
+      "mountPath:[[:space:]]*/host-dev"
+    ],
+    "forbidden_patterns": []
+  }
+}

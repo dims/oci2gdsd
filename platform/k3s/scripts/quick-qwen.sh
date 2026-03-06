@@ -8,6 +8,15 @@ source "${SCRIPT_DIR}/common.sh"
 AUTO_SEED_MODEL_IDENTITY="${AUTO_SEED_MODEL_IDENTITY:-true}"
 AUTO_BUILD_OCI2GDSD_IMAGE="${AUTO_BUILD_OCI2GDSD_IMAGE:-true}"
 
+validate_runtime_contracts() {
+  local validator="${SCRIPT_DIR}/validate-runtime-contract.sh"
+  [[ -x "${validator}" ]] || die "runtime contract validator is missing or not executable: ${validator}"
+  "${validator}" \
+    --runtime "${WORKLOAD_RUNTIME}" \
+    --include-qwen \
+    --report "${RESULTS_DIR}/runtime-contract-report.json"
+}
+
 seed_model_identity_if_needed() {
   if [[ -n "${MODEL_REF_OVERRIDE}" && -n "${MODEL_DIGEST_OVERRIDE}" ]]; then
     return 0
@@ -54,6 +63,7 @@ fi
 ensure_cmd jq
 ensure_cmd curl
 ensure_cmd gsed
+validate_runtime_contracts
 
 if [[ "${CLUSTER_MODE}" == "k3s" ]]; then
   ensure_k3s_nvidia_runtime_prereqs

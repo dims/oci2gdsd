@@ -27,7 +27,13 @@ make prereq
 
 This runs local + host + k3s prerequisite checks in order.
 
-## 4) Run smoke validation
+## 4) Validate runtime contracts (fast)
+
+```bash
+make verify-k3s-runtime-contract-all
+```
+
+## 5) Run smoke validation
 
 ```bash
 make verify-smoke
@@ -40,7 +46,7 @@ This executes:
 - `verify-host-qwen-smoke`
 - `verify-k3s-qwen-smoke`
 
-## 5) Run full k3s e2e
+## 6) Run full k3s e2e
 
 Inline qwen path:
 
@@ -58,6 +64,12 @@ All daemonset runtimes (qwen + TensorRT-LLM + vLLM):
 
 ```bash
 make verify-k3s-daemonset-all
+```
+
+Parity-focused daemonset runtime checks:
+
+```bash
+make verify-k3s-daemonset-parity-all
 ```
 
 ## Artifacts

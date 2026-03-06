@@ -37,6 +37,14 @@ spec:
         hostPath:
           path: __OCI2GDSD_SOCKET_HOST_PATH__
           type: Directory
+      - name: host-udev
+        hostPath:
+          path: /run/udev
+          type: Directory
+      - name: host-cufile-config
+        hostPath:
+          path: /etc/cufile.json
+          type: File
       - name: host-cuda-include
         hostPath:
           path: /usr/local/cuda/include
@@ -107,6 +115,8 @@ spec:
           value: "__REQUIRE_DIRECT_GDS__"
         - name: OCI2GDS_STRICT
           value: "__OCI2GDS_STRICT__"
+        - name: CUFILE_ENV_PATH_JSON
+          value: "/etc/cufile.json"
         - name: DEVICE_UUID
           value: ""
         - name: DEVICE_INDEX
@@ -125,6 +135,12 @@ spec:
           readOnly: true
         - name: oci2gdsd-socket-dir
           mountPath: /run/oci2gdsd
+          readOnly: true
+        - name: host-udev
+          mountPath: /run/udev
+          readOnly: true
+        - name: host-cufile-config
+          mountPath: /etc/cufile.json
           readOnly: true
         - name: host-cuda-include
           mountPath: /usr/local/cuda/include
