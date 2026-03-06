@@ -62,13 +62,6 @@ make verify-k3s-daemonset-all
 make verify-k3s-daemonset-parity-all
 ```
 
-Contract validation only:
-
-```bash
-make verify-k3s-runtime-contract
-make verify-k3s-runtime-contract-all
-```
-
 `make prereq-k3s` validates cluster/runtime/image prerequisites and auto-installs host packages by default (`INSTALL_MISSING_PREREQS=true`) after running stages 0 and 1.
 It also validates runtime manifest contracts (`platform/k3s/contracts/runtime-contract.v1.json`) and fails fast on mount/env/security drift.
 It does not mutate GPU driver/kernel packages automatically.

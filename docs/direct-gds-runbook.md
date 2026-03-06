@@ -211,13 +211,12 @@ Run in order:
 
 1. `make verify-unit`
 2. `make verify-local`
-3. `make verify-k3s-runtime-contract-all`
-4. `make verify-smoke`
-5. `make verify-k3s-daemonset`
-6. `make verify-k3s-tensor-e2e-daemonset`
-7. `make verify-k3s-vllm-e2e-daemonset`
-8. `make verify-k3s-daemonset-all`
-9. `make verify-k3s-daemonset-parity-all`
+3. `make verify-smoke`
+4. `make verify-k3s-daemonset`
+5. `make verify-k3s-tensor-e2e-daemonset`
+6. `make verify-k3s-vllm-e2e-daemonset`
+7. `make verify-k3s-daemonset-all`
+8. `make verify-k3s-daemonset-parity-all`
 
 If strict host qualification fails, do not report strict direct-GDS pass for downstream e2e.
 

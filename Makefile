@@ -14,13 +14,11 @@ help:
 	@echo "  verify-k3s-daemonset   Full k3s qwen e2e (daemonset mode)"
 	@echo "  verify-k3s-daemonset-all Daemonset mode for qwen + tensorrt + vllm"
 	@echo "  verify-k3s-daemonset-parity-all Full parity-focused daemonset mode for tensorrt + vllm"
-	@echo "  verify-k3s-runtime-contract-all Validate daemon-client runtime contracts (all runtimes)"
 	@echo "  clean-k3s              Delete k3s e2e local harness artifacts"
 	@echo "  demo-local-registry    Self-contained local demo (no GPU, no k8s)"
 	@echo ""
 	@echo "Advanced targets: prereq-local prereq-host-gds prereq-k3s prereq-all"
 	@echo "                  verify-unit verify-local verify-host-qwen-smoke verify-k3s-qwen-smoke"
-	@echo "                  verify-k3s-runtime-contract verify-k3s-runtime-contract-all"
 	@echo "                  verify-k3s-qwen-e2e-inline verify-k3s-qwen-e2e-daemonset"
 	@echo "                  verify-k3s-tensor-e2e-daemonset verify-k3s-vllm-e2e-daemonset"
 	@echo "                  verify-k3s-tensor-e2e-daemonset-parity verify-k3s-vllm-e2e-daemonset-parity"
@@ -93,16 +91,6 @@ verify-host-qwen-smoke: prereq-host-gds
 .PHONY: verify-k3s-qwen-smoke
 verify-k3s-qwen-smoke: prereq-k3s
 	./platform/k3s/scripts/quick-qwen.sh
-
-.PHONY: verify-k3s-runtime-contract
-verify-k3s-runtime-contract:
-	@command -v jq >/dev/null 2>&1 || (echo "jq is required for runtime-contract validation" && exit 1)
-	./platform/k3s/scripts/validate-runtime-contract.sh --runtime "$${WORKLOAD_RUNTIME:-pytorch}" --include-qwen
-
-.PHONY: verify-k3s-runtime-contract-all
-verify-k3s-runtime-contract-all:
-	@command -v jq >/dev/null 2>&1 || (echo "jq is required for runtime-contract validation" && exit 1)
-	./platform/k3s/scripts/validate-runtime-contract.sh --all-runtimes --include-qwen
 
 .PHONY: verify-k3s-qwen-e2e-inline
 verify-k3s-qwen-e2e-inline: prereq-k3s

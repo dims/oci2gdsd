@@ -13,9 +13,6 @@ Contract checks run in:
 
 1. `make prereq-k3s` via `platform/k3s/scripts/prereq-check.sh`
 2. `make verify-k3s*` run path via `platform/k3s/scripts/run.sh`
-3. Standalone:
-   - `make verify-k3s-runtime-contract`
-   - `make verify-k3s-runtime-contract-all`
 
 Report artifact:
 
@@ -62,8 +59,9 @@ When adding/changing runtime manifests:
 
 1. Update `runtime-contract.v1.json` first.
 2. Update templates.
-3. Run:
-   - `make verify-k3s-runtime-contract-all`
-4. If checks pass, run e2e targets (`verify-k3s*`) to confirm runtime behavior.
+3. Run `make prereq-k3s` (includes runtime-contract checks).
+4. Run daemonset runtime e2e targets to confirm behavior:
+   - `make verify-k3s-daemonset-all`
+   - `make verify-k3s-daemonset-parity-all`
 
 If a contract rule is no longer needed, remove it from the contract and document why in this file.

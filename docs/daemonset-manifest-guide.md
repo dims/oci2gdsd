@@ -57,13 +57,6 @@ For vLLM daemon-client mode, the workload:
 make verify-k3s-daemonset
 ```
 
-Contract-only validation (fast static gate):
-
-```bash
-make verify-k3s-runtime-contract
-make verify-k3s-runtime-contract-all
-```
-
 TensorRT-LLM daemon-client run:
 
 ```bash
