@@ -2,6 +2,11 @@
 
 `oci2gdsd` is a model delivery daemon/CLI for OCI-packaged model artifacts with strict integrity, atomic publish semantics, and GPU-aware preload flows.
 
+> **Important**: `oci2gdsd` is experimental and currently proof-of-concept quality.  
+> The implementation and deployment patterns are still evolving and have not been fully security evaluated for production hardening.  
+> Do not use `oci2gdsd` in production environments without an explicit internal security review and risk acceptance.
+> This is a personal project, not backed by the author's employer.
+
 It gives you a deterministic lifecycle for model bytes:
 
 - pull by immutable digest (not floating tags)
