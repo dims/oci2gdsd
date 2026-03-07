@@ -91,7 +91,9 @@ wait_for_workload_and_collect() {
   wait_for_job_completion_or_fail "${WORKLOAD_JOB_NAME}" 1800 || rc=$?
   if [[ "${rc}" -ne 0 ]]; then
     collect_debug
-    kube -n "${E2E_NAMESPACE}" logs "job/${WORKLOAD_JOB_NAME}" -c preload-model || true
+    if [[ "${E2E_DEPLOY_MODE}" == "inline-daemon" ]]; then
+      kube -n "${E2E_NAMESPACE}" logs "job/${WORKLOAD_JOB_NAME}" -c preload-model || true
+    fi
     kube -n "${E2E_NAMESPACE}" logs "job/${WORKLOAD_JOB_NAME}" -c "${WORKLOAD_CONTAINER_NAME}" || true
     if [[ "${E2E_DEPLOY_MODE}" == "daemonset-manifest" ]]; then
       capture_daemonset_logs "${RESULTS_DIR}/daemonset.log" || true
@@ -103,14 +105,13 @@ wait_for_workload_and_collect() {
   fi
   runtime_drift_checkpoint "post-workload-job"
 
-  kube -n "${E2E_NAMESPACE}" logs "job/${WORKLOAD_JOB_NAME}" -c preload-model > "${RESULTS_DIR}/preload.log"
   kube -n "${E2E_NAMESPACE}" logs "job/${WORKLOAD_JOB_NAME}" -c "${WORKLOAD_CONTAINER_NAME}" > "${WORKLOAD_RESULT_LOG}"
 
-  if ! grep -q '"status": "READY"' "${RESULTS_DIR}/preload.log"; then
-    die "preload init container did not report READY"
-  fi
-
   if [[ "${E2E_DEPLOY_MODE}" == "inline-daemon" ]]; then
+    kube -n "${E2E_NAMESPACE}" logs "job/${WORKLOAD_JOB_NAME}" -c preload-model > "${RESULTS_DIR}/preload.log"
+    if ! grep -q '"status": "READY"' "${RESULTS_DIR}/preload.log"; then
+      die "preload init container did not report READY"
+    fi
     if ! grep -q 'PYTORCH_SMOKE_SUCCESS' "${WORKLOAD_RESULT_LOG}"; then
       die "pytorch smoke container did not report success marker"
     fi
@@ -246,7 +247,9 @@ fi
 
 log "k3s e2e harness completed successfully"
 log "artifacts:"
-log "  ${RESULTS_DIR}/preload.log"
+if [[ -f "${RESULTS_DIR}/preload.log" ]]; then
+  log "  ${RESULTS_DIR}/preload.log"
+fi
 log "  ${WORKLOAD_RESULT_LOG}"
 if [[ -f "${RESULTS_DIR}/qwen-hello.log" ]]; then
   log "  ${RESULTS_DIR}/qwen-hello.log"

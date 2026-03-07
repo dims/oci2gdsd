@@ -28,6 +28,7 @@ Report artifact:
 | `privileged: true` | REQUIRED | Current test harness assumption for strict GDS bring-up. |
 | `nvidia.com/gpu: "1"` requests + limits | REQUIRED | Deterministic GPU scheduling/allocation. |
 | daemon socket mount (`/run/oci2gdsd`) | REQUIRED | Workload must call daemon APIs over UDS. |
+| no host model-root mount in runtime client jobs | REQUIRED | Runtime pods must not read downloaded artifacts directly. |
 | `DEVICE_UUID` + `DEVICE_INDEX` env | REQUIRED | Stable per-device targeting and logging. |
 | host `/run/udev` mount | REQUIRED | cuFile/NVIDIA userspace device resolution prerequisites. |
 | host `/etc/cufile.json` mount | REQUIRED | Strict no-compat cufile policy source. |
@@ -43,6 +44,7 @@ Report artifact:
 | TensorRT runner/build env (`TRT_MAX_*`) | NOT-NEEDED | REQUIRED | NOT-NEEDED |
 | vLLM-specific backend env (`VLLM_ATTENTION_BACKEND`) | NOT-NEEDED | NOT-NEEDED | REQUIRED |
 | Full parity bind gate env (`REQUIRE_FULL_IPC_BIND`) | NOT-NEEDED | OPTIONAL | REQUIRED |
+| Runtime model ref env (`MODEL_REF`) | REQUIRED | REQUIRED | REQUIRED |
 
 ## qwen-hello Profile Contract
 

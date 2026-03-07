@@ -1,10 +1,13 @@
 package daemon
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -59,6 +62,9 @@ func Serve(ctx context.Context, svc *app.Service, cfg ServerConfig) error {
 	h := &handler{svc: svc}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", h.handleHealthz)
+	mux.HandleFunc("/v1/model/ensure", h.handleModelEnsure)
+	mux.HandleFunc("/v1/model/verify", h.handleModelVerify)
+	mux.HandleFunc("/v1/model/runtime-bundle", h.handleModelRuntimeBundle)
 	mux.HandleFunc("/v1/gpu/load", h.handleGPULoad)
 	mux.HandleFunc("/v1/gpu/unload", h.handleGPUUnload)
 	mux.HandleFunc("/v1/gpu/status", h.handleGPUStatus)
@@ -109,6 +115,160 @@ func (h *handler) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status": "ok",
 	})
+}
+
+func (h *handler) handleModelEnsure(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w)
+		return
+	}
+	var wireReq struct {
+		Ref              string `json:"ref"`
+		ModelID          string `json:"model_id"`
+		LeaseHolder      string `json:"lease_holder"`
+		StrictIntegrity  *bool  `json:"strict_integrity"`
+		StrictDirectPath *bool  `json:"strict_direct_path"`
+		Wait             *bool  `json:"wait"`
+		TimeoutSeconds   int    `json:"timeout_seconds"`
+	}
+	if err := decodeJSONBody(r, &wireReq); err != nil {
+		writeAppError(w, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid model ensure request body", err))
+		return
+	}
+	req := app.EnsureRequest{
+		Ref:              wireReq.Ref,
+		ModelID:          wireReq.ModelID,
+		LeaseHolder:      wireReq.LeaseHolder,
+		StrictIntegrity:  true,
+		StrictDirectPath: false,
+		Wait:             true,
+	}
+	if wireReq.StrictIntegrity != nil {
+		req.StrictIntegrity = *wireReq.StrictIntegrity
+	}
+	if wireReq.StrictDirectPath != nil {
+		req.StrictDirectPath = *wireReq.StrictDirectPath
+	}
+	if wireReq.Wait != nil {
+		req.Wait = *wireReq.Wait
+	}
+	if wireReq.TimeoutSeconds > 0 {
+		req.Timeout = time.Duration(wireReq.TimeoutSeconds) * time.Second
+	}
+	res, err := h.svc.Ensure(r.Context(), req)
+	if err != nil {
+		writeAppErrorWithResult(w, err, res)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (h *handler) handleModelVerify(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w)
+		return
+	}
+	var req struct {
+		Path   string `json:"path"`
+		Model  string `json:"model_id"`
+		Digest string `json:"digest"`
+	}
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeAppError(w, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid model verify request body", err))
+		return
+	}
+	res, err := h.svc.Verify(req.Path, req.Model, req.Digest)
+	if err != nil {
+		writeAppErrorWithResult(w, err, res)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (h *handler) handleModelRuntimeBundle(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w)
+		return
+	}
+	var wireReq struct {
+		ModelID        string `json:"model_id"`
+		Digest         string `json:"digest"`
+		Path           string `json:"path"`
+		IncludeWeights *bool  `json:"include_weights"`
+	}
+	if err := decodeJSONBody(r, &wireReq); err != nil {
+		writeAppError(w, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid runtime bundle request body", err))
+		return
+	}
+	includeWeights := false
+	if wireReq.IncludeWeights != nil {
+		includeWeights = *wireReq.IncludeWeights
+	}
+	res, err := h.svc.RuntimeBundle(r.Context(), app.RuntimeBundleRequest{
+		ModelID:        wireReq.ModelID,
+		Digest:         wireReq.Digest,
+		Path:           wireReq.Path,
+		IncludeWeights: includeWeights,
+	})
+	if err != nil {
+		writeAppErrorWithResult(w, err, res)
+		return
+	}
+
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	for _, f := range res.Files {
+		payload, readErr := os.ReadFile(f.SourcePath)
+		if readErr != nil {
+			writeAppError(w, app.NewAppError(app.ExitFilesystem, app.ReasonFilesystemError, "failed reading runtime bundle source file", readErr))
+			return
+		}
+		mode := int64(f.Mode.Perm())
+		hdr := &tar.Header{
+			Name:    f.ArchivePath,
+			Mode:    mode,
+			Size:    int64(len(payload)),
+			ModTime: time.Now().UTC(),
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			writeAppError(w, app.NewAppError(app.ExitFilesystem, app.ReasonFilesystemError, "failed writing runtime bundle tar header", err))
+			return
+		}
+		if _, err := tw.Write(payload); err != nil {
+			writeAppError(w, app.NewAppError(app.ExitFilesystem, app.ReasonFilesystemError, "failed writing runtime bundle tar payload", err))
+			return
+		}
+	}
+
+	manifestPayload, err := json.Marshal(map[string]any{
+		"model_id":        res.ModelID,
+		"manifest_digest": res.ManifestDigest,
+		"file_count":      res.FileCount,
+		"total_bytes":     res.TotalBytes,
+	})
+	if err == nil {
+		hdr := &tar.Header{
+			Name:    "_oci2gds_runtime_bundle.json",
+			Mode:    int64(0o444),
+			Size:    int64(len(manifestPayload)),
+			ModTime: time.Now().UTC(),
+		}
+		if writeErr := tw.WriteHeader(hdr); writeErr == nil {
+			_, _ = tw.Write(manifestPayload)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		writeAppError(w, app.NewAppError(app.ExitFilesystem, app.ReasonFilesystemError, "failed closing runtime bundle tar writer", err))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/x-tar")
+	w.Header().Set("X-Oci2gdsd-Model-Id", res.ModelID)
+	w.Header().Set("X-Oci2gdsd-Manifest-Digest", res.ManifestDigest)
+	w.WriteHeader(http.StatusOK)
+	if _, err := io.Copy(w, &buf); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "daemon write runtime bundle failed: %v\n", err)
+	}
 }
 
 func (h *handler) handleGPULoad(w http.ResponseWriter, r *http.Request) {

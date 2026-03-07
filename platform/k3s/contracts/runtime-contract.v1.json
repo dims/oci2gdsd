@@ -26,29 +26,41 @@
     "pytorch": {
       "template": "platform/k3s/pytorch/pytorch-daemon-client-job.yaml.tpl",
       "required_patterns": [
+        "-[[:space:]]+name:[[:space:]]*MODEL_REF",
         "-[[:space:]]+name:[[:space:]]*OCI2GDS_TORCH_ENABLE_NATIVE",
         "python[[:space:]]+/scripts/pytorch_daemon_client\\.py"
       ],
-      "forbidden_patterns": []
+      "forbidden_patterns": [
+        "-[[:space:]]+name:[[:space:]]*oci2gdsd-root",
+        "-[[:space:]]+name:[[:space:]]*preload-model"
+      ]
     },
     "tensorrt": {
       "template": "platform/k3s/tensorrt/tensorrt-daemon-client-job.yaml.tpl",
       "required_patterns": [
+        "-[[:space:]]+name:[[:space:]]*MODEL_REF",
         "-[[:space:]]+name:[[:space:]]*RUNTIME_PARITY_MODE",
         "-[[:space:]]+name:[[:space:]]*TRT_MAX_INPUT_LEN",
         "python3[[:space:]]+/scripts/tensorrt_daemon_client\\.py"
       ],
-      "forbidden_patterns": []
+      "forbidden_patterns": [
+        "-[[:space:]]+name:[[:space:]]*oci2gdsd-root",
+        "-[[:space:]]+name:[[:space:]]*preload-model"
+      ]
     },
     "vllm": {
       "template": "platform/k3s/vllm/vllm-daemon-client-job.yaml.tpl",
       "required_patterns": [
+        "-[[:space:]]+name:[[:space:]]*MODEL_REF",
         "-[[:space:]]+name:[[:space:]]*RUNTIME_PARITY_MODE",
         "-[[:space:]]+name:[[:space:]]*REQUIRE_FULL_IPC_BIND",
         "-[[:space:]]+name:[[:space:]]*VLLM_ATTENTION_BACKEND",
         "python[[:space:]]+/scripts/vllm_daemon_client\\.py"
       ],
-      "forbidden_patterns": []
+      "forbidden_patterns": [
+        "-[[:space:]]+name:[[:space:]]*oci2gdsd-root",
+        "-[[:space:]]+name:[[:space:]]*preload-model"
+      ]
     }
   },
   "qwen_hello": {

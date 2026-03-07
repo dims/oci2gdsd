@@ -1,10 +1,13 @@
 import gc
 import hashlib
+import io
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
+import tarfile
 from importlib.util import find_spec
 from pathlib import Path
 
@@ -52,7 +55,33 @@ def resolve_device_uuid(device_index: int) -> str:
     return candidate
 
 
-def unix_http_json(socket_path: str, method: str, path: str, payload=None, timeout_seconds: int = 120):
+def _decode_chunked_body(body_raw: bytes) -> bytes:
+    out = bytearray()
+    pos = 0
+    total = len(body_raw)
+    while True:
+        line_end = body_raw.find(b"\r\n", pos)
+        if line_end < 0:
+            raise RuntimeError("malformed chunked response: missing chunk-size line")
+        size_line = body_raw[pos:line_end].decode("ascii", errors="replace")
+        size_token = size_line.split(";", 1)[0].strip()
+        try:
+            size = int(size_token, 16)
+        except ValueError as exc:
+            raise RuntimeError(f"malformed chunked response: invalid chunk size {size_token!r}") from exc
+        pos = line_end + 2
+        if size == 0:
+            return bytes(out)
+        if pos + size > total:
+            raise RuntimeError("malformed chunked response: truncated chunk payload")
+        out.extend(body_raw[pos:pos + size])
+        pos += size
+        if body_raw[pos:pos + 2] != b"\r\n":
+            raise RuntimeError("malformed chunked response: missing chunk terminator")
+        pos += 2
+
+
+def unix_http_request(socket_path: str, method: str, path: str, payload=None, timeout_seconds: int = 120):
     body = b""
     if payload is not None:
         body = json.dumps(payload).encode("utf-8")
@@ -89,6 +118,33 @@ def unix_http_json(socket_path: str, method: str, path: str, payload=None, timeo
     if len(parts) < 2:
         raise RuntimeError(f"invalid daemon status line: {status_line}")
     status_code = int(parts[1])
+    headers = {}
+    for line in header_raw.decode("utf-8", errors="replace").splitlines()[1:]:
+        if ":" not in line:
+            continue
+        k, v = line.split(":", 1)
+        headers[k.strip().lower()] = v.strip()
+    transfer_encoding = headers.get("transfer-encoding", "").lower()
+    if "chunked" in transfer_encoding:
+        body_raw = _decode_chunked_body(body_raw)
+    else:
+        content_length = headers.get("content-length", "")
+        if content_length:
+            try:
+                body_raw = body_raw[: int(content_length)]
+            except ValueError:
+                pass
+    return status_code, headers, body_raw
+
+
+def unix_http_json(socket_path: str, method: str, path: str, payload=None, timeout_seconds: int = 120):
+    status_code, _, body_raw = unix_http_request(
+        socket_path=socket_path,
+        method=method,
+        path=path,
+        payload=payload,
+        timeout_seconds=timeout_seconds,
+    )
     payload_out = {}
     if body_raw.strip():
         text = body_raw.decode("utf-8", errors="replace").strip()
@@ -111,6 +167,49 @@ def assert_http_ok(code: int, payload, action: str):
         raise RuntimeError(f"{action} failed: code={code} payload={payload}")
     if isinstance(payload, dict) and str(payload.get("status", "")).upper() == "FAILED":
         raise RuntimeError(f"{action} returned FAILED payload={payload}")
+
+
+def ensure_model_ready(socket_path: str, model_ref: str, model_id: str, lease_holder: str):
+    req = {
+        "ref": model_ref,
+        "model_id": model_id,
+        "lease_holder": lease_holder,
+        "strict_integrity": True,
+        "wait": True,
+    }
+    code, payload = unix_http_json(socket_path, "POST", "/v1/model/ensure", req, timeout_seconds=1800)
+    assert_http_ok(code, payload, "model/ensure")
+    if str(payload.get("status", "")).upper() != "READY":
+        raise RuntimeError(f"model/ensure did not return READY: {payload}")
+    print(f"DAEMON_MODEL_ENSURE_READY model_id={payload.get('model_id', model_id)} digest={payload.get('manifest_digest', '')}")
+
+
+def hydrate_model_root(socket_path: str, model_root: Path, model_id: str, model_digest: str):
+    if model_root.exists():
+        shutil.rmtree(model_root)
+    model_root.mkdir(parents=True, exist_ok=True)
+    req = {
+        "model_id": model_id,
+        "digest": model_digest,
+        "include_weights": False,
+    }
+    code, _, payload = unix_http_request(
+        socket_path=socket_path,
+        method="POST",
+        path="/v1/model/runtime-bundle",
+        payload=req,
+        timeout_seconds=600,
+    )
+    if code >= 300:
+        text = payload.decode("utf-8", errors="replace")
+        raise RuntimeError(f"model/runtime-bundle failed: code={code} body={text}")
+    with tarfile.open(fileobj=io.BytesIO(payload), mode="r:") as tf:
+        tf.extractall(path=str(model_root))
+    if not (model_root / "metadata" / "model.json").exists():
+        raise RuntimeError(f"runtime bundle missing metadata/model.json in {model_root}")
+    if not (model_root / "shards" / "config.json").exists():
+        raise RuntimeError(f"runtime bundle missing shards/config.json in {model_root}")
+    print(f"DAEMON_RUNTIME_BUNDLE_READY files_root={model_root}")
 
 
 def _native_cpp_source_path() -> Path:
@@ -393,7 +492,11 @@ def build_runtime_dir(model_root: Path) -> Path:
             raise RuntimeError("empty shard name in profile")
         src = model_root / "shards" / name
         if not src.exists():
-            raise RuntimeError(f"missing shard file: {src}")
+            kind = str(shard.get("kind", "")).strip().lower()
+            is_weight = kind in {"", "weight"} or name.endswith(".safetensors")
+            if is_weight:
+                continue
+            raise RuntimeError(f"missing runtime shard file: {src}")
         os.symlink(src, runtime_dir / name)
 
     metadata_dir = model_root / "metadata"
@@ -640,7 +743,8 @@ def run_vllm_infer(model_id: str, model_digest: str, runtime_dir: Path, device_i
 
 
 def main():
-    model_root = Path(os.environ["MODEL_ROOT_PATH"])
+    model_root = Path(os.environ.get("MODEL_ROOT_PATH", "/tmp/oci2gdsd-model-root"))
+    model_ref = os.environ["MODEL_REF"]
     model_id = os.environ["MODEL_ID"]
     model_digest = os.environ["MODEL_DIGEST"]
     lease_holder = os.environ.get("LEASE_HOLDER", "vllm-daemon-client")
@@ -650,14 +754,14 @@ def main():
     strict_load = parse_bool_env("OCI2GDS_STRICT", True)
     require_direct = parse_bool_env("REQUIRE_DIRECT_GDS", True)
 
-    parity_mode = str(os.environ.get("RUNTIME_PARITY_MODE", "probe")).strip().lower()
-    if parity_mode not in {"off", "probe", "partial", "full"}:
-        raise RuntimeError(f"invalid RUNTIME_PARITY_MODE={parity_mode}; expected off|probe|partial|full")
+    parity_mode = str(os.environ.get("RUNTIME_PARITY_MODE", "full")).strip().lower()
+    if parity_mode != "full":
+        raise RuntimeError("vLLM daemon-client requires RUNTIME_PARITY_MODE=full; path-backed modes are removed")
 
-    ready = model_root / "READY"
+    ensure_model_ready(socket_path, model_ref, model_id, lease_holder)
+    hydrate_model_root(socket_path, model_root, model_id, model_digest)
+
     metadata_path = model_root / "metadata" / "model.json"
-    if not ready.exists():
-        raise RuntimeError(f"READY marker missing at {ready}")
     if not metadata_path.exists():
         raise RuntimeError(f"metadata missing at {metadata_path}")
 
@@ -666,12 +770,7 @@ def main():
     if not shards:
         raise RuntimeError("no shards listed in metadata profile")
 
-    first_shard = model_root / "shards" / shards[0]["name"]
-    if not first_shard.exists():
-        raise RuntimeError(f"first shard missing at {first_shard}")
-    with first_shard.open("rb") as f:
-        sample = f.read(8 * 1024 * 1024)
-    sample_sha = hashlib.sha256(sample).hexdigest()
+    sample_sha = ""
 
     load_ready = False
     attached = False
@@ -831,9 +930,10 @@ def main():
         assert_http_ok(post_code, post_payload, "post-unload gpu/status")
         post_files = post_payload.get("files", []) if isinstance(post_payload, dict) else []
         still_loaded = []
+        digest_token = model_digest.replace(":", "-")
         for entry in post_files:
             p = str(entry.get("path", "")).strip()
-            if p and p.startswith(str(model_root)):
+            if p and f"/{model_id}/{digest_token}/" in p:
                 still_loaded.append(p)
         if still_loaded:
             raise RuntimeError(f"model paths still loaded after unload: {still_loaded}")

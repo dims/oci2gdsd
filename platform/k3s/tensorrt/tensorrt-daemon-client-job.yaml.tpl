@@ -22,13 +22,6 @@ spec:
         operator: "Exists"
         effect: "NoSchedule"
       volumes:
-      - name: oci2gdsd-root
-        hostPath:
-          path: __OCI2GDSD_ROOT_PATH__
-          type: DirectoryOrCreate
-      - name: oci2gdsd-config
-        configMap:
-          name: oci2gdsd-config
       - name: daemon-client-script
         configMap:
           name: tensorrt-daemon-client-script
@@ -49,36 +42,6 @@ spec:
         hostPath:
           path: /usr/local/cuda/include
           type: Directory
-      initContainers:
-      - name: preload-model
-        image: __OCI2GDSD_IMAGE__
-        imagePullPolicy: IfNotPresent
-        securityContext:
-          runAsUser: 0
-          runAsGroup: 0
-          privileged: true
-        command: ["/bin/sh", "-ec"]
-        args:
-        - |
-          set -eu
-          oci2gdsd --registry-config /etc/oci2gdsd/config.yaml --json ensure \
-            --ref "__MODEL_REF__" \
-            --model-id "__MODEL_ID__" \
-            --lease-holder "__LEASE_HOLDER__" \
-            --strict-integrity \
-            --wait
-          oci2gdsd --registry-config /etc/oci2gdsd/config.yaml --json status \
-            --model-id "__MODEL_ID__" \
-            --digest "__MODEL_DIGEST__"
-          oci2gdsd --registry-config /etc/oci2gdsd/config.yaml --json verify \
-            --model-id "__MODEL_ID__" \
-            --digest "__MODEL_DIGEST__"
-        volumeMounts:
-        - name: oci2gdsd-root
-          mountPath: __OCI2GDSD_ROOT_PATH__
-        - name: oci2gdsd-config
-          mountPath: /etc/oci2gdsd
-          readOnly: true
       containers:
       - name: tensorrt-daemon-client
         image: __TENSORRTLLM_IMAGE__
@@ -93,8 +56,10 @@ spec:
           set -eu
           python3 /scripts/tensorrt_daemon_client.py
         env:
+        - name: MODEL_REF
+          value: "__MODEL_REF__"
         - name: MODEL_ROOT_PATH
-          value: "__MODEL_ROOT_PATH__"
+          value: "/tmp/oci2gdsd-model-root"
         - name: MODEL_ID
           value: "__MODEL_ID__"
         - name: MODEL_DIGEST
@@ -135,8 +100,6 @@ spec:
           requests:
             nvidia.com/gpu: "1"
         volumeMounts:
-        - name: oci2gdsd-root
-          mountPath: __OCI2GDSD_ROOT_PATH__
         - name: daemon-client-script
           mountPath: /scripts
           readOnly: true

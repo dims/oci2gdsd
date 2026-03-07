@@ -32,6 +32,8 @@ runtime_result_log_path() {
 
 runtime_required_markers() {
   cat <<'EOF'
+DAEMON_MODEL_ENSURE_READY
+DAEMON_RUNTIME_BUNDLE_READY
 DAEMON_GPU_LOAD_READY
 DAEMON_GPU_STATUS_OK
 DAEMON_GPU_ATTACH_OK
