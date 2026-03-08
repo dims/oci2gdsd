@@ -42,6 +42,9 @@
       "required_patterns": [
         "-[[:space:]]+name:[[:space:]]*MODEL_REF",
         "-[[:space:]]+name:[[:space:]]*RUNTIME_PARITY_MODE",
+        "-[[:space:]]+name:[[:space:]]*TENSORRT_STARTUP_MODE",
+        "-[[:space:]]+name:[[:space:]]*host-tensorrt-cache",
+        "mountPath:[[:space:]]*/var/cache/oci2gdsd/tensorrt",
         "-[[:space:]]+name:[[:space:]]*TRT_MAX_INPUT_LEN",
         "python3[[:space:]]+/scripts/tensorrt_daemon_client\\.py"
       ],

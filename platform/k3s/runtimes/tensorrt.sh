@@ -14,7 +14,9 @@ runtime_daemon_apply_configmaps() {
 
 runtime_daemon_render_job() {
   local rendered="$1"
-  runtime_render_job_template "${rendered}" "TENSORRTLLM_IMAGE" "${TENSORRTLLM_IMAGE}"
+  runtime_render_job_template "${rendered}" "TENSORRTLLM_IMAGE" "${TENSORRTLLM_IMAGE}" \
+    "TENSORRT_STARTUP_MODE=${TENSORRT_STARTUP_MODE}" \
+    "TENSORRT_ENGINE_CACHE_HOST_PATH=${TENSORRT_ENGINE_CACHE_HOST_PATH}"
 }
 
 runtime_result_log_path() {

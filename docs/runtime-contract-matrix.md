@@ -42,6 +42,7 @@ Report artifact:
 | Native torch extension enabled (`OCI2GDS_TORCH_ENABLE_NATIVE`) | REQUIRED | REQUIRED | REQUIRED |
 | Runtime parity mode env (`RUNTIME_PARITY_MODE`) | REQUIRED | REQUIRED | REQUIRED |
 | TensorRT runner/build env (`TRT_MAX_*`) | NOT-NEEDED | REQUIRED | NOT-NEEDED |
+| TensorRT startup/cache wiring (`TENSORRT_STARTUP_MODE`, `host-tensorrt-cache`) | NOT-NEEDED | REQUIRED | NOT-NEEDED |
 | vLLM-specific backend env (`VLLM_ATTENTION_BACKEND`) | NOT-NEEDED | NOT-NEEDED | REQUIRED |
 | Full parity bind gate env (`REQUIRE_FULL_IPC_BIND`) | NOT-NEEDED | OPTIONAL | REQUIRED |
 | Runtime model ref env (`MODEL_REF`) | REQUIRED | REQUIRED | REQUIRED |

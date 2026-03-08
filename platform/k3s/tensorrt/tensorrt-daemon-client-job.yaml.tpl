@@ -42,6 +42,10 @@ spec:
         hostPath:
           path: /usr/local/cuda/include
           type: Directory
+      - name: host-tensorrt-cache
+        hostPath:
+          path: __TENSORRT_ENGINE_CACHE_HOST_PATH__
+          type: DirectoryOrCreate
       containers:
       - name: tensorrt-daemon-client
         image: __TENSORRTLLM_IMAGE__
@@ -94,6 +98,10 @@ spec:
           value: "64"
         - name: TRT_FORCE_REBUILD
           value: "false"
+        - name: TENSORRT_STARTUP_MODE
+          value: "__TENSORRT_STARTUP_MODE__"
+        - name: TENSORRT_ENGINE_CACHE_ROOT
+          value: "/var/cache/oci2gdsd/tensorrt"
         resources:
           limits:
             nvidia.com/gpu: "1"
@@ -115,3 +123,6 @@ spec:
         - name: host-cuda-include
           mountPath: /usr/local/cuda/include
           readOnly: true
+        - name: host-tensorrt-cache
+          mountPath: /var/cache/oci2gdsd/tensorrt
+          readOnly: false

@@ -41,7 +41,9 @@ Each target runs `prereq-k3s` first.
 - `verify-k3s-tensor` -> `WORKLOAD_RUNTIME=tensorrt`
 - `verify-k3s-vllm` -> `WORKLOAD_RUNTIME=vllm`
 
-All 3 run in daemonset-manifest mode with parity checks enabled.
+All 3 run in daemonset-manifest mode with parity checks enabled. TensorRT also
+supports `TENSORRT_STARTUP_MODE=fast` for cached engine reuse while keeping
+`RUNTIME_PARITY_MODE=full`.
 
 ## What Prereq Validates
 
@@ -110,6 +112,14 @@ Toggle qwen-hello and local host GDS checks:
 ```bash
 VALIDATE_QWEN_HELLO=false make verify-k3s-qwen
 VALIDATE_LOCAL_GDS=false make verify-k3s-qwen
+```
+
+Enable TensorRT fast startup mode (persistent engine cache reuse):
+
+```bash
+TENSORRT_STARTUP_MODE=fast \
+TENSORRT_ENGINE_CACHE_HOST_PATH=/mnt/nvme/oci2gdsd-tensorrt-cache \
+make verify-k3s-tensor
 ```
 
 Storage and namespace overrides:

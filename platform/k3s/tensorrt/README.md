@@ -21,3 +21,20 @@ Runtime-specific assets for TensorRT-LLM paths in k3s daemonset mode.
   - `TENSORRT_IPC_BIND_OK`
   - `TENSORRT_IPC_IMPORT_OK`
 - In `full` mode, runtime shards are materialized from daemon-exported IPC handles (`source=ipc_materialized`) and fallback reads are rejected (`fallback_reads=0`).
+
+## Startup modes
+
+- `TENSORRT_STARTUP_MODE=parity` (default): always rebuilds checkpoint+engine in the workload run.
+- `TENSORRT_STARTUP_MODE=fast`: reuses a persistent engine cache when present and skips conversion/build on cache hit.
+- Cache location is host-mounted at `TENSORRT_ENGINE_CACHE_HOST_PATH` (default `/mnt/nvme/oci2gdsd-tensorrt-cache`) and exposed in-container as `/var/cache/oci2gdsd/tensorrt`.
+
+Example fast-mode runs (second run should hit cache):
+
+```bash
+TENSORRT_STARTUP_MODE=fast make verify-k3s-tensor
+TENSORRT_STARTUP_MODE=fast make verify-k3s-tensor
+```
+
+Fast-mode cache behavior marker:
+
+- `TENSORRT_ENGINE_FASTPATH_OK cache_hit=true built=false ...`

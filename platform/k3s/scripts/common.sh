@@ -250,6 +250,14 @@ configure_workload_runtime() {
       WORKLOAD_DAEMON_CONTAINER_NAME="pytorch-daemon-client"
       ;;
     tensorrt)
+      case "${TENSORRT_STARTUP_MODE}" in
+        parity|fast)
+          ;;
+        *)
+          die "unsupported TENSORRT_STARTUP_MODE=${TENSORRT_STARTUP_MODE} (expected parity|fast)"
+          ;;
+      esac
+      [[ -n "${TENSORRT_ENGINE_CACHE_HOST_PATH}" ]] || die "TENSORRT_ENGINE_CACHE_HOST_PATH must not be empty"
       WORKLOAD_IMAGE="${TENSORRTLLM_IMAGE}"
       WORKLOAD_RUNTIME_IMAGE="${TENSORRTLLM_RUNTIME_IMAGE}"
       WORKLOAD_DAEMON_TEMPLATE="${TENSORRT_DAEMON_CLIENT_TEMPLATE}"

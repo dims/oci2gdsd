@@ -230,10 +230,75 @@ def engine_ready(engine_dir: Path) -> bool:
     return len(plans) > 0
 
 
-def build_engine(runtime_dir: Path, model_root: Path, source_mode: str, force_rebuild_override: bool = False) -> Path:
-    cache_root = model_root / ".trt-cache"
-    checkpoint_dir = Path(os.environ.get("TRT_CHECKPOINT_DIR", str(cache_root / "checkpoint")))
-    engine_dir = Path(os.environ.get("TRT_ENGINE_DIR", str(cache_root / "engine")))
+def _safe_token(raw: str, fallback: str) -> str:
+    text = "".join(ch if ch.isalnum() or ch in "-._" else "-" for ch in str(raw).strip())
+    text = text.strip("-._")
+    return text or fallback
+
+
+def _digest_token(raw_digest: str) -> str:
+    digest = str(raw_digest or "").strip()
+    if digest.startswith("sha256:"):
+        digest = digest.split(":", 1)[1]
+    return _safe_token(digest, "unknown-digest")
+
+
+def resolve_engine_dirs(
+    model_root: Path,
+    model_id: str,
+    manifest_digest: str,
+    dtype: str,
+    max_input_len: int,
+    max_seq_len: int,
+    max_output_len: int,
+):
+    checkpoint_override = str(os.environ.get("TRT_CHECKPOINT_DIR", "")).strip()
+    engine_override = str(os.environ.get("TRT_ENGINE_DIR", "")).strip()
+    if checkpoint_override or engine_override:
+        cache_root = model_root / ".trt-cache"
+        checkpoint_dir = Path(checkpoint_override or str(cache_root / "checkpoint"))
+        engine_dir = Path(engine_override or str(cache_root / "engine"))
+        cache_key = "override-paths"
+        return checkpoint_dir, engine_dir, cache_key
+
+    cache_root = Path(os.environ.get("TENSORRT_ENGINE_CACHE_ROOT", "/var/cache/oci2gdsd/tensorrt"))
+    profile = {
+        "model_id": str(model_id),
+        "manifest_digest": str(manifest_digest),
+        "dtype": str(dtype),
+        "max_input_len": int(max_input_len),
+        "max_seq_len": int(max_seq_len),
+        "max_output_len": int(max_output_len),
+    }
+    cache_key = hashlib.sha256(json.dumps(profile, sort_keys=True).encode("utf-8")).hexdigest()[:24]
+    model_token = _safe_token(model_id, "model")
+    digest_token = _digest_token(manifest_digest)
+    base = cache_root / model_token / digest_token / cache_key
+    return base / "checkpoint", base / "engine", cache_key
+
+
+def build_engine(
+    runtime_dir: Path,
+    model_root: Path,
+    source_mode: str,
+    model_id: str,
+    manifest_digest: str,
+    startup_mode: str,
+    force_rebuild_override: bool = False,
+) -> Path:
+    dtype = os.environ.get("TRT_DTYPE", "float16").strip() or "float16"
+    max_input_len = int(os.environ.get("TRT_MAX_INPUT_LEN", "512"))
+    max_seq_len = int(os.environ.get("TRT_MAX_SEQ_LEN", "640"))
+    max_output_len = int(os.environ.get("TRT_MAX_OUTPUT_LEN", "64"))
+    checkpoint_dir, engine_dir, cache_key = resolve_engine_dirs(
+        model_root=model_root,
+        model_id=model_id,
+        manifest_digest=manifest_digest,
+        dtype=dtype,
+        max_input_len=max_input_len,
+        max_seq_len=max_seq_len,
+        max_output_len=max_output_len,
+    )
     force_rebuild = parse_bool_env("TRT_FORCE_REBUILD", False) or force_rebuild_override
 
     if force_rebuild:
@@ -241,16 +306,21 @@ def build_engine(runtime_dir: Path, model_root: Path, source_mode: str, force_re
         shutil.rmtree(engine_dir, ignore_errors=True)
 
     if engine_ready(engine_dir):
-        print(f"TENSORRT_ENGINE_BUILD_OK reused=true source={source_mode} engine_dir={engine_dir}")
+        print(
+            "TENSORRT_ENGINE_BUILD_OK "
+            f"reused=true source={source_mode} startup_mode={startup_mode} "
+            f"cache_key={cache_key} engine_dir={engine_dir}"
+        )
+        if startup_mode == "fast":
+            print(
+                "TENSORRT_ENGINE_FASTPATH_OK "
+                f"cache_hit=true built=false cache_key={cache_key} engine_dir={engine_dir}"
+            )
         return engine_dir
 
     convert_script = find_qwen_convert_script()
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     engine_dir.mkdir(parents=True, exist_ok=True)
-
-    dtype = os.environ.get("TRT_DTYPE", "float16").strip() or "float16"
-    max_input_len = int(os.environ.get("TRT_MAX_INPUT_LEN", "512"))
-    max_seq_len = int(os.environ.get("TRT_MAX_SEQ_LEN", "640"))
 
     run_cmd(
         [
@@ -297,7 +367,16 @@ def build_engine(runtime_dir: Path, model_root: Path, source_mode: str, force_re
 
     if not engine_ready(engine_dir):
         raise RuntimeError(f"TensorRT engine build did not produce expected outputs in {engine_dir}")
-    print(f"TENSORRT_ENGINE_BUILD_OK reused=false source={source_mode} engine_dir={engine_dir}")
+    print(
+        "TENSORRT_ENGINE_BUILD_OK "
+        f"reused=false source={source_mode} startup_mode={startup_mode} "
+        f"cache_key={cache_key} engine_dir={engine_dir}"
+    )
+    if startup_mode == "fast":
+        print(
+            "TENSORRT_ENGINE_FASTPATH_OK "
+            f"cache_hit=false built=true cache_key={cache_key} engine_dir={engine_dir}"
+        )
     return engine_dir
 
 
@@ -465,10 +544,14 @@ def main():
     device_uuid = resolve_device_uuid(device_index)
     require_direct = parse_bool_env("REQUIRE_DIRECT_GDS", True)
     strict_load = parse_bool_env("OCI2GDS_STRICT", True)
+    startup_mode = str(os.environ.get("TENSORRT_STARTUP_MODE", "parity")).strip().lower()
+    if startup_mode not in {"parity", "fast"}:
+        raise RuntimeError("TENSORRT_STARTUP_MODE must be one of: parity, fast")
 
     parity_mode = str(os.environ.get("RUNTIME_PARITY_MODE", "full")).strip().lower()
     if parity_mode != "full":
         raise RuntimeError("TensorRT daemon-client requires RUNTIME_PARITY_MODE=full; path-backed modes are removed")
+    print(f"TENSORRT_STARTUP_MODE_OK mode={startup_mode}")
 
     allocation = create_gpu_allocation(
         socket_path=socket_path,
@@ -646,7 +729,10 @@ def main():
             runtime_dir,
             model_root=runtime_root,
             source_mode=source_mode,
-            force_rebuild_override=True,
+            model_id=model_id,
+            manifest_digest=model_digest,
+            startup_mode=startup_mode,
+            force_rebuild_override=(startup_mode != "fast"),
         )
         if heartbeat is not None:
             heartbeat.assert_healthy()
@@ -741,6 +827,7 @@ def main():
         f"imported_shards={import_stats.get('imported_shards', 0)} "
         f"imported_bytes={import_stats.get('imported_bytes', 0)} "
         f"source_mode={source_mode} "
+        f"startup_mode={startup_mode} "
         f"fallback_reads={fallback_reads} "
         f"cuda_device={cuda_name}"
     )

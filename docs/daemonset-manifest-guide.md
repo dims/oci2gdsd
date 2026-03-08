@@ -72,6 +72,8 @@ For runtime-specific overrides and full operational examples, use:
 - `WORKLOAD_RUNTIME` (`pytorch`, `tensorrt`, or `vllm`; default `pytorch`)
 - `RUNTIME_PARITY_MODE` (`full`; required)
 - `REQUIRE_FULL_IPC_BIND` (default `true`)
+- `TENSORRT_STARTUP_MODE` (`parity` or `fast`; TensorRT only, default `parity`)
+- `TENSORRT_ENGINE_CACHE_HOST_PATH` (TensorRT host cache path, default `/mnt/nvme/oci2gdsd-tensorrt-cache`)
 
 ## Contract enforcement
 
@@ -115,6 +117,7 @@ TensorRT daemon-client log (`platform/k3s/work/artifacts/results/tensorrt-daemon
 - `TENSORRT_IPC_BIND_OK`
 - `TENSORRT_IPC_IMPORT_OK`
 - `TENSORRT_ENGINE_BUILD_OK`
+- `TENSORRT_STARTUP_MODE_OK`
 - `TENSORRT_GDS_RUNNER_READY`
 - `TENSORRT_QWEN_INFER_OK`
 - `DAEMON_GPU_DETACH_OK`
@@ -126,6 +129,10 @@ For `RUNTIME_PARITY_MODE=full`, harness also validates:
 - `TENSORRT_IPC_BIND_OK status=ok`
 - `TENSORRT_IPC_IMPORT_OK status=ok unresolved_shards=0`
 - `TENSORRT_FULL_SOURCE_OK source=ipc_materialized fallback_reads=0`
+
+When `TENSORRT_STARTUP_MODE=fast`, logs additionally emit:
+
+- `TENSORRT_ENGINE_FASTPATH_OK cache_hit=... built=...`
 
 vLLM daemon-client log (`platform/k3s/work/artifacts/results/vllm-daemon-client.log`) must include:
 
