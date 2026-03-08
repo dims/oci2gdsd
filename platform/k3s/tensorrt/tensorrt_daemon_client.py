@@ -280,7 +280,6 @@ def resolve_engine_dirs(
     cache_root = Path(os.environ.get("TENSORRT_ENGINE_CACHE_ROOT", "/var/cache/oci2gdsd/tensorrt"))
     profile = {
         "model_id": str(model_id),
-        "manifest_digest": str(manifest_digest),
         "content_key": str(content_key),
         "dtype": str(dtype),
         "max_input_len": int(max_input_len),
