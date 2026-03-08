@@ -3,16 +3,16 @@
 `qwen-hello` is a Kubernetes example that shows:
 
 1. Packaging `Qwen/Qwen3-0.6B` as an OCI artifact with `OCI-ModelProfile-v1`.
-2. Preloading model files with `oci2gdsd ensure` in an init container.
-3. Running `oci2gdsd serve` inside the GPU application container, so daemon GPU-load/export paths can use the same allocated device.
-4. Running a FastAPI app that loads the model from local preloaded files using PyTorch + Transformers (offline mode).
+2. Preloading model identity with `oci2gdsd ensure` in an init container.
+3. Running `oci2gdsd serve` in a dedicated sidecar container.
+4. Running a FastAPI app that requests `gpu/allocate` + `model/runtime-bundle` and loads from pod-local runtime bundle files (offline mode, no runtime host model-root dependency).
 5. Exercising `torch.ops.oci2gds.read_into_tensor`, `torch.ops.oci2gds.load_profile`, and a daemon IPC handoff probe at startup.
 
 ## What This Example Demonstrates
 
-- Registry -> node-local OCI preload workflow.
-- Deterministic runtime startup from local files (no Hugging Face network fetch at app start).
-- Pod-local daemon API (`/v2/gpu/load`, `/v2/gpu/export`) for persistent allocation orchestration (running in-process with the app container).
+- Registry -> daemon-managed OCI preload workflow.
+- Deterministic runtime startup from daemon runtime bundle files (no Hugging Face network fetch at app start).
+- Pod-local daemon API (`/v2/gpu/allocate`, `/v2/model/runtime-bundle`, `/v2/gpu/export`) for runtime startup + IPC probe orchestration.
 - A runtime `oci2gds` probe path with:
   - optional native cuFile backend (JIT C++ extension build),
   - automatic Python fallback when native prerequisites are missing.
@@ -45,7 +45,8 @@ If CUDA appears unavailable in pods (`torch.cuda.is_available() == False` while 
 
 - `qwen-k3s-hello-deployment.yaml.tpl`: Deployment template with:
   - `preload-model` init container (`oci2gdsd ensure`)
-  - `pytorch-api` container (runs `oci2gdsd serve` + FastAPI + PyTorch runtime)
+  - `oci2gdsd-daemon` sidecar (runs `oci2gdsd serve`)
+  - `pytorch-api` container (FastAPI + PyTorch runtime, daemon-client startup)
 - `app/qwen_server.py`: FastAPI + PyTorch + `torch.ops.oci2gds` startup/runtime logic.
 - `app/deps_bootstrap.py`: runtime dependency bootstrap script used by the pod command.
 - `native/oci2gds_torch_native.cpp`: shared native extension source used by both qwen app and host probe.

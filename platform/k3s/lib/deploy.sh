@@ -124,8 +124,7 @@ package_model_to_registry() {
   if [[ -n "${MODEL_REF_OVERRIDE}" && -n "${MODEL_DIGEST_OVERRIDE}" ]]; then
     MODEL_DIGEST="${MODEL_DIGEST_OVERRIDE}"
     MODEL_REF="${MODEL_REF_OVERRIDE}"
-    MODEL_ROOT_PATH="${OCI2GDSD_ROOT_PATH}/models/${MODEL_ID}/${MODEL_DIGEST//:/-}"
-    export MODEL_DIGEST MODEL_REF MODEL_ROOT_PATH
+    export MODEL_DIGEST MODEL_REF
     log "using pre-existing model ref override: ${MODEL_REF}"
     return
   fi
@@ -151,8 +150,7 @@ package_model_to_registry() {
     die "failed to parse model digest from manifest-descriptor.json"
   fi
   MODEL_REF="${REGISTRY_SERVICE}.${REGISTRY_NAMESPACE}.svc.cluster.local:5000/${MODEL_REPO}@${MODEL_DIGEST}"
-  MODEL_ROOT_PATH="${OCI2GDSD_ROOT_PATH}/models/${MODEL_ID}/${MODEL_DIGEST//:/-}"
-  export MODEL_DIGEST MODEL_REF MODEL_ROOT_PATH
+  export MODEL_DIGEST MODEL_REF
   log "model digest: ${MODEL_DIGEST}"
   log "model ref for pods: ${MODEL_REF}"
 }

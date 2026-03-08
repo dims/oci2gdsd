@@ -52,8 +52,10 @@ Report artifact:
 
 1. `runtimeClassName: nvidia`
 2. `privileged: true`
-3. host `/run/udev` mount
-4. host `/dev` pass-through mount to `/host-dev`
+3. explicit `oci2gdsd-daemon` sidecar and `MODEL_REF`/`RUNTIME_BUNDLE_ROOT` runtime envs
+4. host `/run/udev` mount
+5. host `/dev` pass-through mount to `/host-dev`
+6. `MODEL_ROOT_PATH` runtime env is forbidden
 
 ## Updating the Contract
 

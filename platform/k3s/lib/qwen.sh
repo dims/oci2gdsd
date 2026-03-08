@@ -67,13 +67,11 @@ validate_qwen_hello_example() {
   maybe_sudo mkdir -p "${OCI2GDSD_ROOT_PATH}" || true
   mkdir -p "${RENDERED_DIR}" "${RESULTS_DIR}"
   local rendered="${RENDERED_DIR}/qwen-hello.yaml"
-  local model_root="${OCI2GDSD_ROOT_PATH}/models/${MODEL_ID}/${MODEL_DIGEST//:/-}"
   render_template "${template}" "${rendered}" \
     "QWEN_HELLO_NAMESPACE=${QWEN_HELLO_NAMESPACE}" \
     "MODEL_ID=${MODEL_ID}" \
     "MODEL_REF=${MODEL_REF}" \
     "MODEL_DIGEST=${MODEL_DIGEST}" \
-    "MODEL_ROOT_PATH=${model_root}" \
     "OCI2GDSD_IMAGE=${OCI2GDSD_IMAGE}" \
     "OCI2GDSD_ROOT_PATH=${OCI2GDSD_ROOT_PATH}" \
     "OCI2GDS_STRICT=${qwen_hello_oci2gds_strict}" \

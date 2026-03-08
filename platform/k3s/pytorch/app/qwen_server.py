@@ -1,10 +1,13 @@
 import json
+import io
 import os
 import re
 import socket
 import shutil
 import subprocess
+import tarfile
 import time
+import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -320,6 +323,46 @@ oci2gds_backend = {
 _IPC_NATIVE_MODULE, _IPC_NATIVE_ERROR = _load_ipc_native_module()
 
 def _unix_http_json(socket_path, method, path, payload=None, timeout_seconds=60):
+    status_code, _, body_raw = _unix_http_request(
+        socket_path=socket_path,
+        method=method,
+        path=path,
+        payload=payload,
+        timeout_seconds=timeout_seconds,
+    )
+    payload_out = {}
+    if body_raw.strip():
+        payload_out = json.loads(body_raw.decode("utf-8"))
+    return status_code, payload_out
+
+
+def _decode_chunked_body(body_raw):
+    out = bytearray()
+    pos = 0
+    total = len(body_raw)
+    while True:
+        line_end = body_raw.find(b"\r\n", pos)
+        if line_end < 0:
+            raise RuntimeError("malformed chunked response: missing chunk-size line")
+        size_line = body_raw[pos:line_end].decode("ascii", errors="replace")
+        size_token = size_line.split(";", 1)[0].strip()
+        try:
+            size = int(size_token, 16)
+        except ValueError as exc:
+            raise RuntimeError(f"malformed chunked response: invalid chunk size {size_token!r}") from exc
+        pos = line_end + 2
+        if size == 0:
+            return bytes(out)
+        if pos + size > total:
+            raise RuntimeError("malformed chunked response: truncated chunk payload")
+        out.extend(body_raw[pos : pos + size])
+        pos += size
+        if body_raw[pos : pos + 2] != b"\r\n":
+            raise RuntimeError("malformed chunked response: missing chunk terminator")
+        pos += 2
+
+
+def _unix_http_request(socket_path, method, path, payload=None, timeout_seconds=60):
     body = b""
     if payload is not None:
         body = json.dumps(payload).encode("utf-8")
@@ -356,10 +399,85 @@ def _unix_http_json(socket_path, method, path, payload=None, timeout_seconds=60)
     if len(parts) < 2:
         raise RuntimeError(f"invalid daemon HTTP status line: {header_lines[0]}")
     status_code = int(parts[1])
-    payload_out = {}
-    if body_raw.strip():
-        payload_out = json.loads(body_raw.decode("utf-8"))
-    return status_code, payload_out
+    headers = {}
+    for line in header_lines[1:]:
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        headers[key.strip().lower()] = value.strip()
+    transfer_encoding = headers.get("transfer-encoding", "").lower()
+    if "chunked" in transfer_encoding:
+        body_raw = _decode_chunked_body(body_raw)
+    else:
+        content_length = headers.get("content-length", "")
+        if content_length:
+            try:
+                body_raw = body_raw[: int(content_length)]
+            except ValueError:
+                pass
+    return status_code, headers, body_raw
+
+
+def _assert_http_ok(code, payload, action):
+    if code >= 300:
+        raise RuntimeError(f"{action} failed: code={code} payload={payload}")
+    if isinstance(payload, dict) and str(payload.get("status", "")).upper() == "FAILED":
+        raise RuntimeError(f"{action} returned FAILED payload={payload}")
+
+
+def _daemon_create_allocation(socket_path, model_ref, model_id, lease_holder, device_uuid, strict):
+    req = {
+        "ref": str(model_ref),
+        "model_id": str(model_id),
+        "lease_holder": str(lease_holder),
+        "device_uuid": str(device_uuid),
+        "chunk_bytes": int(4 * 1024 * 1024),
+        "max_shards": 0,
+        "strict": bool(strict),
+    }
+    code, payload = _unix_http_json(socket_path, "POST", "/v2/gpu/allocate", req, timeout_seconds=1800)
+    _assert_http_ok(code, payload, "gpu/allocate")
+    if str(payload.get("status", "")).upper() != "READY":
+        raise RuntimeError(f"gpu/allocate did not return READY: {payload}")
+    allocation_id = str(payload.get("allocation_id", "")).strip()
+    if not allocation_id:
+        raise RuntimeError(f"gpu/allocate returned empty allocation_id: {payload}")
+    return payload
+
+
+def _daemon_hydrate_runtime_bundle(socket_path, runtime_root, allocation_id, include_weights=True):
+    if runtime_root.exists():
+        shutil.rmtree(runtime_root)
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    req = {
+        "allocation_id": str(allocation_id),
+        "include_weights": bool(include_weights),
+    }
+    code, _, payload = _unix_http_request(
+        socket_path=socket_path,
+        method="POST",
+        path="/v2/model/runtime-bundle",
+        payload=req,
+        timeout_seconds=600,
+    )
+    if code >= 300:
+        body = payload.decode("utf-8", errors="replace")
+        raise RuntimeError(f"model/runtime-bundle failed: code={code} body={body}")
+    with tarfile.open(fileobj=io.BytesIO(payload), mode="r:") as tf:
+        tf.extractall(path=str(runtime_root))
+    if not (runtime_root / "metadata" / "model.json").exists():
+        raise RuntimeError(f"runtime bundle missing metadata/model.json in {runtime_root}")
+    if not (runtime_root / "shards" / "config.json").exists():
+        raise RuntimeError(f"runtime bundle missing shards/config.json in {runtime_root}")
+
+
+def _daemon_unload_allocation(socket_path, allocation_id):
+    req = {
+        "allocation_id": str(allocation_id),
+    }
+    code, payload = _unix_http_json(socket_path, "POST", "/v2/gpu/unload", req, timeout_seconds=180)
+    _assert_http_ok(code, payload, "gpu/unload")
+
 
 def _ipc_import_probe(handle_b64, sample_bytes, device_idx):
     if _IPC_NATIVE_MODULE is None:
@@ -388,9 +506,8 @@ def _ipc_import_probe(handle_b64, sample_bytes, device_idx):
         "checksum_1k": str(checksum),
     }
 
-def _daemon_persistent_probe(model_id, model_digest, lease_holder, device_idx, chunk_bytes, sample_bytes, shard_count):
+def _daemon_ipc_probe_from_allocation(socket_path, allocation_id, device_idx, sample_bytes, shard_count):
     enabled = os.environ.get("OCI2GDS_DAEMON_ENABLE", "1").strip().lower() not in {"0", "false", "no"}
-    socket_path = os.environ.get("OCI2GDS_DAEMON_SOCKET", "/run/oci2gdsd/daemon.sock").strip()
     if not enabled:
         return {
             "status": "skipped",
@@ -415,48 +532,23 @@ def _daemon_persistent_probe(model_id, model_digest, lease_holder, device_idx, c
             "reason": "daemon_socket_not_found",
             "socket": socket_path,
         }
+    attach_client_id = f"qwen-hello-ipc-{uuid.uuid4().hex[:12]}"
+    attached = False
     try:
-        device_uuid = _resolve_device_uuid(int(device_idx))
-        load_req = {
-            "model_id": str(model_id),
-            "digest": str(model_digest),
-            "lease_holder": str(lease_holder),
-            "device_uuid": str(device_uuid),
-            "chunk_bytes": int(chunk_bytes),
-            "strict": False,
-            "mode": "persistent",
+        attach_req = {
+            "allocation_id": str(allocation_id),
+            "client_id": str(attach_client_id),
+            "ttl_seconds": 300,
         }
-        load_code, load_res = _unix_http_json(socket_path, "POST", "/v2/gpu/load", load_req, timeout_seconds=600)
-        if load_code >= 300:
-            load_reason = str(load_res.get("reason_code", "")).strip().upper() if isinstance(load_res, dict) else ""
-            if load_reason in {"DIRECT_PATH_INELIGIBLE", "POLICY_REJECTED"}:
-                return {
-                    "status": "skipped",
-                    "reason": f"daemon_load_{load_reason.lower()}",
-                    "socket": socket_path,
-                    "load": load_res,
-                    "ipc_native_error": _IPC_NATIVE_ERROR,
-                }
-            return {
-                "status": "error",
-                "reason": f"daemon_load_failed_http_{load_code}",
-                "socket": socket_path,
-                "load": load_res,
-            }
+        attach_code, attach_res = _unix_http_json(socket_path, "POST", "/v2/gpu/attach", attach_req, timeout_seconds=120)
+        _assert_http_ok(attach_code, attach_res, "gpu/attach")
+        attached = True
         export_req = {
-            "model_id": str(model_id),
-            "digest": str(model_digest),
-            "device_uuid": str(device_uuid),
+            "allocation_id": str(allocation_id),
             "max_shards": int(max(shard_count, 1)),
         }
         export_code, export_res = _unix_http_json(socket_path, "POST", "/v2/gpu/export", export_req, timeout_seconds=120)
-        if export_code >= 300:
-            return {
-                "status": "error",
-                "reason": f"daemon_export_failed_http_{export_code}",
-                "socket": socket_path,
-                "export": export_res,
-            }
+        _assert_http_ok(export_code, export_res, "gpu/export")
         files = export_res.get("files", []) if isinstance(export_res, dict) else []
         if not files:
             return {
@@ -481,8 +573,8 @@ def _daemon_persistent_probe(model_id, model_digest, lease_holder, device_idx, c
             "status": ipc_probe.get("status", "unknown"),
             "reason": ipc_probe.get("reason", ""),
             "socket": socket_path,
-            "load_backend": load_res.get("loader", ""),
-            "load_mode": load_res.get("mode", ""),
+            "attach_client_id": attach_client_id,
+            "allocation_id": str(allocation_id),
             "exported_files": str(len(files)),
             "import_backend": ipc_probe.get("backend", ""),
             "sample_bytes": ipc_probe.get("sample_bytes", "0"),
@@ -496,11 +588,82 @@ def _daemon_persistent_probe(model_id, model_digest, lease_holder, device_idx, c
             "socket": socket_path,
             "ipc_native_error": _IPC_NATIVE_ERROR,
         }
+    finally:
+        if attached:
+            detach_req = {
+                "allocation_id": str(allocation_id),
+                "client_id": str(attach_client_id),
+            }
+            try:
+                detach_code, detach_res = _unix_http_json(
+                    socket_path,
+                    "POST",
+                    "/v2/gpu/detach",
+                    detach_req,
+                    timeout_seconds=120,
+                )
+                _assert_http_ok(detach_code, detach_res, "gpu/detach")
+            except Exception as exc:
+                print(f"OCI2GDS_IPC_DETACH_WARN error={exc}", flush=True)
 
-model_root = Path(os.environ["MODEL_ROOT_PATH"])
-if not (model_root / "READY").exists():
-    raise RuntimeError("READY marker missing")
+
+max_new_tokens = int(os.environ.get("MAX_NEW_TOKENS", "128"))
+temperature = float(os.environ.get("TEMPERATURE", "0.7"))
+top_p = float(os.environ.get("TOP_P", "0.95"))
+oci2gds_chunk_bytes = int(os.environ.get("OCI2GDS_CHUNK_BYTES", str(4 * 1024 * 1024)))
+oci2gds_sample_bytes = int(os.environ.get("OCI2GDS_SAMPLE_BYTES_PER_SHARD", str(8 * 1024 * 1024)))
+oci2gds_strict = os.environ.get("OCI2GDS_STRICT", "true").strip().lower() in {"1", "true", "yes"}
+oci2gds_probe_strict = os.environ.get("OCI2GDS_PROBE_STRICT", "true").strip().lower() in {"1", "true", "yes"}
+daemon_socket_path = os.environ.get("OCI2GDS_DAEMON_SOCKET", "/run/oci2gdsd/daemon.sock").strip()
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+if device.type == "cuda" and hasattr(torch.cuda, "is_bf16_supported") and torch.cuda.is_bf16_supported():
+    torch_dtype = torch.bfloat16
+elif device.type == "cuda":
+    torch_dtype = torch.float16
+else:
+    torch_dtype = torch.float32
+if device.type == "cuda":
+    device_index = int(device.index) if device.index is not None else 0
+else:
+    device_index = -1
+if device_index < 0:
+    raise RuntimeError("qwen-hello requires CUDA to allocate runtime bundle from daemon")
+
+model_ref = os.environ.get("MODEL_REF", "").strip()
+model_id = os.environ.get("MODEL_ID", "").strip()
+lease_holder = os.environ.get("LEASE_HOLDER", "qwen-hello-daemon").strip() or "qwen-hello-daemon"
+if not model_ref:
+    raise RuntimeError("MODEL_REF is required")
+if not model_id:
+    raise RuntimeError("MODEL_ID is required")
+
+device_uuid = _resolve_device_uuid(int(device_index))
+allocation = _daemon_create_allocation(
+    socket_path=daemon_socket_path,
+    model_ref=model_ref,
+    model_id=model_id,
+    lease_holder=lease_holder,
+    device_uuid=device_uuid,
+    strict=oci2gds_strict,
+)
+allocation_id = str(allocation.get("allocation_id", "")).strip()
+if not allocation_id:
+    raise RuntimeError(f"gpu/allocate returned empty allocation_id: {allocation}")
+runtime_bundle_root = Path(os.environ.get("RUNTIME_BUNDLE_ROOT", "/tmp/oci2gdsd-runtime-bundle"))
+_daemon_hydrate_runtime_bundle(
+    socket_path=daemon_socket_path,
+    runtime_root=runtime_bundle_root,
+    allocation_id=allocation_id,
+    include_weights=True,
+)
+
+model_root = runtime_bundle_root
 meta = json.loads((model_root / "metadata" / "model.json").read_text(encoding="utf-8"))
+requested_digest = os.environ.get("MODEL_DIGEST", "").strip()
+resolved_digest = str(meta.get("manifestDigest", "")).strip()
+if requested_digest and resolved_digest and requested_digest != resolved_digest:
+    raise RuntimeError(f"runtime bundle digest mismatch: requested={requested_digest} resolved={resolved_digest}")
 profile = meta.get("profile", {})
 source = profile.get("source", {})
 shard_entries = sorted(
@@ -548,24 +711,6 @@ if weights_found == 0:
     raise RuntimeError(f"no .safetensors files found in local runtime dir: {runtime_dir}")
 
 model_name = str(runtime_dir.resolve())
-max_new_tokens = int(os.environ.get("MAX_NEW_TOKENS", "128"))
-temperature = float(os.environ.get("TEMPERATURE", "0.7"))
-top_p = float(os.environ.get("TOP_P", "0.95"))
-oci2gds_chunk_bytes = int(os.environ.get("OCI2GDS_CHUNK_BYTES", str(4 * 1024 * 1024)))
-oci2gds_sample_bytes = int(os.environ.get("OCI2GDS_SAMPLE_BYTES_PER_SHARD", str(8 * 1024 * 1024)))
-oci2gds_strict = os.environ.get("OCI2GDS_STRICT", "true").strip().lower() in {"1", "true", "yes"}
-oci2gds_probe_strict = os.environ.get("OCI2GDS_PROBE_STRICT", "true").strip().lower() in {"1", "true", "yes"}
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-if device.type == "cuda" and hasattr(torch.cuda, "is_bf16_supported") and torch.cuda.is_bf16_supported():
-    torch_dtype = torch.bfloat16
-elif device.type == "cuda":
-    torch_dtype = torch.float16
-else:
-    torch_dtype = torch.float32
-if device.type == "cuda":
-    device_index = int(device.index) if device.index is not None else 0
-else:
-    device_index = -1
 
 profile_payload = json.dumps({"root": str(model_root), "profile": profile})
 try:
@@ -598,17 +743,18 @@ except Exception as exc:
 print("OCI2GDS_PROFILE_PROBE " + json.dumps(oci2gds_profile, sort_keys=True), flush=True)
 
 daemon_probe_shards = int(os.environ.get("OCI2GDS_DAEMON_PROBE_SHARDS", "1"))
-daemon_lease_holder = os.environ.get("LEASE_HOLDER", "qwen-hello-daemon")
-oci2gds_ipc = _daemon_persistent_probe(
-    model_id=meta.get("modelId", os.environ.get("MODEL_ID", "")),
-    model_digest=meta.get("manifestDigest", os.environ.get("MODEL_DIGEST", "")),
-    lease_holder=daemon_lease_holder,
+oci2gds_ipc = _daemon_ipc_probe_from_allocation(
+    socket_path=daemon_socket_path,
+    allocation_id=allocation_id,
     device_idx=int(device_index),
-    chunk_bytes=int(oci2gds_chunk_bytes),
     sample_bytes=int(oci2gds_sample_bytes),
     shard_count=int(max(daemon_probe_shards, 1)),
 )
 print("OCI2GDS_IPC_PROBE " + json.dumps(oci2gds_ipc, sort_keys=True), flush=True)
+try:
+    _daemon_unload_allocation(daemon_socket_path, allocation_id)
+except Exception as exc:
+    print(f"OCI2GDS_ALLOC_UNLOAD_WARN error={exc}", flush=True)
 
 tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=True, trust_remote_code=True)
 model = AutoModelForCausalLM.from_pretrained(

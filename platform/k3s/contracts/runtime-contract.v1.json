@@ -72,11 +72,16 @@
     "required_patterns": [
       "runtimeClassName:[[:space:]]*nvidia",
       "privileged:[[:space:]]*true",
+      "-[[:space:]]+name:[[:space:]]*oci2gdsd-daemon",
+      "-[[:space:]]+name:[[:space:]]*MODEL_REF",
+      "-[[:space:]]+name:[[:space:]]*RUNTIME_BUNDLE_ROOT",
       "-[[:space:]]+name:[[:space:]]*run-udev",
       "mountPath:[[:space:]]*/run/udev",
       "-[[:space:]]+name:[[:space:]]*host-dev",
       "mountPath:[[:space:]]*/host-dev"
     ],
-    "forbidden_patterns": []
+    "forbidden_patterns": [
+      "-[[:space:]]+name:[[:space:]]*MODEL_ROOT_PATH"
+    ]
   }
 }

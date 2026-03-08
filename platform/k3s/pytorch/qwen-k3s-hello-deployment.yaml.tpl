@@ -77,8 +77,6 @@ spec:
           name: oci2gdsd-config
       - name: oci2gdsd-run
         emptyDir: {}
-      - name: oci2gdsd-bin
-        emptyDir: {}
       - name: qwen-app
         configMap:
           name: qwen-hello-app
@@ -107,8 +105,6 @@ spec:
         args:
         - |
           set -eu
-          cp /usr/local/bin/oci2gdsd /oci2gdsd-bin/oci2gdsd
-          chmod 0755 /oci2gdsd-bin/oci2gdsd
           oci2gdsd --registry-config /etc/oci2gdsd/config.yaml --json ensure \
             --ref "__MODEL_REF__" \
             --model-id "__MODEL_ID__" \
@@ -124,8 +120,30 @@ spec:
         - name: oci2gdsd-config
           mountPath: /etc/oci2gdsd
           readOnly: true
-        - name: oci2gdsd-bin
-          mountPath: /oci2gdsd-bin
+      - name: oci2gdsd-daemon
+        image: __OCI2GDSD_IMAGE__
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          runAsUser: 0
+          runAsGroup: 0
+          privileged: true
+        command: ["/bin/sh", "-ec"]
+        args:
+        - |
+          set -eu
+          oci2gdsd --registry-config /etc/oci2gdsd/config.yaml serve \
+            --unix-socket /run/oci2gdsd/daemon.sock \
+            --socket-perms 0660
+        volumeMounts:
+        - name: oci2gdsd-root
+          mountPath: __OCI2GDSD_ROOT_PATH__
+          readOnly: false
+        - name: oci2gdsd-config
+          mountPath: /etc/oci2gdsd
+          readOnly: true
+        - name: oci2gdsd-run
+          mountPath: /run/oci2gdsd
+          readOnly: false
       containers:
       - name: pytorch-api
         image: __PYTORCH_RUNTIME_IMAGE__
@@ -154,31 +172,18 @@ spec:
             done
           fi
           python /app/deps_bootstrap.py
-          daemon_pid=""
-          daemon_enable="$(printf '%s' "${OCI2GDS_DAEMON_ENABLE:-1}" | tr '[:upper:]' '[:lower:]')"
-          if [ "${daemon_enable}" != "0" ] && [ "${daemon_enable}" != "false" ] && [ "${daemon_enable}" != "no" ]; then
-            /oci2gdsd-bin/oci2gdsd --registry-config /etc/oci2gdsd/config.yaml serve \
-              --unix-socket /run/oci2gdsd/daemon.sock \
-              --socket-perms 0660 &
-            daemon_pid="$!"
-          fi
-          cleanup() {
-            if [ -n "${daemon_pid}" ]; then
-              kill "${daemon_pid}" 2>/dev/null || true
-              wait "${daemon_pid}" 2>/dev/null || true
-            fi
-          }
-          trap cleanup EXIT INT TERM
           python /app/qwen_server.py
         env:
-        - name: MODEL_ROOT_PATH
-          value: "__MODEL_ROOT_PATH__"
+        - name: MODEL_REF
+          value: "__MODEL_REF__"
         - name: MODEL_ID
           value: "__MODEL_ID__"
         - name: MODEL_DIGEST
           value: "__MODEL_DIGEST__"
         - name: LEASE_HOLDER
           value: "__LEASE_HOLDER__"
+        - name: RUNTIME_BUNDLE_ROOT
+          value: "/tmp/oci2gdsd-runtime-bundle"
         - name: OCI2GDS_DAEMON_SOCKET
           value: "/run/oci2gdsd/daemon.sock"
         - name: OCI2GDS_DAEMON_ENABLE
@@ -247,18 +252,9 @@ spec:
           requests:
             nvidia.com/gpu: "1"
         volumeMounts:
-        - name: oci2gdsd-root
-          mountPath: __OCI2GDSD_ROOT_PATH__
-          readOnly: false
-        - name: oci2gdsd-config
-          mountPath: /etc/oci2gdsd
-          readOnly: true
         - name: oci2gdsd-run
           mountPath: /run/oci2gdsd
           readOnly: false
-        - name: oci2gdsd-bin
-          mountPath: /oci2gdsd-bin
-          readOnly: true
         - name: qwen-app
           mountPath: /app
           readOnly: true

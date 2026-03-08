@@ -40,8 +40,7 @@ Example:
   MODEL_REF_OVERRIDE=${REGISTRY_SERVICE}.${REGISTRY_NAMESPACE}.svc.cluster.local:5000/${MODEL_REPO}@sha256:<digest> \\
   make verify-k3s-qwen"
   fi
-  MODEL_ROOT_PATH="${OCI2GDSD_ROOT_PATH}/models/${MODEL_ID}/${MODEL_DIGEST//:/-}"
-  export MODEL_REF MODEL_DIGEST MODEL_ROOT_PATH
+  export MODEL_REF MODEL_DIGEST
 }
 
 log "starting qwen-hello quick iterate run"
@@ -90,6 +89,7 @@ runtime_drift_checkpoint "pre-qwen-deploy"
 if ! validate_qwen_hello_example; then
   collect_debug
   kube -n "${QWEN_HELLO_NAMESPACE}" logs deploy/qwen-hello -c preload-model || true
+  kube -n "${QWEN_HELLO_NAMESPACE}" logs deploy/qwen-hello -c oci2gdsd-daemon || true
   kube -n "${QWEN_HELLO_NAMESPACE}" logs deploy/qwen-hello -c pytorch-api || true
   die "qwen-hello quick iterate validation failed"
 fi
