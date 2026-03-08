@@ -47,7 +47,7 @@ assert_qwen_no_artifact_access_manifest() {
   )
   local pattern
   for pattern in "${forbidden[@]}"; do
-    if grep -Eq "${pattern}" "${rendered}"; then
+    if grep -Eq -- "${pattern}" "${rendered}"; then
       die "qwen-hello manifest must not expose runtime artifact roots: ${pattern}"
     fi
   done

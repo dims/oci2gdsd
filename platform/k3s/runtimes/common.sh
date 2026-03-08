@@ -50,7 +50,7 @@ runtime_assert_no_artifact_access_manifest() {
   )
   local pattern
   for pattern in "${forbidden[@]}"; do
-    if grep -Eq "${pattern}" "${rendered}"; then
+    if grep -Eq -- "${pattern}" "${rendered}"; then
       die "rendered daemon-client manifest must not expose runtime artifact paths: ${pattern}"
     fi
   done
