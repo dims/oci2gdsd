@@ -68,18 +68,6 @@ Daemon deployment docs:
 - Helm chart: [docs/helm-daemon-chart.md](docs/helm-daemon-chart.md)
 - Harness/runtime knobs: [platform/k3s/README.md](platform/k3s/README.md)
 
-## Runtime Support (Kubernetes Path)
-
-The k3s daemonset integration currently supports all three runtime tracks:
-
-- PyTorch (`WORKLOAD_RUNTIME=pytorch`, default): `make verify-k3s-qwen`
-- TensorRT-LLM (`WORKLOAD_RUNTIME=tensorrt`): `make verify-k3s-tensor`
-- vLLM (`WORKLOAD_RUNTIME=vllm`): `make verify-k3s-vllm`
-
-Run all runtime suites with:
-
-- `make verify-k3s-qwen verify-k3s-tensor verify-k3s-vllm`
-
 ## System Model
 
 `oci2gdsd` has two operating styles:
@@ -232,29 +220,20 @@ docker run --rm \
         READY
 ```
 
-## Make Target Map
+## Make Targets
 
-Primary targets:
+Run `make help` for the generated list.
+
+Common entrypoints:
 
 - `make prereq`
-- `make verify-core`
+- `make verify-local`
 - `make verify-smoke`
 - `make verify-k3s-qwen`
 - `make verify-k3s-tensor`
 - `make verify-k3s-vllm`
-- `make verify-k3s-qwen verify-k3s-tensor verify-k3s-vllm`
-
-Useful lower-level targets:
-
-- `make prereq-local`
-- `make prereq-host-gds`
-- `make prereq-k3s`
-- `./platform/host/scripts/quick-qwen.sh`
-- `make verify-k3s-qwen`
 - `make clean-k3s`
 - `make clean`
-
-Run `make help` for the generated list.
 
 ## Documentation Index
 
@@ -282,7 +261,6 @@ Platform/runtime docs:
 - [platform/local/README.md](platform/local/README.md)
 - [platform/host/README.md](platform/host/README.md)
 - [platform/k3s/README.md](platform/k3s/README.md)
-- [platform/k3s/pytorch/README.md](platform/k3s/pytorch/README.md)
 - [platform/k3s/pytorch/qwen-hello.md](platform/k3s/pytorch/qwen-hello.md)
 - [platform/k3s/tensorrt/README.md](platform/k3s/tensorrt/README.md)
 - [platform/k3s/vllm/README.md](platform/k3s/vllm/README.md)
