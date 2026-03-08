@@ -430,7 +430,7 @@ class HeartbeatKeeper:
     def _loop(self):
         while not self._stop.wait(self.interval_seconds):
             try:
-                code, body = unix_http_json(self.socket_path, "POST", "/v1/gpu/heartbeat", self.payload, timeout_seconds=60)
+                code, body = unix_http_json(self.socket_path, "POST", "/v2/gpu/heartbeat", self.payload, timeout_seconds=60)
                 assert_http_ok(code, body, "gpu/heartbeat(keepalive)")
                 print(f"DAEMON_GPU_HEARTBEAT_OK keepalive=true expires_at={body.get('expires_at', '')}")
             except Exception as exc:
@@ -538,7 +538,7 @@ def main():
         status_code, status_payload = unix_http_json(
             socket_path,
             "GET",
-            f"/v1/gpu/status?device_uuid={device_uuid}",
+            f"/v2/gpu/status?device_uuid={device_uuid}",
             payload=None,
             timeout_seconds=60,
         )
@@ -553,7 +553,7 @@ def main():
             "client_id": attach_client_id,
             "ttl_seconds": 300,
         }
-        attach_code, attach_payload = unix_http_json(socket_path, "POST", "/v1/gpu/attach", attach_req, timeout_seconds=120)
+        attach_code, attach_payload = unix_http_json(socket_path, "POST", "/v2/gpu/attach", attach_req, timeout_seconds=120)
         assert_http_ok(attach_code, attach_payload, "gpu/attach")
         attached = True
         print(
@@ -568,7 +568,7 @@ def main():
             "client_id": attach_client_id,
             "ttl_seconds": 300,
         }
-        hb_code, hb_payload = unix_http_json(socket_path, "POST", "/v1/gpu/heartbeat", hb_req, timeout_seconds=60)
+        hb_code, hb_payload = unix_http_json(socket_path, "POST", "/v2/gpu/heartbeat", hb_req, timeout_seconds=60)
         assert_http_ok(hb_code, hb_payload, "gpu/heartbeat")
         print(f"DAEMON_GPU_HEARTBEAT_OK expires_at={hb_payload.get('expires_at', '')}")
         heartbeat = HeartbeatKeeper(socket_path, hb_req, interval_seconds=90)
@@ -580,7 +580,7 @@ def main():
             "max_tensors": int(os.environ.get("MAX_TENSOR_MAP_TENSORS", "0")),
             "include_handles": True,
         }
-        tensor_code, tensor_payload = unix_http_json(socket_path, "POST", "/v1/gpu/tensor-map", tensor_req, timeout_seconds=300)
+        tensor_code, tensor_payload = unix_http_json(socket_path, "POST", "/v2/gpu/tensor-map", tensor_req, timeout_seconds=300)
         assert_http_ok(tensor_code, tensor_payload, "gpu/tensor-map")
         tensors = tensor_payload.get("tensors", []) if isinstance(tensor_payload, dict) else []
         if not tensors:
@@ -659,13 +659,13 @@ def main():
             "allocation_id": allocation_id,
             "client_id": attach_client_id,
         }
-        detach_code, detach_payload = unix_http_json(socket_path, "POST", "/v1/gpu/detach", detach_req, timeout_seconds=120)
+        detach_code, detach_payload = unix_http_json(socket_path, "POST", "/v2/gpu/detach", detach_req, timeout_seconds=120)
         assert_http_ok(detach_code, detach_payload, "gpu/detach")
         attached = False
         print(f"DAEMON_GPU_DETACH_OK detached_files={detach_payload.get('detached_files', 0)}")
 
         unload_req = {"allocation_id": allocation_id}
-        unload_code, unload_payload = unix_http_json(socket_path, "POST", "/v1/gpu/unload", unload_req, timeout_seconds=300)
+        unload_code, unload_payload = unix_http_json(socket_path, "POST", "/v2/gpu/unload", unload_req, timeout_seconds=300)
         assert_http_ok(unload_code, unload_payload, "gpu/unload")
         load_ready = False
         print("DAEMON_GPU_UNLOAD_OK")
@@ -673,7 +673,7 @@ def main():
         post_code, post_payload = unix_http_json(
             socket_path,
             "GET",
-            f"/v1/gpu/status?device_uuid={device_uuid}",
+            f"/v2/gpu/status?device_uuid={device_uuid}",
             payload=None,
             timeout_seconds=60,
         )
@@ -703,7 +703,7 @@ def main():
                 detach_code, detach_payload = unix_http_json(
                     socket_path,
                     "POST",
-                    "/v1/gpu/detach",
+                    "/v2/gpu/detach",
                     detach_req,
                     timeout_seconds=120,
                 )
@@ -718,7 +718,7 @@ def main():
                 unload_code, unload_payload = unix_http_json(
                     socket_path,
                     "POST",
-                    "/v1/gpu/unload",
+                    "/v2/gpu/unload",
                     unload_req,
                     timeout_seconds=300,
                 )

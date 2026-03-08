@@ -174,7 +174,7 @@ def ensure_model_ready(socket_path: str, model_ref: str, model_id: str, lease_ho
         "strict_integrity": True,
         "wait": True,
     }
-    code, payload = unix_http_json(socket_path, "POST", "/v1/model/ensure", req, timeout_seconds=1800)
+    code, payload = unix_http_json(socket_path, "POST", "/v2/model/ensure", req, timeout_seconds=1800)
     assert_http_ok(code, payload, "model/ensure")
     if str(payload.get("status", "")).upper() != "READY":
         raise RuntimeError(f"model/ensure did not return READY: {payload}")
@@ -198,7 +198,7 @@ def create_gpu_allocation(
         "max_shards": 0,
         "strict": bool(strict),
     }
-    code, payload = unix_http_json(socket_path, "POST", "/v1/gpu/allocate", req, timeout_seconds=1800)
+    code, payload = unix_http_json(socket_path, "POST", "/v2/gpu/allocate", req, timeout_seconds=1800)
     assert_http_ok(code, payload, "gpu/allocate")
     if str(payload.get("status", "")).upper() != "READY":
         raise RuntimeError(f"gpu/allocate did not return READY: {payload}")
@@ -227,7 +227,7 @@ def hydrate_runtime_bundle(socket_path: str, runtime_root: Path, allocation_id: 
     code, _, payload = unix_http_request(
         socket_path=socket_path,
         method="POST",
-        path="/v1/model/runtime-bundle",
+        path="/v2/model/runtime-bundle",
         payload=req,
         timeout_seconds=600,
     )

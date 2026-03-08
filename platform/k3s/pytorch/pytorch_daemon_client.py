@@ -275,7 +275,7 @@ def main():
             "client_id": attach_client_id,
             "ttl_seconds": 300,
         }
-        attach_code, attach_payload = unix_http_json(socket_path, "POST", "/v1/gpu/attach", attach_req, timeout_seconds=120)
+        attach_code, attach_payload = unix_http_json(socket_path, "POST", "/v2/gpu/attach", attach_req, timeout_seconds=120)
         assert_http_ok(attach_code, attach_payload, "gpu/attach")
         attached = True
         print(
@@ -286,7 +286,7 @@ def main():
         )
 
         status_code, status_payload = unix_http_json(
-            socket_path, "GET", f"/v1/gpu/status?device_uuid={device_uuid}", payload=None, timeout_seconds=60
+            socket_path, "GET", f"/v2/gpu/status?device_uuid={device_uuid}", payload=None, timeout_seconds=60
         )
         assert_http_ok(status_code, status_payload, "gpu/status")
         status_files = status_payload.get("files", []) if isinstance(status_payload, dict) else []
@@ -300,7 +300,7 @@ def main():
             "max_tensors": 0,
             "include_handles": True,
         }
-        tensor_code, tensor_payload = unix_http_json(socket_path, "POST", "/v1/gpu/tensor-map", tensor_req, timeout_seconds=300)
+        tensor_code, tensor_payload = unix_http_json(socket_path, "POST", "/v2/gpu/tensor-map", tensor_req, timeout_seconds=300)
         assert_http_ok(tensor_code, tensor_payload, "gpu/tensor-map")
         tensors = tensor_payload.get("tensors", []) if isinstance(tensor_payload, dict) else []
         if not tensors:
@@ -328,7 +328,7 @@ def main():
             "client_id": attach_client_id,
             "ttl_seconds": 300,
         }
-        hb_code, hb_payload = unix_http_json(socket_path, "POST", "/v1/gpu/heartbeat", heartbeat_req, timeout_seconds=60)
+        hb_code, hb_payload = unix_http_json(socket_path, "POST", "/v2/gpu/heartbeat", heartbeat_req, timeout_seconds=60)
         assert_http_ok(hb_code, hb_payload, "gpu/heartbeat")
         print(f"DAEMON_GPU_HEARTBEAT_OK expires_at={hb_payload.get('expires_at', '')}")
 
@@ -387,20 +387,20 @@ def main():
             "allocation_id": allocation_id,
             "client_id": attach_client_id,
         }
-        detach_code, detach_payload = unix_http_json(socket_path, "POST", "/v1/gpu/detach", detach_req, timeout_seconds=120)
+        detach_code, detach_payload = unix_http_json(socket_path, "POST", "/v2/gpu/detach", detach_req, timeout_seconds=120)
         assert_http_ok(detach_code, detach_payload, "gpu/detach")
         attached = False
         detached = True
         print(f"DAEMON_GPU_DETACH_OK detached_files={detach_payload.get('detached_files', 0)}")
 
         unload_req = {"allocation_id": allocation_id}
-        unload_code, unload_payload = unix_http_json(socket_path, "POST", "/v1/gpu/unload", unload_req, timeout_seconds=180)
+        unload_code, unload_payload = unix_http_json(socket_path, "POST", "/v2/gpu/unload", unload_req, timeout_seconds=180)
         assert_http_ok(unload_code, unload_payload, "gpu/unload")
         load_ready = False
         print("DAEMON_GPU_UNLOAD_OK")
 
         post_code, post_payload = unix_http_json(
-            socket_path, "GET", f"/v1/gpu/status?device_uuid={device_uuid}", payload=None, timeout_seconds=60
+            socket_path, "GET", f"/v2/gpu/status?device_uuid={device_uuid}", payload=None, timeout_seconds=60
         )
         assert_http_ok(post_code, post_payload, "post-unload gpu/status")
         post_files = post_payload.get("files", []) if isinstance(post_payload, dict) else []
@@ -420,7 +420,7 @@ def main():
             }
             try:
                 detach_code, detach_payload = unix_http_json(
-                    socket_path, "POST", "/v1/gpu/detach", detach_req, timeout_seconds=120
+                    socket_path, "POST", "/v2/gpu/detach", detach_req, timeout_seconds=120
                 )
                 assert_http_ok(detach_code, detach_payload, "gpu/detach(finalizer)")
                 detached = True
@@ -431,7 +431,7 @@ def main():
             unload_req = {"allocation_id": allocation_id}
             try:
                 unload_code, unload_payload = unix_http_json(
-                    socket_path, "POST", "/v1/gpu/unload", unload_req, timeout_seconds=180
+                    socket_path, "POST", "/v2/gpu/unload", unload_req, timeout_seconds=180
                 )
                 assert_http_ok(unload_code, unload_payload, "gpu/unload(finalizer)")
                 print("DAEMON_GPU_UNLOAD_OK finalizer=true")

@@ -39,7 +39,7 @@ flowchart LR
 
 - Control plane:
   - `ensure`, `status`, `verify`, `release`, `gc`
-  - daemon lifecycle APIs (`/v1/gpu/attach`, `/v1/gpu/heartbeat`, `/v1/gpu/detach`)
+  - daemon lifecycle APIs (`/v2/gpu/attach`, `/v2/gpu/heartbeat`, `/v2/gpu/detach`)
 - Data plane:
   - shard bytes on NVMe (`shards/` under published model path)
   - GDS read path (`O_DIRECT` + cuFile) into GPU allocations
@@ -64,10 +64,10 @@ sequenceDiagram
   OP->>INIT: start workload
   INIT->>REG: fetch manifest/config/layers by digest
   INIT->>CACHE: write + verify shards, write READY
-  RT->>DAEMON: POST /v1/gpu/load (mode=persistent)
+  RT->>DAEMON: POST /v2/gpu/load (mode=persistent)
   DAEMON->>CACHE: open shard (O_DIRECT)
   DAEMON->>GPU: cuFileRead into device memory
-  RT->>DAEMON: POST /v1/gpu/export + /v1/gpu/tensor-map
+  RT->>DAEMON: POST /v2/gpu/export + /v2/gpu/tensor-map
   DAEMON-->>RT: CUDA IPC handles + tensor index metadata
   RT->>GPU: import/map handles
   RT->>RT: run inference

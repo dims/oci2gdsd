@@ -184,7 +184,7 @@ Key point: this repo is biased toward strict direct-GDS validation for GPU flows
 Current contract in this repo:
 
 - `gpu load --mode benchmark` (CLI): throughput probe path; GPU buffers are released before command exit.
-- Daemon API persistent mode (`serve` + `/v1/gpu/load`): daemon owns persistent allocations for process lifetime and can export CUDA IPC metadata.
+- Daemon API persistent mode (`serve` + `/v2/gpu/load`): daemon owns persistent allocations for process lifetime and can export CUDA IPC metadata.
 - Daemon API lifecycle includes attach/heartbeat/detach endpoints and tensor-map metadata used by runtime integration checks.
 
 ## Packaging Models as OCI Artifacts

@@ -12,7 +12,7 @@
 
 - Registry -> node-local OCI preload workflow.
 - Deterministic runtime startup from local files (no Hugging Face network fetch at app start).
-- Pod-local daemon API (`/v1/gpu/load`, `/v1/gpu/export`) for persistent allocation orchestration (running in-process with the app container).
+- Pod-local daemon API (`/v2/gpu/load`, `/v2/gpu/export`) for persistent allocation orchestration (running in-process with the app container).
 - A runtime `oci2gds` probe path with:
   - optional native cuFile backend (JIT C++ extension build),
   - automatic Python fallback when native prerequisites are missing.

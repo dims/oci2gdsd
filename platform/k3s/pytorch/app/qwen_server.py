@@ -426,7 +426,7 @@ def _daemon_persistent_probe(model_id, model_digest, lease_holder, device_idx, c
             "strict": False,
             "mode": "persistent",
         }
-        load_code, load_res = _unix_http_json(socket_path, "POST", "/v1/gpu/load", load_req, timeout_seconds=600)
+        load_code, load_res = _unix_http_json(socket_path, "POST", "/v2/gpu/load", load_req, timeout_seconds=600)
         if load_code >= 300:
             load_reason = str(load_res.get("reason_code", "")).strip().upper() if isinstance(load_res, dict) else ""
             if load_reason in {"DIRECT_PATH_INELIGIBLE", "POLICY_REJECTED"}:
@@ -449,7 +449,7 @@ def _daemon_persistent_probe(model_id, model_digest, lease_holder, device_idx, c
             "device_uuid": str(device_uuid),
             "max_shards": int(max(shard_count, 1)),
         }
-        export_code, export_res = _unix_http_json(socket_path, "POST", "/v1/gpu/export", export_req, timeout_seconds=120)
+        export_code, export_res = _unix_http_json(socket_path, "POST", "/v2/gpu/export", export_req, timeout_seconds=120)
         if export_code >= 300:
             return {
                 "status": "error",
