@@ -53,27 +53,15 @@ For vLLM daemon-client mode, the workload:
 
 ## Harness entrypoint (recommended)
 
-```bash
-make verify-k3s-qwen
-```
-
-TensorRT-LLM daemon-client run:
-
-```bash
-make verify-k3s-tensor
-```
-
-vLLM daemon-client run (out-of-tree loader plugin):
-
-```bash
-make verify-k3s-vllm
-```
-
-Run all runtime suites:
+Use the three canonical verify targets:
 
 ```bash
 make verify-k3s-qwen verify-k3s-tensor verify-k3s-vllm
 ```
+
+For runtime-specific overrides and full operational examples, use:
+
+- `platform/k3s/README.md`
 
 ## Key environment variables
 

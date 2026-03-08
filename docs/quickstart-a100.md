@@ -1,7 +1,11 @@
 # A100 Quickstart
 
-This is the shortest path for a fresh A100 Linux host.
-It assumes strict direct-GDS validation is required (default in this repo).
+This is the shortest path for a fresh A100 Linux host with strict direct-GDS
+validation (repo default).
+
+For full host qualification/remediation, use:
+
+- `docs/direct-gds-runbook.md`
 
 ## 1) Clone and enter repo
 
@@ -10,49 +14,37 @@ git clone https://github.com/dims/oci2gdsd.git
 cd oci2gdsd
 ```
 
-## 2) Review optional overrides
+## 2) Fast host qualification (before spending test time)
 
-Defaults live in:
+```bash
+nvidia-smi --query-gpu=name,driver_version --format=csv,noheader
+ls /dev/nvme* 2>/dev/null || true
+sudo gdscheck -p
+```
 
-- `platform/k3s/.env.defaults`
-- `platform/k3s/.env.example`
+Hard stop for strict direct-GDS path:
 
-Optional overrides can be exported before running targets (for example `OCI2GDSD_ROOT_PATH=/mnt/nvme/oci2gdsd`).
+- no guest-visible NVMe
+- `NVMe : Supported` cannot be established after bounded remediation
 
-## 3) Run full prereq chain
+## 3) Run prereqs + smoke
 
 ```bash
 make prereq
-```
-
-This runs local + host + k3s prerequisite checks in order.
-
-## 4) Run smoke validation
-
-```bash
 make verify-smoke
 ```
 
-This executes:
-
-- `verify-unit`
-- `verify-local`
-- `./platform/host/scripts/quick-qwen.sh`
-- `verify-k3s-qwen` (includes runtime-contract checks for qwen/pytorch path)
-
-## 5) Run full k3s e2e
-
-qwen daemonset full parity:
-
-```bash
-make verify-k3s-qwen
-```
-
-All runtime suites (qwen + TensorRT-LLM + vLLM):
+## 4) Run full k3s runtime suite (2nd-level validation)
 
 ```bash
 make verify-k3s-qwen verify-k3s-tensor verify-k3s-vllm
 ```
+
+Runtime-specific knobs/defaults live in:
+
+- `platform/k3s/.env.defaults`
+- `platform/k3s/.env.example`
+- `platform/k3s/README.md`
 
 ## Artifacts
 
@@ -67,3 +59,8 @@ k3s harness artifacts are written under:
 ```bash
 make clean-k3s
 ```
+
+If any step fails, use:
+
+- `docs/troubleshooting.md` for symptom-driven triage
+- `docs/direct-gds-runbook.md` for strict direct-GDS remediation flow

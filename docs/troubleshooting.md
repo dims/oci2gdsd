@@ -131,94 +131,38 @@ docker info --format '{{.DockerRootDir}}'
 
 ## 4) Direct GDS Not Available
 
-### How to confirm
+This guide keeps symptom triage concise.  
+The canonical direct-GDS qualification/remediation flow is:
 
-```bash
-sudo gdscheck -p
-lsblk -f
-```
+- `docs/direct-gds-runbook.md`
+
+### How to confirm quickly
 
 Required signal for strict mode:
 
 - `NVMe : Supported`
 
-Common fail patterns seen repeatedly:
+Quick checks:
 
-- no guest-visible NVMe device
-- provider disk is virtio/SCSI only
-- software RAID path presented instead of raw NVMe
-- host kernel/driver stack not aligned with working GDS path
+```bash
+sudo gdscheck -p
+lsblk -f
+ls /dev/nvme* 2>/dev/null || true
+```
+
+### Common blockers
+
+1. No guest-visible NVMe (`/dev/nvme*` absent).
+2. Provider only exposes virtio/SCSI root disk.
+3. `nvidia_fs` cannot be aligned with host kernel/driver stack after one bounded remediation cycle.
 
 ### What to do
 
-Policy in this repo: **attempt remediation by default**.  
-Harness prereq scripts first run non-destructive remediation automatically (install missing GDS userspace tools, NVMe partition+mount alignment, Docker data-root alignment).  
-If strict direct path still fails, run the full operator bundle below unless a hard blocker is obvious up front.
-
-#### 4.1 Hard blockers (skip full remediation and change host)
-
-1. `lsblk` shows no guest-visible NVMe device (`/dev/nvme*` absent).
-2. Provider only exposes virtio/SCSI boot disk and does not expose local NVMe.
-3. You cannot install required NVIDIA packages or reboot policy prevents kernel/runtime alignment.
-
-#### 4.2 Full remediation bundle (run unless blocked by 4.1)
-
-1. Align kernel + driver + GDS stack:
-
-```bash
-sudo apt-get update
-sudo apt-get install -y \
-  nvidia-driver-570-open \
-  nvidia-fs \
-  nvidia-gds-12-6 \
-  linux-image-nvidia
-```
-
-2. Reboot:
-
-```bash
-sudo reboot
-```
-
-3. Post-reboot verify:
-
-```bash
-uname -r
-nvidia-smi
-lsmod | grep nvidia_fs
-sudo /usr/local/cuda/gds/tools/gdscheck -p
-```
-
-4. Ensure NVMe is mounted for data paths (example):
-
-```bash
-sudo mkdir -p /mnt/nvme
-sudo mount -t ext4 -o rw,noatime,data=ordered /dev/nvme0n1p1 /mnt/nvme
-```
-
-5. Move Docker data-root to NVMe and restart:
-
-```bash
-sudo mkdir -p /mnt/nvme/docker
-sudo tee /etc/docker/daemon.json >/dev/null <<'JSON'
-{
-  "data-root": "/mnt/nvme/docker",
-  "default-runtime": "nvidia",
-  "features": { "cdi": true },
-  "runtimes": { "nvidia": { "path": "nvidia-container-runtime", "args": [] } }
-}
-JSON
-sudo systemctl restart docker
-docker info --format '{{.DockerRootDir}}'
-```
-
-6. Run strict direct functional probe:
-
-```bash
-sudo /usr/libexec/gds/tools/gdsio -D /mnt/nvme -d 0 -w 1 -s 1G -i 1M -x 0 -I 1
-```
-
-7. Re-run harness prereqs and quick tests:
+1. Run the direct-GDS runbook decision tree exactly once:
+   - qualification: section "2) Fast Qualification"
+   - remediation: section "3) Decision Tree Remediation"
+   - stop criteria: section "6) Stop Criteria"
+2. Re-run:
 
 ```bash
 make prereq-host-gds
@@ -226,13 +170,6 @@ make prereq-k3s
 ./platform/host/scripts/quick-qwen.sh
 make verify-k3s-qwen
 ```
-
-#### 4.3 Exit criteria
-
-1. Continue on this host if either:
-   - `gdscheck -p` shows `NVMe : Supported`, or
-   - strict functional probe succeeds: `gdsio -x 0 -I 1` on the target NVMe-backed path **and** NVMe registration is visible in NVFS (`devices` non-empty or `modules` includes `nvme`).
-2. If both checks fail after one full remediation attempt (timebox 30 minutes), stop and switch provider/instance type.
 
 ## 5) `enable-cuda-compat` Hook Failure
 
@@ -378,24 +315,24 @@ make verify-k3s-qwen
 
 ## 12) Recommended Recovery Sequence (Fresh A100)
 
+Canonical sequence lives in `docs/direct-gds-runbook.md` ("5) Validation Sequence After Host Qualification").
+
+Fast sequence:
+
 1. Run prereq:
 
 ```bash
 make prereq-k3s
 ```
 
-2. If toolkit hook error appears, upgrade toolkit/runtime and restart services.
-3. Re-run:
+2. Re-run smoke + qwen:
 
 ```bash
-make verify-k3s-qwen
 ./platform/host/scripts/quick-qwen.sh
+make verify-k3s-qwen
 ```
 
-4. If direct gate still fails:
-   - re-check `gdscheck -p`
-   - verify guest-visible NVMe and mount path
-   - if unsupported after bounded attempts, switch host/provider
+3. If strict direct gate still fails, follow the runbook remediation tree and stop criteria.
 
 ## 13) What To Attach In Bug Reports
 
