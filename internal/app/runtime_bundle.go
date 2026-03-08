@@ -10,9 +10,6 @@ import (
 
 type RuntimeBundleRequest struct {
 	AllocationID   string `json:"allocation_id"`
-	ModelID        string `json:"model_id"`
-	Digest         string `json:"digest"`
-	Path           string `json:"path"`
 	IncludeWeights bool   `json:"include_weights"`
 }
 
@@ -28,7 +25,7 @@ type RuntimeBundleResult struct {
 	AllocationID   string              `json:"allocation_id,omitempty"`
 	ModelID        string              `json:"model_id,omitempty"`
 	ManifestDigest string              `json:"manifest_digest,omitempty"`
-	Path           string              `json:"path"`
+	Path           string              `json:"-"`
 	Files          []RuntimeBundleFile `json:"files"`
 	FileCount      int                 `json:"file_count"`
 	TotalBytes     int64               `json:"total_bytes"`
@@ -43,26 +40,12 @@ func (s *Service) RuntimeBundle(ctx context.Context, req RuntimeBundleRequest) (
 	default:
 	}
 
-	modelID, manifestDigest, modelPath, _, _, alloc, allocErr := s.resolveAllocationInput(
-		req.AllocationID,
-		req.ModelID,
-		req.Digest,
-		req.Path,
-		"",
-		"",
-	)
-	if allocErr != nil {
-		return RuntimeBundleResult{}, allocErr
-	}
-	req.ModelID = modelID
-	req.Digest = manifestDigest
-	req.Path = modelPath
 	allocationID := strings.TrimSpace(req.AllocationID)
-	if alloc != nil {
-		allocationID = alloc.AllocationID
+	alloc, err := s.getAllocation(allocationID)
+	if err != nil {
+		return RuntimeBundleResult{}, err
 	}
-
-	modelPath, modelID, manifestDigest, md, _, err := s.resolveGPUModelTarget(req.Path, req.ModelID, req.Digest)
+	modelPath, modelID, manifestDigest, md, _, err := s.resolveGPUModelTarget("", alloc.ModelID, alloc.ManifestDigest)
 	if err != nil {
 		return RuntimeBundleResult{}, err
 	}
@@ -147,4 +130,15 @@ func (s *Service) RuntimeBundle(ctx context.Context, req RuntimeBundleRequest) (
 		ReasonCode:     ReasonNone,
 		Message:        "runtime bundle prepared",
 	}, nil
+}
+
+func (s *Service) RuntimeBundleByToken(ctx context.Context, token string) (RuntimeBundleResult, error) {
+	allocationID, includeWeights, err := s.resolveRuntimeBundleToken(token)
+	if err != nil {
+		return RuntimeBundleResult{}, err
+	}
+	return s.RuntimeBundle(ctx, RuntimeBundleRequest{
+		AllocationID:   allocationID,
+		IncludeWeights: includeWeights,
+	})
 }

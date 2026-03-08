@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,7 +64,7 @@ func Serve(ctx context.Context, svc *app.Service, cfg ServerConfig) error {
 	mux.HandleFunc("/healthz", h.handleHealthz)
 	mux.HandleFunc("/v2/model/ensure", h.handleModelEnsure)
 	mux.HandleFunc("/v2/model/verify", h.handleModelVerify)
-	mux.HandleFunc("/v2/model/runtime-bundle", h.handleModelRuntimeBundle)
+	mux.HandleFunc("/v2/runtime-bundles/", h.handleRuntimeBundleToken)
 	mux.HandleFunc("/v2/gpu/allocate", h.handleGPUAllocate)
 	mux.HandleFunc("/v2/gpu/load", h.handleGPULoad)
 	mux.HandleFunc("/v2/gpu/unload", h.handleGPUUnload)
@@ -185,33 +186,23 @@ func (h *handler) handleModelVerify(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
-func (h *handler) handleModelRuntimeBundle(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
+func (h *handler) handleRuntimeBundleToken(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
 		writeMethodNotAllowed(w)
 		return
 	}
-	var wireReq struct {
-		AllocationID   string `json:"allocation_id"`
-		ModelID        string `json:"model_id"`
-		Digest         string `json:"digest"`
-		Path           string `json:"path"`
-		IncludeWeights *bool  `json:"include_weights"`
-	}
-	if err := decodeJSONBody(r, &wireReq); err != nil {
-		writeAppError(w, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid runtime bundle request body", err))
+	token := strings.TrimPrefix(r.URL.Path, "/v2/runtime-bundles/")
+	token = strings.TrimSpace(token)
+	if token == "" || strings.Contains(token, "/") {
+		writeAppError(w, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "runtime bundle token path segment is required", nil))
 		return
 	}
-	includeWeights := false
-	if wireReq.IncludeWeights != nil {
-		includeWeights = *wireReq.IncludeWeights
+	unescapedToken, err := url.PathUnescape(token)
+	if err != nil {
+		writeAppError(w, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid runtime bundle token encoding", err))
+		return
 	}
-	res, err := h.svc.RuntimeBundle(r.Context(), app.RuntimeBundleRequest{
-		AllocationID:   wireReq.AllocationID,
-		ModelID:        wireReq.ModelID,
-		Digest:         wireReq.Digest,
-		Path:           wireReq.Path,
-		IncludeWeights: includeWeights,
-	})
+	res, err := h.svc.RuntimeBundleByToken(r.Context(), unescapedToken)
 	if err != nil {
 		writeAppErrorWithResult(w, err, res)
 		return
@@ -282,31 +273,36 @@ func (h *handler) handleGPUAllocate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var wireReq struct {
-		Ref         string `json:"ref"`
-		ModelID     string `json:"model_id"`
-		Digest      string `json:"digest"`
-		LeaseHolder string `json:"lease_holder"`
-		DeviceUUID  string `json:"device_uuid"`
-		ChunkBytes  int64  `json:"chunk_bytes"`
-		MaxShards   int    `json:"max_shards"`
-		Strict      *bool  `json:"strict"`
+		Ref                         string `json:"ref"`
+		ModelID                     string `json:"model_id"`
+		Digest                      string `json:"digest"`
+		LeaseHolder                 string `json:"lease_holder"`
+		DeviceUUID                  string `json:"device_uuid"`
+		ChunkBytes                  int64  `json:"chunk_bytes"`
+		MaxShards                   int    `json:"max_shards"`
+		Strict                      *bool  `json:"strict"`
+		RuntimeBundleIncludeWeights *bool  `json:"runtime_bundle_include_weights"`
 	}
 	if err := decodeJSONBody(r, &wireReq); err != nil {
 		writeAppError(w, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid gpu allocate request body", err))
 		return
 	}
 	req := app.GPUAllocateRequest{
-		Ref:         wireReq.Ref,
-		ModelID:     wireReq.ModelID,
-		Digest:      wireReq.Digest,
-		LeaseHolder: wireReq.LeaseHolder,
-		DeviceUUID:  wireReq.DeviceUUID,
-		ChunkBytes:  wireReq.ChunkBytes,
-		MaxShards:   wireReq.MaxShards,
-		Strict:      true,
+		Ref:                         wireReq.Ref,
+		ModelID:                     wireReq.ModelID,
+		Digest:                      wireReq.Digest,
+		LeaseHolder:                 wireReq.LeaseHolder,
+		DeviceUUID:                  wireReq.DeviceUUID,
+		ChunkBytes:                  wireReq.ChunkBytes,
+		MaxShards:                   wireReq.MaxShards,
+		Strict:                      true,
+		RuntimeBundleIncludeWeights: false,
 	}
 	if wireReq.Strict != nil {
 		req.Strict = *wireReq.Strict
+	}
+	if wireReq.RuntimeBundleIncludeWeights != nil {
+		req.RuntimeBundleIncludeWeights = *wireReq.RuntimeBundleIncludeWeights
 	}
 	res, err := h.svc.GPUAllocate(r.Context(), req)
 	if err != nil {
@@ -323,11 +319,6 @@ func (h *handler) handleGPULoad(w http.ResponseWriter, r *http.Request) {
 	}
 	var wireReq struct {
 		AllocationID string `json:"allocation_id"`
-		ModelID      string `json:"model_id"`
-		Digest       string `json:"digest"`
-		Path         string `json:"path"`
-		LeaseHolder  string `json:"lease_holder"`
-		DeviceUUID   string `json:"device_uuid"`
 		ChunkBytes   int64  `json:"chunk_bytes"`
 		MaxShards    int    `json:"max_shards"`
 		Strict       *bool  `json:"strict"`
@@ -339,11 +330,6 @@ func (h *handler) handleGPULoad(w http.ResponseWriter, r *http.Request) {
 	}
 	req := app.GPULoadRequest{
 		AllocationID: wireReq.AllocationID,
-		ModelID:      wireReq.ModelID,
-		Digest:       wireReq.Digest,
-		Path:         wireReq.Path,
-		LeaseHolder:  wireReq.LeaseHolder,
-		DeviceUUID:   wireReq.DeviceUUID,
 		ChunkBytes:   wireReq.ChunkBytes,
 		MaxShards:    wireReq.MaxShards,
 		Mode:         wireReq.Mode,
@@ -444,10 +430,6 @@ func (h *handler) handleGPUTensorMap(w http.ResponseWriter, r *http.Request) {
 	}
 	var wireReq struct {
 		AllocationID   string `json:"allocation_id"`
-		ModelID        string `json:"model_id"`
-		Digest         string `json:"digest"`
-		Path           string `json:"path"`
-		DeviceUUID     string `json:"device_uuid"`
 		MaxShards      int    `json:"max_shards"`
 		MaxTensors     int    `json:"max_tensors"`
 		IncludeHandles *bool  `json:"include_handles"`
@@ -462,10 +444,6 @@ func (h *handler) handleGPUTensorMap(w http.ResponseWriter, r *http.Request) {
 	}
 	req := app.GPUTensorMapRequest{
 		AllocationID:   wireReq.AllocationID,
-		ModelID:        wireReq.ModelID,
-		Digest:         wireReq.Digest,
-		Path:           wireReq.Path,
-		DeviceUUID:     wireReq.DeviceUUID,
 		MaxShards:      wireReq.MaxShards,
 		MaxTensors:     wireReq.MaxTensors,
 		IncludeHandles: includeHandles,

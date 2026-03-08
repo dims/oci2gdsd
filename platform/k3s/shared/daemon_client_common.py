@@ -6,6 +6,7 @@ import shutil
 import socket
 import subprocess
 import tarfile
+import urllib.parse
 from pathlib import Path
 
 import torch
@@ -188,6 +189,7 @@ def create_gpu_allocation(
     lease_holder: str,
     device_uuid: str,
     strict: bool,
+    runtime_bundle_include_weights: bool = False,
 ):
     req = {
         "ref": model_ref,
@@ -197,6 +199,7 @@ def create_gpu_allocation(
         "chunk_bytes": 4 * 1024 * 1024,
         "max_shards": 0,
         "strict": bool(strict),
+        "runtime_bundle_include_weights": bool(runtime_bundle_include_weights),
     }
     code, payload = unix_http_json(socket_path, "POST", "/v2/gpu/allocate", req, timeout_seconds=1800)
     assert_http_ok(code, payload, "gpu/allocate")
@@ -211,29 +214,30 @@ def create_gpu_allocation(
     print(
         "DAEMON_GPU_ALLOCATE_READY "
         f"allocation_id={allocation_id} model_id={model_id_out} digest={digest_out} "
-        f"files={payload.get('files', 0)} direct_files={payload.get('direct_files', 0)}"
+        f"files={payload.get('files', 0)} direct_files={payload.get('direct_files', 0)} "
+        f"runtime_bundle_token={str(payload.get('runtime_bundle_token', '')).strip()}"
     )
     return payload
 
 
-def hydrate_runtime_bundle(socket_path: str, runtime_root: Path, allocation_id: str, include_weights: bool = False):
+def hydrate_runtime_bundle(socket_path: str, runtime_root: Path, runtime_bundle_token: str):
     if runtime_root.exists():
         shutil.rmtree(runtime_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
-    req = {
-        "allocation_id": allocation_id,
-        "include_weights": bool(include_weights),
-    }
+    token = str(runtime_bundle_token).strip()
+    if not token:
+        raise RuntimeError("runtime bundle token is required")
+    token_path = urllib.parse.quote(token, safe="")
     code, _, payload = unix_http_request(
         socket_path=socket_path,
-        method="POST",
-        path="/v2/model/runtime-bundle",
-        payload=req,
+        method="GET",
+        path=f"/v2/runtime-bundles/{token_path}",
+        payload=None,
         timeout_seconds=600,
     )
     if code >= 300:
         text = payload.decode("utf-8", errors="replace")
-        raise RuntimeError(f"model/runtime-bundle failed: code={code} body={text}")
+        raise RuntimeError(f"runtime-bundle token fetch failed: code={code} body={text}")
     with tarfile.open(fileobj=io.BytesIO(payload), mode="r:") as tf:
         tf.extractall(path=str(runtime_root))
     if not (runtime_root / "metadata" / "model.json").exists():

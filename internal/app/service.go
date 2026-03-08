@@ -32,7 +32,14 @@ type Service struct {
 	attachMap map[string]*gpuClientAttachment
 	allocMu   sync.Mutex
 	allocSeq  uint64
-	allocMap  map[string]*gpuAllocation
+	bundleMu  sync.Mutex
+	bundleSeq uint64
+	bundleTTL time.Duration
+	bundleMap map[string]*runtimeBundleAccessToken
+	// allocation_id -> set(token)
+	bundleByAllocation map[string]map[string]struct{}
+	tensorMapMu        sync.RWMutex
+	tensorMapCache     map[string]*tensorMapSnapshot
 	// Optional allowlist regex for tenant-safe model identifiers.
 	modelIDAllowlist *regexp.Regexp
 }
@@ -62,6 +69,24 @@ type gpuAllocation struct {
 	CreatedAt      time.Time
 }
 
+type runtimeBundleAccessToken struct {
+	Token          string
+	AllocationID   string
+	IncludeWeights bool
+	CreatedAt      time.Time
+	ExpiresAt      time.Time
+}
+
+type tensorMapSnapshot struct {
+	Key     string
+	Format  string
+	Tensors []GPUTensorDescriptor
+	BuildMS int64
+	BuiltAt time.Time
+	ModelID string
+	Digest  string
+}
+
 func (s *Service) MinFreeBytesDefault() int64 {
 	return s.cfg.Retention.MinFreeBytes
 }
@@ -80,7 +105,7 @@ type EnsureResult struct {
 	Status          string     `json:"status"`
 	ModelID         string     `json:"model_id"`
 	ManifestDigest  string     `json:"manifest_digest"`
-	ModelRootPath   string     `json:"model_root_path"`
+	ModelRootPath   string     `json:"-"`
 	BytesDownloaded int64      `json:"bytes_downloaded"`
 	BytesReused     int64      `json:"bytes_reused"`
 	DurationMS      int64      `json:"duration_ms"`
@@ -162,15 +187,18 @@ func NewService(cfg configpkg.Config, fetcher ModelFetcher, gpuLoader GPULoader)
 		modelIDAllowlist = rx
 	}
 	s := &Service{
-		cfg:              cfg,
-		store:            store,
-		locks:            NewLockManager(cfg.LocksRoot),
-		fetcher:          fetcher,
-		gpuLoader:        gpuLoader,
-		attachTTL:        5 * time.Minute,
-		attachMap:        map[string]*gpuClientAttachment{},
-		allocMap:         map[string]*gpuAllocation{},
-		modelIDAllowlist: modelIDAllowlist,
+		cfg:                cfg,
+		store:              store,
+		locks:              NewLockManager(cfg.LocksRoot),
+		fetcher:            fetcher,
+		gpuLoader:          gpuLoader,
+		attachTTL:          5 * time.Minute,
+		bundleTTL:          5 * time.Minute,
+		attachMap:          map[string]*gpuClientAttachment{},
+		bundleMap:          map[string]*runtimeBundleAccessToken{},
+		bundleByAllocation: map[string]map[string]struct{}{},
+		tensorMapCache:     map[string]*tensorMapSnapshot{},
+		modelIDAllowlist:   modelIDAllowlist,
 	}
 	if err := s.Recover(); err != nil {
 		return nil, err
@@ -189,6 +217,19 @@ func (s *Service) validateModelID(modelID string) error {
 }
 
 func (s *Service) Recover() error {
+	// Allocation handles and runtime-bundle tokens are process-lifetime resources.
+	// GPU persistent pointers are not valid across daemon restarts.
+	if err := s.store.ClearAllocations(); err != nil {
+		return err
+	}
+	s.bundleMu.Lock()
+	s.bundleMap = map[string]*runtimeBundleAccessToken{}
+	s.bundleByAllocation = map[string]map[string]struct{}{}
+	s.bundleMu.Unlock()
+	s.tensorMapMu.Lock()
+	s.tensorMapCache = map[string]*tensorMapSnapshot{}
+	s.tensorMapMu.Unlock()
+
 	// Remove old stale temp paths from previous crashes. Keep young paths to
 	// avoid interfering with currently running ensure operations.
 	if fileExists(s.cfg.TmpRoot) {
@@ -469,18 +510,12 @@ func (s *Service) Ensure(ctx context.Context, req EnsureRequest) (EnsureResult, 
 	}
 
 	var bytesDownloaded int64
-	buffer := make([]byte, s.cfg.Transfer.StreamBufferBytes)
+	if err := s.downloadBlobs(ctx, fetched.Blobs, shardsDir); err != nil {
+		appErr := AsAppError(err)
+		cleanupTxn()
+		return fail(appErr.Reason, "blob download failed", appErr)
+	}
 	for _, blob := range fetched.Blobs {
-		if err := ValidateShardName(blob.Name); err != nil {
-			cleanupTxn()
-			return fail(ReasonProfileLintFailed, fmt.Sprintf("invalid shard name %q: %v", blob.Name, err), nil)
-		}
-		target := filepath.Join(shardsDir, blob.Name)
-		if err := s.downloadBlob(ctx, blob, target, buffer); err != nil {
-			appErr := AsAppError(err)
-			cleanupTxn()
-			return fail(appErr.Reason, "blob download failed", appErr)
-		}
 		bytesDownloaded += blob.Size
 	}
 	if err := journal.Append(JournalBlobsWritten); err != nil {
@@ -638,6 +673,125 @@ func (s *Service) downloadBlob(ctx context.Context, blob RemoteBlob, dst string,
 		}
 	}
 	return nil
+}
+
+func (s *Service) downloadBlobs(ctx context.Context, blobs []RemoteBlob, shardsDir string) error {
+	if len(blobs) == 0 {
+		return nil
+	}
+	workers := s.ensureDownloadWorkerCount(len(blobs))
+	bufBytes := s.ensureDownloadBufferBytes()
+	downloadCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	jobs := make(chan RemoteBlob, len(blobs))
+	errCh := make(chan error, len(blobs))
+
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			buffer := make([]byte, bufBytes)
+			for blob := range jobs {
+				select {
+				case <-downloadCtx.Done():
+					return
+				default:
+				}
+				target := filepath.Join(shardsDir, blob.Name)
+				if err := s.downloadBlob(downloadCtx, blob, target, buffer); err != nil {
+					select {
+					case errCh <- err:
+					default:
+					}
+					cancel()
+					return
+				}
+			}
+		}()
+	}
+
+	for _, blob := range blobs {
+		if err := ValidateShardName(blob.Name); err != nil {
+			cancel()
+			close(jobs)
+			wg.Wait()
+			return NewAppError(ExitValidation, ReasonProfileLintFailed, fmt.Sprintf("invalid shard name %q", blob.Name), err)
+		}
+		select {
+		case <-downloadCtx.Done():
+			close(jobs)
+			wg.Wait()
+			select {
+			case err := <-errCh:
+				return err
+			default:
+				return NewAppError(ExitRegistry, ReasonRegistryTimeout, "blob download canceled before completion", downloadCtx.Err())
+			}
+		case jobs <- blob:
+		}
+	}
+	close(jobs)
+	wg.Wait()
+
+	select {
+	case err := <-errCh:
+		return err
+	default:
+		return nil
+	}
+}
+
+func (s *Service) ensureDownloadWorkerCount(blobCount int) int {
+	if blobCount <= 0 {
+		return 1
+	}
+	workers := s.cfg.Transfer.MaxShardsConcurrentPerModel
+	if workers <= 0 {
+		workers = 1
+	}
+	chunksPerBlob := s.cfg.Download.MaxConcurrentChunksPerBlob
+	if chunksPerBlob <= 0 {
+		chunksPerBlob = 1
+	}
+	if chunksPerBlob > 1 {
+		if workers > math.MaxInt/chunksPerBlob {
+			workers = math.MaxInt
+		} else {
+			workers *= chunksPerBlob
+		}
+	}
+	if maxPerModel := s.cfg.Download.MaxConcurrentRequestsPerModel; maxPerModel > 0 && workers > maxPerModel {
+		workers = maxPerModel
+	}
+	if maxGlobal := s.cfg.Download.MaxConcurrentRequestsGlobal; maxGlobal > 0 && workers > maxGlobal {
+		workers = maxGlobal
+	}
+	if workers > blobCount {
+		workers = blobCount
+	}
+	if workers <= 0 {
+		workers = 1
+	}
+	return workers
+}
+
+func (s *Service) ensureDownloadBufferBytes() int {
+	size := s.cfg.Download.ChunkSizeBytes
+	if size <= 0 {
+		size = int64(s.cfg.Transfer.StreamBufferBytes)
+	}
+	if size < 64*1024 {
+		size = 64 * 1024
+	}
+	if size > 256*1024*1024 {
+		size = 256 * 1024 * 1024
+	}
+	if size > int64(math.MaxInt) {
+		return math.MaxInt
+	}
+	return int(size)
 }
 
 func (s *Service) Status(modelID, manifestDigest string) (StatusResult, error) {

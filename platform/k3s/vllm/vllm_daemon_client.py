@@ -479,10 +479,13 @@ def main():
     allocation_id = str(allocation.get("allocation_id", "")).strip()
     if not allocation_id:
         raise RuntimeError(f"gpu/allocate returned empty allocation_id: {allocation}")
+    runtime_bundle_token = str(allocation.get("runtime_bundle_token", "")).strip()
+    if not runtime_bundle_token:
+        raise RuntimeError(f"gpu/allocate returned empty runtime_bundle_token: {allocation}")
     model_digest = str(allocation.get("manifest_digest", model_digest)).strip()
     if not model_digest:
         raise RuntimeError(f"gpu/allocate returned empty manifest digest: {allocation}")
-    hydrate_runtime_bundle(socket_path, runtime_root, allocation_id, include_weights=False)
+    hydrate_runtime_bundle(socket_path, runtime_root, runtime_bundle_token)
 
     metadata_path = runtime_root / "metadata" / "model.json"
     if not metadata_path.exists():

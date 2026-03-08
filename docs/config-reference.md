@@ -50,7 +50,7 @@ All path fields must be absolute paths.
 ## `transfer` section
 
 - `transfer.stream_buffer_bytes` (`active`): buffer for shard streaming writes.
-- `transfer.max_shards_concurrent_per_model` (`validation-only`): must be `> 0`.
+- `transfer.max_shards_concurrent_per_model` (`active`): base per-model shard download worker count.
 
 - `transfer.max_models_concurrent` (`reserved`)
 - `transfer.max_connections_per_registry` (`reserved`)
@@ -68,12 +68,15 @@ Actively used in ORAS HTTP client:
 - `download.retry.min_backoff_ms` (`active`)
 - `download.retry.max_backoff_ms` (`active`)
 
-Currently not used to shape fetch algorithm:
+Actively used in ensure download scheduling/buffering:
 
-- `download.max_concurrent_requests_global` (`reserved`)
-- `download.max_concurrent_requests_per_model` (`reserved`)
-- `download.max_concurrent_chunks_per_blob` (`reserved`)
-- `download.chunk_size_bytes` (`reserved`)
+- `download.max_concurrent_requests_global` (`active`): caps effective shard-worker fanout.
+- `download.max_concurrent_requests_per_model` (`active`): per-model cap for effective shard-worker fanout.
+- `download.max_concurrent_chunks_per_blob` (`active`): contributes to effective per-model shard-worker fanout.
+- `download.chunk_size_bytes` (`active`): chunk/buffer size used for shard download streaming.
+
+Still reserved:
+
 - `download.request_timeout_sec` (`reserved`)
 - `download.retry.jitter` (`reserved`)
 
@@ -143,6 +146,10 @@ Behavior:
 - all major path fields must be absolute
 - `transfer.max_shards_concurrent_per_model > 0`
 - `transfer.stream_buffer_bytes > 0`
+- `download.max_concurrent_requests_global > 0`
+- `download.max_concurrent_requests_per_model > 0`
+- `download.max_concurrent_chunks_per_blob > 0`
+- `download.chunk_size_bytes > 0`
 - `retention.min_free_bytes >= 0`
 - `integrity.strict_signature && integrity.allow_unsigned_in_dev` is invalid
 - `registry.auth.docker_config_path` must be absolute when set

@@ -393,7 +393,11 @@ HTTP API surface:
 
 ```
 GET  /healthz
+POST /v2/model/ensure
+POST /v2/model/verify
+GET  /v2/runtime-bundles/{token}
 GET  /v2/gpu/devices
+POST /v2/gpu/allocate
 POST /v2/gpu/load
 POST /v2/gpu/export
 POST /v2/gpu/tensor-map
@@ -403,6 +407,11 @@ POST /v2/gpu/detach
 POST /v2/gpu/unload
 GET  /v2/gpu/status?device_uuid=<GPU-...>
 ```
+
+Runtime daemon-client paths are allocation-centric: runtime callers first create an
+allocation (`/v2/gpu/allocate`), then fetch runtime files via tokenized bundle
+download (`/v2/runtime-bundles/{token}`), and then use allocation-scoped GPU
+lifecycle calls (`attach`, `heartbeat`, `tensor-map`, `export`, `detach`, `unload`).
 
 `POST /v2/gpu/tensor-map` returns a safetensors-derived tensor index for each shard
 with byte ranges and optional exported CUDA IPC handle metadata. This endpoint is used by

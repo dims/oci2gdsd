@@ -25,7 +25,7 @@
   - `TXN_COMMITTED`
 - `READY` read contract enforcement.
 - Standalone CLI `gpu load` contract is explicit benchmark mode; `--mode persistent` is rejected in one-shot CLI mode.
-- `serve` command is implemented for long-running process integrations and exposes daemon GPU API endpoints (`/v2/gpu/load`, `/v2/gpu/export`, `/v2/gpu/attach`, `/v2/gpu/heartbeat`, `/v2/gpu/detach`, `/v2/gpu/unload`, `/v2/gpu/status`).
+- `serve` command is implemented for long-running process integrations and exposes allocation-centric daemon APIs (`/v2/gpu/allocate`, `GET /v2/runtime-bundles/{token}`, `/v2/gpu/export`, `/v2/gpu/tensor-map`, `/v2/gpu/attach`, `/v2/gpu/heartbeat`, `/v2/gpu/detach`, `/v2/gpu/unload`, `/v2/gpu/status`).
 - Persistent unload now guards against active attachment clients and requires detach (or TTL expiry) before freeing allocations.
 - GDS persistent loader handles non-4KiB tail bytes by switching tail copy to a non-`O_DIRECT` fd in non-strict mode.
 - `gpu unload` and `gpu status` commands are implemented; they are primarily useful for embedded/long-running process integrations.

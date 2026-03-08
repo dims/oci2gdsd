@@ -64,7 +64,9 @@ sequenceDiagram
   OP->>INIT: start workload
   INIT->>REG: fetch manifest/config/layers by digest
   INIT->>CACHE: write + verify shards, write READY
-  RT->>DAEMON: POST /v2/gpu/load (mode=persistent)
+  RT->>DAEMON: POST /v2/gpu/allocate
+  DAEMON-->>RT: runtime_bundle_token
+  RT->>DAEMON: GET /v2/runtime-bundles/{token}
   DAEMON->>CACHE: open shard (O_DIRECT)
   DAEMON->>GPU: cuFileRead into device memory
   RT->>DAEMON: POST /v2/gpu/export + /v2/gpu/tensor-map

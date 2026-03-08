@@ -132,14 +132,35 @@ func writeReadyModelForRuntimeBundle(t *testing.T, svc *Service, modelID, manife
 	return modelPath
 }
 
+func writeAllocationForRuntimeBundle(t *testing.T, svc *Service, allocationID, modelID, manifest, modelPath string) {
+	t.Helper()
+	rec := &storepkg.AllocationRecord{
+		AllocationID:   allocationID,
+		ModelKey:       modelKey(modelID, manifest),
+		ModelID:        modelID,
+		ManifestDigest: manifest,
+		Path:           modelPath,
+		LeaseHolder:    "runtime-bundle-test",
+		DeviceUUID:     "GPU-00000000-0000-0000-0000-000000000000",
+		DeviceIndex:    0,
+		Status:         "READY",
+		CreatedAt:      time.Now().UTC(),
+		UpdatedAt:      time.Now().UTC(),
+	}
+	if err := svc.store.PutAllocation(rec); err != nil {
+		t.Fatalf("allocation put: %v", err)
+	}
+}
+
 func TestRuntimeBundleExcludesWeightShardsByDefault(t *testing.T) {
 	svc := newRuntimeBundleTestService(t)
 	manifest := "sha256:" + strings.Repeat("a", 64)
-	writeReadyModelForRuntimeBundle(t, svc, "demo", manifest)
+	modelPath := writeReadyModelForRuntimeBundle(t, svc, "demo", manifest)
+	const allocationID = "alloc-runtime-bundle-default"
+	writeAllocationForRuntimeBundle(t, svc, allocationID, "demo", manifest, modelPath)
 
 	res, err := svc.RuntimeBundle(context.Background(), RuntimeBundleRequest{
-		ModelID: "demo",
-		Digest:  manifest,
+		AllocationID: allocationID,
 	})
 	if err != nil {
 		t.Fatalf("runtime bundle failed: %v", err)
@@ -171,11 +192,12 @@ func TestRuntimeBundleExcludesWeightShardsByDefault(t *testing.T) {
 func TestRuntimeBundleIncludesWeightsWhenRequested(t *testing.T) {
 	svc := newRuntimeBundleTestService(t)
 	manifest := "sha256:" + strings.Repeat("b", 64)
-	writeReadyModelForRuntimeBundle(t, svc, "demo", manifest)
+	modelPath := writeReadyModelForRuntimeBundle(t, svc, "demo", manifest)
+	const allocationID = "alloc-runtime-bundle-weights"
+	writeAllocationForRuntimeBundle(t, svc, allocationID, "demo", manifest, modelPath)
 
 	res, err := svc.RuntimeBundle(context.Background(), RuntimeBundleRequest{
-		ModelID:        "demo",
-		Digest:         manifest,
+		AllocationID:   allocationID,
 		IncludeWeights: true,
 	})
 	if err != nil {

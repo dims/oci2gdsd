@@ -23,26 +23,15 @@ type safeTensorsHeaderTensor struct {
 
 func (s *Service) GPUTensorMap(ctx context.Context, req GPUTensorMapRequest) (GPUTensorMapResult, error) {
 	start := time.Now()
-	modelID, manifestDigest, modelPath, deviceUUID, _, alloc, allocErr := s.resolveAllocationInput(
-		req.AllocationID,
-		req.ModelID,
-		req.Digest,
-		req.Path,
-		req.DeviceUUID,
-		"",
-	)
-	if allocErr != nil {
-		return GPUTensorMapResult{}, allocErr
-	}
-	req.ModelID = modelID
-	req.Digest = manifestDigest
-	req.Path = modelPath
-	req.DeviceUUID = deviceUUID
 	allocationID := strings.TrimSpace(req.AllocationID)
-	if alloc != nil {
-		allocationID = alloc.AllocationID
+	if allocationID == "" {
+		return GPUTensorMapResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "allocation_id is required", nil)
 	}
-	device, err := s.resolveRequestedDevice(ctx, req.DeviceUUID)
+	alloc, err := s.getAllocation(allocationID)
+	if err != nil {
+		return GPUTensorMapResult{}, err
+	}
+	device, err := s.resolveRequestedDevice(ctx, alloc.DeviceUUID)
 	if err != nil {
 		return GPUTensorMapResult{}, err
 	}
@@ -55,7 +44,7 @@ func (s *Service) GPUTensorMap(ctx context.Context, req GPUTensorMapRequest) (GP
 		req.MaxTensors = 0
 	}
 
-	modelPath, modelID, manifestDigest, md, _, err := s.resolveGPUModelTarget(req.Path, req.ModelID, req.Digest)
+	modelPath, modelID, manifestDigest, md, key, err := s.resolveGPUModelTarget("", alloc.ModelID, alloc.ManifestDigest)
 	if err != nil {
 		return GPUTensorMapResult{}, err
 	}
@@ -64,21 +53,50 @@ func (s *Service) GPUTensorMap(ctx context.Context, req GPUTensorMapRequest) (GP
 		return GPUTensorMapResult{}, NewAppError(ExitValidation, ReasonValidationFailed, fmt.Sprintf("gpu tensor-map only supports safetensors format; got %q", md.Profile.Format), nil)
 	}
 
-	shards, err := gpuWeightShards(md.Profile)
+	snapshot, err := s.getOrBuildTensorMapSnapshot(key, modelID, manifestDigest, modelPath, md)
 	if err != nil {
 		return GPUTensorMapResult{}, err
 	}
-	if req.MaxShards > 0 && req.MaxShards < len(shards) {
-		shards = shards[:req.MaxShards]
+
+	tensors := cloneTensorDescriptors(snapshot.Tensors)
+	if req.MaxShards > 0 {
+		allowedShards := map[string]struct{}{}
+		shards, shardErr := gpuWeightShards(md.Profile)
+		if shardErr != nil {
+			return GPUTensorMapResult{}, shardErr
+		}
+		for i := 0; i < len(shards) && i < req.MaxShards; i++ {
+			allowedShards[shards[i].Name] = struct{}{}
+		}
+		filtered := make([]GPUTensorDescriptor, 0, len(tensors))
+		for _, entry := range tensors {
+			if _, ok := allowedShards[entry.ShardName]; ok {
+				filtered = append(filtered, entry)
+			}
+		}
+		tensors = filtered
 	}
 
-	handleByPath := map[string]string{}
+	if req.MaxTensors > 0 && req.MaxTensors < len(tensors) {
+		tensors = tensors[:req.MaxTensors]
+	}
+
+	handleByShard := map[string]string{}
 	if req.IncludeHandles {
-		for _, shard := range shards {
-			if err := ValidateShardName(shard.Name); err != nil {
-				return GPUTensorMapResult{}, NewAppError(ExitValidation, ReasonValidationFailed, fmt.Sprintf("invalid shard name %q: %v", shard.Name, err), nil)
+		seenShard := map[string]struct{}{}
+		shardOrder := make([]string, 0, len(tensors))
+		for _, entry := range tensors {
+			if _, ok := seenShard[entry.ShardName]; ok {
+				continue
 			}
-			shardPath := filepath.Join(modelPath, "shards", shard.Name)
+			seenShard[entry.ShardName] = struct{}{}
+			shardOrder = append(shardOrder, entry.ShardName)
+		}
+		for _, shardName := range shardOrder {
+			if err := ValidateShardName(shardName); err != nil {
+				return GPUTensorMapResult{}, NewAppError(ExitValidation, ReasonValidationFailed, fmt.Sprintf("invalid shard name %q: %v", shardName, err), nil)
+			}
+			shardPath := filepath.Join(modelPath, "shards", shardName)
 			res, exportErr := s.gpuLoader.ExportPersistent(ctx, GPULoadFileRequest{
 				Path:   shardPath,
 				Device: req.Device,
@@ -97,60 +115,25 @@ func (s *Service) GPUTensorMap(ctx context.Context, req GPUTensorMapRequest) (GP
 					Format:         "safetensors",
 					ReasonCode:     appErr.Reason,
 					DurationMS:     time.Since(start).Milliseconds(),
-					Message:        fmt.Sprintf("failed exporting shard %s: %v", shard.Name, appErr.Error()),
+					Message:        fmt.Sprintf("failed exporting shard %s: %v", shardName, appErr.Error()),
 				}, appErr
 			}
 			ipcHandle := strings.TrimSpace(res.IPCHandle)
 			if ipcHandle == "" {
-				return GPUTensorMapResult{}, NewAppError(ExitStateCorrupt, ReasonStateDBCorrupt, fmt.Sprintf("gpu export returned empty IPC handle for shard %s", shard.Name), nil)
+				return GPUTensorMapResult{}, NewAppError(ExitStateCorrupt, ReasonStateDBCorrupt, fmt.Sprintf("gpu export returned empty IPC handle for shard %s", shardName), nil)
 			}
-			handleByPath[shardPath] = ipcHandle
+			handleByShard[shardName] = ipcHandle
 		}
 	}
-
-	tensors := make([]GPUTensorDescriptor, 0, 1024)
 	var totalTensorBytes int64
-	appendTensor := func(desc GPUTensorDescriptor) bool {
-		tensors = append(tensors, desc)
-		totalTensorBytes += desc.ByteLength
-		return req.MaxTensors > 0 && len(tensors) >= req.MaxTensors
-	}
-
-	for _, shard := range shards {
-		if err := ValidateShardName(shard.Name); err != nil {
-			return GPUTensorMapResult{}, NewAppError(ExitValidation, ReasonValidationFailed, fmt.Sprintf("invalid shard name %q: %v", shard.Name, err), nil)
+	if req.IncludeHandles {
+		for i := range tensors {
+			tensors[i].IPCHandle = handleByShard[tensors[i].ShardName]
+			totalTensorBytes += tensors[i].ByteLength
 		}
-		shardPath := filepath.Join(modelPath, "shards", shard.Name)
-		entries, parseErr := parseSafeTensorsShard(shardPath, shard)
-		if parseErr != nil {
-			return GPUTensorMapResult{}, NewAppError(ExitIntegrity, ReasonProfileLintFailed, fmt.Sprintf("failed parsing safetensors header for shard %s", shard.Name), parseErr)
-		}
-		if req.IncludeHandles {
-			ipcHandle := handleByPath[shardPath]
-			for i := range entries {
-				entries[i].IPCHandle = ipcHandle
-			}
-		}
-		for _, entry := range entries {
-			if appendTensor(entry) {
-				return GPUTensorMapResult{
-					Status:           "READY",
-					AllocationID:     allocationID,
-					ModelID:          modelID,
-					ManifestDigest:   manifestDigest,
-					Path:             modelPath,
-					DeviceUUID:       req.DeviceUUID,
-					DeviceIndex:      req.Device,
-					Loader:           s.gpuLoader.Name(),
-					Format:           "safetensors",
-					Tensors:          tensors,
-					TensorCount:      len(tensors),
-					TotalTensorBytes: totalTensorBytes,
-					DurationMS:       time.Since(start).Milliseconds(),
-					ReasonCode:       ReasonNone,
-					Message:          "tensor map generated (max_tensors limit reached)",
-				}, nil
-			}
+	} else {
+		for _, entry := range tensors {
+			totalTensorBytes += entry.ByteLength
 		}
 	}
 
@@ -169,8 +152,73 @@ func (s *Service) GPUTensorMap(ctx context.Context, req GPUTensorMapRequest) (GP
 		TotalTensorBytes: totalTensorBytes,
 		DurationMS:       time.Since(start).Milliseconds(),
 		ReasonCode:       ReasonNone,
-		Message:          "tensor map generated from safetensors headers",
+		Message:          "tensor map generated from cached safetensors headers",
 	}, nil
+}
+
+func cloneTensorDescriptors(in []GPUTensorDescriptor) []GPUTensorDescriptor {
+	out := make([]GPUTensorDescriptor, len(in))
+	for i := range in {
+		out[i] = in[i]
+		out[i].Shape = append([]int64(nil), in[i].Shape...)
+	}
+	return out
+}
+
+func (s *Service) getOrBuildTensorMapSnapshot(key, modelID, manifestDigest, modelPath string, md *localMetadata) (*tensorMapSnapshot, error) {
+	s.tensorMapMu.RLock()
+	if snap, ok := s.tensorMapCache[key]; ok && snap != nil {
+		cp := *snap
+		cp.Tensors = cloneTensorDescriptors(snap.Tensors)
+		s.tensorMapMu.RUnlock()
+		return &cp, nil
+	}
+	s.tensorMapMu.RUnlock()
+
+	buildStart := time.Now()
+	shards, err := gpuWeightShards(md.Profile)
+	if err != nil {
+		return nil, err
+	}
+	tensors := make([]GPUTensorDescriptor, 0, 1024)
+	for _, shard := range shards {
+		if err := ValidateShardName(shard.Name); err != nil {
+			return nil, NewAppError(ExitValidation, ReasonValidationFailed, fmt.Sprintf("invalid shard name %q: %v", shard.Name, err), nil)
+		}
+		shardPath := filepath.Join(modelPath, "shards", shard.Name)
+		entries, parseErr := parseSafeTensorsShard(shardPath, shard)
+		if parseErr != nil {
+			return nil, NewAppError(ExitIntegrity, ReasonProfileLintFailed, fmt.Sprintf("failed parsing safetensors header for shard %s", shard.Name), parseErr)
+		}
+		tensors = append(tensors, entries...)
+	}
+
+	snap := &tensorMapSnapshot{
+		Key:     key,
+		Format:  "safetensors",
+		Tensors: cloneTensorDescriptors(tensors),
+		BuildMS: time.Since(buildStart).Milliseconds(),
+		BuiltAt: time.Now().UTC(),
+		ModelID: modelID,
+		Digest:  manifestDigest,
+	}
+
+	s.tensorMapMu.Lock()
+	if s.tensorMapCache == nil {
+		s.tensorMapCache = map[string]*tensorMapSnapshot{}
+	}
+	if existing, ok := s.tensorMapCache[key]; ok && existing != nil {
+		cp := *existing
+		cp.Tensors = cloneTensorDescriptors(existing.Tensors)
+		s.tensorMapMu.Unlock()
+		return &cp, nil
+	}
+	s.tensorMapCache[key] = snap
+	s.tensorMapMu.Unlock()
+
+	cp := *snap
+	cp.Tensors = cloneTensorDescriptors(snap.Tensors)
+	return &cp, nil
 }
 
 func parseSafeTensorsShard(shardPath string, shard ModelShard) ([]GPUTensorDescriptor, error) {
@@ -250,7 +298,6 @@ func parseSafeTensorsShard(shardPath string, shard ModelShard) ([]GPUTensorDescr
 			ByteOffset:   absStart,
 			ByteLength:   absEnd - absStart,
 			ShardName:    shard.Name,
-			ShardPath:    shardPath,
 			ShardDigest:  shard.Digest,
 			ShardSize:    fileSize,
 			ShardOrdinal: shard.Ordinal,

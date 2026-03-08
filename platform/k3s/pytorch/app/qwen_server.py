@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tarfile
 import time
+import urllib.parse
 import uuid
 from pathlib import Path
 
@@ -425,7 +426,9 @@ def _assert_http_ok(code, payload, action):
         raise RuntimeError(f"{action} returned FAILED payload={payload}")
 
 
-def _daemon_create_allocation(socket_path, model_ref, model_id, lease_holder, device_uuid, strict):
+def _daemon_create_allocation(
+    socket_path, model_ref, model_id, lease_holder, device_uuid, strict, runtime_bundle_include_weights=True
+):
     req = {
         "ref": str(model_ref),
         "model_id": str(model_id),
@@ -434,6 +437,7 @@ def _daemon_create_allocation(socket_path, model_ref, model_id, lease_holder, de
         "chunk_bytes": int(4 * 1024 * 1024),
         "max_shards": 0,
         "strict": bool(strict),
+        "runtime_bundle_include_weights": bool(runtime_bundle_include_weights),
     }
     code, payload = _unix_http_json(socket_path, "POST", "/v2/gpu/allocate", req, timeout_seconds=1800)
     _assert_http_ok(code, payload, "gpu/allocate")
@@ -445,24 +449,24 @@ def _daemon_create_allocation(socket_path, model_ref, model_id, lease_holder, de
     return payload
 
 
-def _daemon_hydrate_runtime_bundle(socket_path, runtime_root, allocation_id, include_weights=True):
+def _daemon_hydrate_runtime_bundle(socket_path, runtime_root, runtime_bundle_token):
     if runtime_root.exists():
         shutil.rmtree(runtime_root)
     runtime_root.mkdir(parents=True, exist_ok=True)
-    req = {
-        "allocation_id": str(allocation_id),
-        "include_weights": bool(include_weights),
-    }
+    token = str(runtime_bundle_token).strip()
+    if not token:
+        raise RuntimeError("runtime bundle token is required")
+    token_path = urllib.parse.quote(token, safe="")
     code, _, payload = _unix_http_request(
         socket_path=socket_path,
-        method="POST",
-        path="/v2/model/runtime-bundle",
-        payload=req,
+        method="GET",
+        path=f"/v2/runtime-bundles/{token_path}",
+        payload=None,
         timeout_seconds=600,
     )
     if code >= 300:
         body = payload.decode("utf-8", errors="replace")
-        raise RuntimeError(f"model/runtime-bundle failed: code={code} body={body}")
+        raise RuntimeError(f"runtime-bundle token fetch failed: code={code} body={body}")
     with tarfile.open(fileobj=io.BytesIO(payload), mode="r:") as tf:
         tf.extractall(path=str(runtime_root))
     if not (runtime_root / "metadata" / "model.json").exists():
@@ -650,12 +654,14 @@ allocation = _daemon_create_allocation(
 allocation_id = str(allocation.get("allocation_id", "")).strip()
 if not allocation_id:
     raise RuntimeError(f"gpu/allocate returned empty allocation_id: {allocation}")
+runtime_bundle_token = str(allocation.get("runtime_bundle_token", "")).strip()
+if not runtime_bundle_token:
+    raise RuntimeError(f"gpu/allocate returned empty runtime_bundle_token: {allocation}")
 runtime_bundle_root = Path(os.environ.get("RUNTIME_BUNDLE_ROOT", "/tmp/oci2gdsd-runtime-bundle"))
 _daemon_hydrate_runtime_bundle(
     socket_path=daemon_socket_path,
     runtime_root=runtime_bundle_root,
-    allocation_id=allocation_id,
-    include_weights=True,
+    runtime_bundle_token=runtime_bundle_token,
 )
 
 model_root = runtime_bundle_root

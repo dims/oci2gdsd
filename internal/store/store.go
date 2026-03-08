@@ -37,9 +37,24 @@ type ModelRecord struct {
 	LastAccessedAt   time.Time         `json:"last_accessed_at"`
 }
 
+type AllocationRecord struct {
+	AllocationID   string    `json:"allocation_id"`
+	ModelKey       string    `json:"model_key"`
+	ModelID        string    `json:"model_id"`
+	ManifestDigest string    `json:"manifest_digest"`
+	Path           string    `json:"path"`
+	LeaseHolder    string    `json:"lease_holder"`
+	DeviceUUID     string    `json:"device_uuid"`
+	DeviceIndex    int       `json:"device_index"`
+	Status         string    `json:"status"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
 type stateDB struct {
-	Version int                     `json:"version"`
-	Models  map[string]*ModelRecord `json:"models"`
+	Version     int                          `json:"version"`
+	Models      map[string]*ModelRecord      `json:"models"`
+	Allocations map[string]*AllocationRecord `json:"allocations"`
 }
 
 type StateStore struct {
@@ -60,8 +75,9 @@ func (s *StateStore) Init() error {
 	}
 	if !fileExists(s.path) {
 		seed := stateDB{
-			Version: 1,
-			Models:  map[string]*ModelRecord{},
+			Version:     2,
+			Models:      map[string]*ModelRecord{},
+			Allocations: map[string]*AllocationRecord{},
 		}
 		b, err := json.MarshalIndent(seed, "", "  ")
 		if err != nil {
@@ -133,8 +149,9 @@ func (s *StateStore) load() (*stateDB, error) {
 	}
 	db := &stateDB{}
 	if len(b) == 0 {
-		db.Version = 1
+		db.Version = 2
 		db.Models = map[string]*ModelRecord{}
+		db.Allocations = map[string]*AllocationRecord{}
 		return db, nil
 	}
 	if err := json.Unmarshal(b, db); err != nil {
@@ -143,8 +160,14 @@ func (s *StateStore) load() (*stateDB, error) {
 	if db.Models == nil {
 		db.Models = map[string]*ModelRecord{}
 	}
+	if db.Allocations == nil {
+		db.Allocations = map[string]*AllocationRecord{}
+	}
 	if db.Version == 0 {
 		db.Version = 1
+	}
+	if db.Version < 2 {
+		db.Version = 2
 	}
 	return db, nil
 }
@@ -228,6 +251,77 @@ func (s *StateStore) List() ([]ModelRecord, error) {
 		return records[i].ModelID < records[j].ModelID
 	})
 	return records, nil
+}
+
+func (s *StateStore) GetAllocation(allocationID string) (*AllocationRecord, bool, error) {
+	var out *AllocationRecord
+	err := s.withLockedRead(func(db *stateDB) error {
+		rec, ok := db.Allocations[allocationID]
+		if !ok {
+			return nil
+		}
+		cp := *rec
+		out = &cp
+		return nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	if out == nil {
+		return nil, false, nil
+	}
+	return out, true, nil
+}
+
+func (s *StateStore) PutAllocation(rec *AllocationRecord) error {
+	if rec == nil {
+		return errors.New("nil allocation record")
+	}
+	return s.withLockedWrite(func(db *stateDB) error {
+		now := time.Now().UTC()
+		if rec.CreatedAt.IsZero() {
+			rec.CreatedAt = now
+		}
+		rec.UpdatedAt = now
+		cp := *rec
+		db.Allocations[rec.AllocationID] = &cp
+		return nil
+	})
+}
+
+func (s *StateStore) DeleteAllocation(allocationID string) error {
+	return s.withLockedWrite(func(db *stateDB) error {
+		delete(db.Allocations, allocationID)
+		return nil
+	})
+}
+
+func (s *StateStore) ListAllocations() ([]AllocationRecord, error) {
+	records := make([]AllocationRecord, 0)
+	err := s.withLockedRead(func(db *stateDB) error {
+		for _, rec := range db.Allocations {
+			cp := *rec
+			records = append(records, cp)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].ModelID == records[j].ModelID {
+			return records[i].AllocationID < records[j].AllocationID
+		}
+		return records[i].ModelID < records[j].ModelID
+	})
+	return records, nil
+}
+
+func (s *StateStore) ClearAllocations() error {
+	return s.withLockedWrite(func(db *stateDB) error {
+		db.Allocations = map[string]*AllocationRecord{}
+		return nil
+	})
 }
 
 func (s *StateStore) UpsertWithLock(key string, fn func(rec *ModelRecord) error) error {

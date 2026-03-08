@@ -47,41 +47,43 @@ type GPULoadFileResult struct {
 }
 
 type GPUAllocateRequest struct {
-	Ref         string `json:"ref"`
-	ModelID     string `json:"model_id"`
-	Digest      string `json:"digest"`
-	LeaseHolder string `json:"lease_holder"`
-	DeviceUUID  string `json:"device_uuid"`
-	ChunkBytes  int64  `json:"chunk_bytes"`
-	MaxShards   int    `json:"max_shards"`
-	Strict      bool   `json:"strict"`
+	Ref                         string `json:"ref"`
+	ModelID                     string `json:"model_id"`
+	Digest                      string `json:"digest"`
+	LeaseHolder                 string `json:"lease_holder"`
+	DeviceUUID                  string `json:"device_uuid"`
+	ChunkBytes                  int64  `json:"chunk_bytes"`
+	MaxShards                   int    `json:"max_shards"`
+	Strict                      bool   `json:"strict"`
+	RuntimeBundleIncludeWeights bool   `json:"runtime_bundle_include_weights"`
 }
 
 type GPUAllocateResult struct {
-	Status         string     `json:"status"`
-	AllocationID   string     `json:"allocation_id,omitempty"`
-	ModelID        string     `json:"model_id,omitempty"`
-	ManifestDigest string     `json:"manifest_digest,omitempty"`
-	LeaseHolder    string     `json:"lease_holder,omitempty"`
-	Path           string     `json:"path,omitempty"`
-	DeviceUUID     string     `json:"device_uuid,omitempty"`
-	DeviceIndex    int        `json:"device_index,omitempty"`
-	Loader         string     `json:"loader,omitempty"`
-	Files          int        `json:"files,omitempty"`
-	DirectFiles    int        `json:"direct_files,omitempty"`
-	TotalBytes     int64      `json:"total_bytes,omitempty"`
-	DurationMS     int64      `json:"duration_ms"`
-	ReasonCode     ReasonCode `json:"reason_code"`
-	Message        string     `json:"message,omitempty"`
+	Status                    string     `json:"status"`
+	AllocationID              string     `json:"allocation_id,omitempty"`
+	ModelID                   string     `json:"model_id,omitempty"`
+	ManifestDigest            string     `json:"manifest_digest,omitempty"`
+	LeaseHolder               string     `json:"lease_holder,omitempty"`
+	DeviceUUID                string     `json:"device_uuid,omitempty"`
+	DeviceIndex               int        `json:"device_index,omitempty"`
+	Loader                    string     `json:"loader,omitempty"`
+	Files                     int        `json:"files,omitempty"`
+	DirectFiles               int        `json:"direct_files,omitempty"`
+	TotalBytes                int64      `json:"total_bytes,omitempty"`
+	RuntimeBundleToken        string     `json:"runtime_bundle_token,omitempty"`
+	RuntimeBundleTokenExpires string     `json:"runtime_bundle_token_expires_at,omitempty"`
+	DurationMS                int64      `json:"duration_ms"`
+	ReasonCode                ReasonCode `json:"reason_code"`
+	Message                   string     `json:"message,omitempty"`
 }
 
 type GPULoadRequest struct {
 	AllocationID string `json:"allocation_id"`
-	ModelID      string `json:"model_id"`
-	Digest       string `json:"digest"`
-	Path         string `json:"path"`
-	LeaseHolder  string `json:"lease_holder"`
-	DeviceUUID   string `json:"device_uuid"`
+	ModelID      string `json:"-"`
+	Digest       string `json:"-"`
+	Path         string `json:"-"`
+	LeaseHolder  string `json:"-"`
+	DeviceUUID   string `json:"-"`
 	Device       int    `json:"-"`
 	ChunkBytes   int64  `json:"chunk_bytes"`
 	MaxShards    int    `json:"max_shards"`
@@ -95,7 +97,7 @@ type GPULoadResult struct {
 	ModelID        string              `json:"model_id,omitempty"`
 	ManifestDigest string              `json:"manifest_digest,omitempty"`
 	LeaseHolder    string              `json:"lease_holder,omitempty"`
-	Path           string              `json:"path"`
+	Path           string              `json:"-"`
 	DeviceUUID     string              `json:"device_uuid"`
 	DeviceIndex    int                 `json:"device_index"`
 	Loader         string              `json:"loader"`
@@ -110,11 +112,11 @@ type GPULoadResult struct {
 
 type GPUUnloadRequest struct {
 	AllocationID string `json:"allocation_id"`
-	ModelID      string `json:"model_id"`
-	Digest       string `json:"digest"`
-	Path         string `json:"path"`
-	LeaseHolder  string `json:"lease_holder"`
-	DeviceUUID   string `json:"device_uuid"`
+	ModelID      string `json:"-"`
+	Digest       string `json:"-"`
+	Path         string `json:"-"`
+	LeaseHolder  string `json:"-"`
+	DeviceUUID   string `json:"-"`
 	Device       int    `json:"-"`
 }
 
@@ -124,7 +126,7 @@ type GPUUnloadResult struct {
 	ModelID         string              `json:"model_id,omitempty"`
 	ManifestDigest  string              `json:"manifest_digest,omitempty"`
 	LeaseHolder     string              `json:"lease_holder,omitempty"`
-	Path            string              `json:"path"`
+	Path            string              `json:"-"`
 	DeviceUUID      string              `json:"device_uuid"`
 	DeviceIndex     int                 `json:"device_index"`
 	Loader          string              `json:"loader"`
@@ -138,10 +140,10 @@ type GPUUnloadResult struct {
 
 type GPUExportRequest struct {
 	AllocationID string `json:"allocation_id"`
-	ModelID      string `json:"model_id"`
-	Digest       string `json:"digest"`
-	Path         string `json:"path"`
-	DeviceUUID   string `json:"device_uuid"`
+	ModelID      string `json:"-"`
+	Digest       string `json:"-"`
+	Path         string `json:"-"`
+	DeviceUUID   string `json:"-"`
 	Device       int    `json:"-"`
 	MaxShards    int    `json:"max_shards"`
 }
@@ -151,7 +153,7 @@ type GPUExportResult struct {
 	AllocationID   string              `json:"allocation_id,omitempty"`
 	ModelID        string              `json:"model_id,omitempty"`
 	ManifestDigest string              `json:"manifest_digest,omitempty"`
-	Path           string              `json:"path"`
+	Path           string              `json:"-"`
 	DeviceUUID     string              `json:"device_uuid"`
 	DeviceIndex    int                 `json:"device_index"`
 	Loader         string              `json:"loader"`
@@ -164,10 +166,10 @@ type GPUExportResult struct {
 
 type GPUTensorMapRequest struct {
 	AllocationID   string `json:"allocation_id"`
-	ModelID        string `json:"model_id"`
-	Digest         string `json:"digest"`
-	Path           string `json:"path"`
-	DeviceUUID     string `json:"device_uuid"`
+	ModelID        string `json:"-"`
+	Digest         string `json:"-"`
+	Path           string `json:"-"`
+	DeviceUUID     string `json:"-"`
 	Device         int    `json:"-"`
 	MaxShards      int    `json:"max_shards"`
 	MaxTensors     int    `json:"max_tensors"`
@@ -181,7 +183,6 @@ type GPUTensorDescriptor struct {
 	ByteOffset   int64   `json:"byte_offset"`
 	ByteLength   int64   `json:"byte_length"`
 	ShardName    string  `json:"shard_name"`
-	ShardPath    string  `json:"shard_path"`
 	ShardDigest  string  `json:"shard_digest,omitempty"`
 	ShardSize    int64   `json:"shard_size"`
 	ShardOrdinal int     `json:"shard_ordinal"`
@@ -193,7 +194,7 @@ type GPUTensorMapResult struct {
 	AllocationID     string                `json:"allocation_id,omitempty"`
 	ModelID          string                `json:"model_id,omitempty"`
 	ManifestDigest   string                `json:"manifest_digest,omitempty"`
-	Path             string                `json:"path"`
+	Path             string                `json:"-"`
 	DeviceUUID       string                `json:"device_uuid"`
 	DeviceIndex      int                   `json:"device_index"`
 	Loader           string                `json:"loader"`
@@ -208,10 +209,10 @@ type GPUTensorMapResult struct {
 
 type GPUAttachRequest struct {
 	AllocationID string `json:"allocation_id"`
-	ModelID      string `json:"model_id"`
-	Digest       string `json:"digest"`
-	Path         string `json:"path"`
-	DeviceUUID   string `json:"device_uuid"`
+	ModelID      string `json:"-"`
+	Digest       string `json:"-"`
+	Path         string `json:"-"`
+	DeviceUUID   string `json:"-"`
 	Device       int    `json:"-"`
 	ClientID     string `json:"client_id"`
 	MaxShards    int    `json:"max_shards"`
@@ -223,7 +224,7 @@ type GPUAttachResult struct {
 	AllocationID   string              `json:"allocation_id,omitempty"`
 	ModelID        string              `json:"model_id,omitempty"`
 	ManifestDigest string              `json:"manifest_digest,omitempty"`
-	Path           string              `json:"path"`
+	Path           string              `json:"-"`
 	DeviceUUID     string              `json:"device_uuid"`
 	DeviceIndex    int                 `json:"device_index"`
 	ClientID       string              `json:"client_id"`
@@ -238,10 +239,10 @@ type GPUAttachResult struct {
 
 type GPUDetachRequest struct {
 	AllocationID string `json:"allocation_id"`
-	ModelID      string `json:"model_id"`
-	Digest       string `json:"digest"`
-	Path         string `json:"path"`
-	DeviceUUID   string `json:"device_uuid"`
+	ModelID      string `json:"-"`
+	Digest       string `json:"-"`
+	Path         string `json:"-"`
+	DeviceUUID   string `json:"-"`
 	Device       int    `json:"-"`
 	ClientID     string `json:"client_id"`
 }
@@ -251,7 +252,7 @@ type GPUDetachResult struct {
 	AllocationID   string              `json:"allocation_id,omitempty"`
 	ModelID        string              `json:"model_id,omitempty"`
 	ManifestDigest string              `json:"manifest_digest,omitempty"`
-	Path           string              `json:"path"`
+	Path           string              `json:"-"`
 	DeviceUUID     string              `json:"device_uuid"`
 	DeviceIndex    int                 `json:"device_index"`
 	ClientID       string              `json:"client_id"`
@@ -265,10 +266,10 @@ type GPUDetachResult struct {
 
 type GPUHeartbeatRequest struct {
 	AllocationID string `json:"allocation_id"`
-	ModelID      string `json:"model_id"`
-	Digest       string `json:"digest"`
-	Path         string `json:"path"`
-	DeviceUUID   string `json:"device_uuid"`
+	ModelID      string `json:"-"`
+	Digest       string `json:"-"`
+	Path         string `json:"-"`
+	DeviceUUID   string `json:"-"`
 	Device       int    `json:"-"`
 	ClientID     string `json:"client_id"`
 	TTLSeconds   int    `json:"ttl_seconds"`
@@ -279,7 +280,7 @@ type GPUHeartbeatResult struct {
 	AllocationID   string     `json:"allocation_id,omitempty"`
 	ModelID        string     `json:"model_id,omitempty"`
 	ManifestDigest string     `json:"manifest_digest,omitempty"`
-	Path           string     `json:"path"`
+	Path           string     `json:"-"`
 	DeviceUUID     string     `json:"device_uuid"`
 	DeviceIndex    int        `json:"device_index"`
 	ClientID       string     `json:"client_id"`
@@ -404,7 +405,6 @@ func (s *Service) GPUAllocate(ctx context.Context, req GPUAllocateRequest) (GPUA
 			ModelID:        modelID,
 			ManifestDigest: manifestDigest,
 			LeaseHolder:    leaseHolder,
-			Path:           loadRes.Path,
 			DeviceUUID:     req.DeviceUUID,
 			DeviceIndex:    device.Index,
 			Loader:         s.gpuLoader.Name(),
@@ -423,7 +423,7 @@ func (s *Service) GPUAllocate(ctx context.Context, req GPUAllocateRequest) (GPUA
 			directFiles++
 		}
 	}
-	s.putAllocation(&gpuAllocation{
+	if err := s.putAllocation(&gpuAllocation{
 		AllocationID:   allocationID,
 		ModelKey:       modelKey(modelID, manifestDigest),
 		ModelID:        modelID,
@@ -433,23 +433,28 @@ func (s *Service) GPUAllocate(ctx context.Context, req GPUAllocateRequest) (GPUA
 		DeviceUUID:     req.DeviceUUID,
 		DeviceIndex:    device.Index,
 		CreatedAt:      time.Now().UTC(),
-	})
+	}); err != nil {
+		_, _ = s.Release(context.Background(), modelID, manifestDigest, leaseHolder, false)
+		return GPUAllocateResult{}, err
+	}
+	runtimeBundleToken, runtimeBundleTokenExpiresAt := s.issueRuntimeBundleToken(allocationID, req.RuntimeBundleIncludeWeights)
 	return GPUAllocateResult{
-		Status:         "READY",
-		AllocationID:   allocationID,
-		ModelID:        modelID,
-		ManifestDigest: manifestDigest,
-		LeaseHolder:    leaseHolder,
-		Path:           loadRes.Path,
-		DeviceUUID:     req.DeviceUUID,
-		DeviceIndex:    device.Index,
-		Loader:         s.gpuLoader.Name(),
-		Files:          len(loadRes.Files),
-		DirectFiles:    directFiles,
-		TotalBytes:     loadRes.TotalBytes,
-		DurationMS:     time.Since(start).Milliseconds(),
-		ReasonCode:     ReasonNone,
-		Message:        "gpu allocation created",
+		Status:                    "READY",
+		AllocationID:              allocationID,
+		ModelID:                   modelID,
+		ManifestDigest:            manifestDigest,
+		LeaseHolder:               leaseHolder,
+		DeviceUUID:                req.DeviceUUID,
+		DeviceIndex:               device.Index,
+		Loader:                    s.gpuLoader.Name(),
+		Files:                     len(loadRes.Files),
+		DirectFiles:               directFiles,
+		TotalBytes:                loadRes.TotalBytes,
+		RuntimeBundleToken:        runtimeBundleToken,
+		RuntimeBundleTokenExpires: runtimeBundleTokenExpiresAt.Format(time.RFC3339Nano),
+		DurationMS:                time.Since(start).Milliseconds(),
+		ReasonCode:                ReasonNone,
+		Message:                   "gpu allocation created",
 	}, nil
 }
 
@@ -825,77 +830,30 @@ func (s *Service) gpuPersistentLoad(ctx context.Context, start time.Time, req GP
 
 func (s *Service) GPUUnload(ctx context.Context, req GPUUnloadRequest) (GPUUnloadResult, error) {
 	start := time.Now()
-	modelID, manifestDigest, modelPath, deviceUUID, leaseHolder, alloc, allocErr := s.resolveAllocationInput(
-		req.AllocationID,
-		req.ModelID,
-		req.Digest,
-		req.Path,
-		req.DeviceUUID,
-		req.LeaseHolder,
-	)
-	if allocErr != nil {
-		return GPUUnloadResult{}, allocErr
-	}
-	req.ModelID = modelID
-	req.Digest = manifestDigest
-	req.Path = modelPath
-	req.DeviceUUID = deviceUUID
-	req.LeaseHolder = leaseHolder
 	allocationID := strings.TrimSpace(req.AllocationID)
-	if alloc != nil {
-		allocationID = alloc.AllocationID
+	if allocationID == "" {
+		return GPUUnloadResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "allocation_id is required", nil)
 	}
-	device, err := s.resolveRequestedDevice(ctx, req.DeviceUUID)
+	alloc, err := s.getAllocation(allocationID)
+	if err != nil {
+		return GPUUnloadResult{}, err
+	}
+	modelID := strings.TrimSpace(alloc.ModelID)
+	manifestDigest := strings.TrimSpace(alloc.ManifestDigest)
+	leaseHolder := strings.TrimSpace(alloc.LeaseHolder)
+	if modelID == "" || manifestDigest == "" || leaseHolder == "" {
+		return GPUUnloadResult{}, NewAppError(ExitStateCorrupt, ReasonStateDBCorrupt, "allocation record is incomplete", nil)
+	}
+	modelPath, modelID, manifestDigest, md, key, err := s.resolveGPUModelTarget("", modelID, manifestDigest)
+	if err != nil {
+		return GPUUnloadResult{}, err
+	}
+	device, err := s.resolveRequestedDevice(ctx, alloc.DeviceUUID)
 	if err != nil {
 		return GPUUnloadResult{}, err
 	}
 	req.DeviceUUID = device.UUID
 	req.Device = device.Index
-	leaseHolder = strings.TrimSpace(req.LeaseHolder)
-	if leaseHolder == "" {
-		return GPUUnloadResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "--lease-holder is required for gpu unload", nil)
-	}
-
-	modelPath = strings.TrimSpace(req.Path)
-	modelID = strings.TrimSpace(req.ModelID)
-	manifestDigest = strings.TrimSpace(req.Digest)
-	if modelPath == "" {
-		if modelID == "" || manifestDigest == "" {
-			return GPUUnloadResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "either --path or (--model-id and --digest) is required", nil)
-		}
-		if err := s.validateModelID(modelID); err != nil {
-			return GPUUnloadResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "invalid --model-id", err)
-		}
-		rec, ok, err := s.store.Get(modelKey(modelID, manifestDigest))
-		if err != nil {
-			return GPUUnloadResult{}, err
-		}
-		if !ok {
-			return GPUUnloadResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "model not found in local state", nil)
-		}
-		modelPath = rec.Path
-	}
-
-	valid, reason, err := s.verifyPublishedPath(modelPath)
-	if err != nil || !valid {
-		if reason == ReasonNone {
-			reason = ReasonStateDBCorrupt
-		}
-		return GPUUnloadResult{}, NewAppError(mapReasonToExitCode(reason), reason, "path failed READY verification before gpu unload", err)
-	}
-
-	md, err := loadLocalMetadata(modelPath)
-	if err != nil {
-		return GPUUnloadResult{}, NewAppError(ExitStateCorrupt, ReasonStateDBCorrupt, "failed to load local model metadata", err)
-	}
-	if modelID == "" {
-		modelID = md.ModelID
-	}
-	if manifestDigest == "" {
-		manifestDigest = md.ManifestDigest
-	}
-
-	key := modelKey(modelID, manifestDigest)
 	unlock, _, err := s.locks.Acquire(ctx, key, true)
 	if err != nil {
 		return GPUUnloadResult{}, err
@@ -922,7 +880,6 @@ func (s *Service) GPUUnload(ctx context.Context, req GPUUnloadRequest) (GPUUnloa
 			ModelID:        modelID,
 			ManifestDigest: manifestDigest,
 			LeaseHolder:    leaseHolder,
-			Path:           modelPath,
 			DeviceUUID:     req.DeviceUUID,
 			DeviceIndex:    req.Device,
 			Loader:         s.gpuLoader.Name(),
@@ -955,7 +912,6 @@ func (s *Service) GPUUnload(ctx context.Context, req GPUUnloadRequest) (GPUUnloa
 				ModelID:        modelID,
 				ManifestDigest: manifestDigest,
 				LeaseHolder:    leaseHolder,
-				Path:           modelPath,
 				DeviceUUID:     req.DeviceUUID,
 				DeviceIndex:    req.Device,
 				Loader:         s.gpuLoader.Name(),
@@ -976,7 +932,10 @@ func (s *Service) GPUUnload(ctx context.Context, req GPUUnloadRequest) (GPUUnloa
 	}
 
 	if allocationID != "" {
-		s.deleteAllocation(allocationID)
+		s.revokeRuntimeBundleTokensForAllocation(allocationID)
+		if delErr := s.deleteAllocation(allocationID); delErr != nil {
+			return GPUUnloadResult{}, delErr
+		}
 	}
 	return GPUUnloadResult{
 		Status:          rec.Status.ExternalStatus(),
@@ -1139,26 +1098,15 @@ const (
 
 func (s *Service) GPUAttach(ctx context.Context, req GPUAttachRequest) (GPUAttachResult, error) {
 	start := time.Now()
-	modelID, manifestDigest, modelPath, deviceUUID, _, alloc, allocErr := s.resolveAllocationInput(
-		req.AllocationID,
-		req.ModelID,
-		req.Digest,
-		req.Path,
-		req.DeviceUUID,
-		"",
-	)
-	if allocErr != nil {
-		return GPUAttachResult{}, allocErr
-	}
-	req.ModelID = modelID
-	req.Digest = manifestDigest
-	req.Path = modelPath
-	req.DeviceUUID = deviceUUID
 	allocationID := strings.TrimSpace(req.AllocationID)
-	if alloc != nil {
-		allocationID = alloc.AllocationID
+	if allocationID == "" {
+		return GPUAttachResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "allocation_id is required", nil)
 	}
-	device, err := s.resolveRequestedDevice(ctx, req.DeviceUUID)
+	alloc, err := s.getAllocation(allocationID)
+	if err != nil {
+		return GPUAttachResult{}, err
+	}
+	device, err := s.resolveRequestedDevice(ctx, alloc.DeviceUUID)
 	if err != nil {
 		return GPUAttachResult{}, err
 	}
@@ -1173,7 +1121,7 @@ func (s *Service) GPUAttach(ctx context.Context, req GPUAttachRequest) (GPUAttac
 	}
 	ttl := s.normalizeAttachTTL(req.TTLSeconds)
 
-	modelPath, modelID, manifestDigest, md, key, err := s.resolveGPUModelTarget(req.Path, req.ModelID, req.Digest)
+	modelPath, modelID, manifestDigest, md, key, err := s.resolveGPUModelTarget("", alloc.ModelID, alloc.ManifestDigest)
 	if err != nil {
 		return GPUAttachResult{}, err
 	}
@@ -1264,26 +1212,15 @@ func (s *Service) GPUAttach(ctx context.Context, req GPUAttachRequest) (GPUAttac
 
 func (s *Service) GPUHeartbeat(ctx context.Context, req GPUHeartbeatRequest) (GPUHeartbeatResult, error) {
 	start := time.Now()
-	modelID, manifestDigest, modelPath, deviceUUID, _, alloc, allocErr := s.resolveAllocationInput(
-		req.AllocationID,
-		req.ModelID,
-		req.Digest,
-		req.Path,
-		req.DeviceUUID,
-		"",
-	)
-	if allocErr != nil {
-		return GPUHeartbeatResult{}, allocErr
-	}
-	req.ModelID = modelID
-	req.Digest = manifestDigest
-	req.Path = modelPath
-	req.DeviceUUID = deviceUUID
 	allocationID := strings.TrimSpace(req.AllocationID)
-	if alloc != nil {
-		allocationID = alloc.AllocationID
+	if allocationID == "" {
+		return GPUHeartbeatResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "allocation_id is required", nil)
 	}
-	device, err := s.resolveRequestedDevice(ctx, req.DeviceUUID)
+	alloc, err := s.getAllocation(allocationID)
+	if err != nil {
+		return GPUHeartbeatResult{}, err
+	}
+	device, err := s.resolveRequestedDevice(ctx, alloc.DeviceUUID)
 	if err != nil {
 		return GPUHeartbeatResult{}, err
 	}
@@ -1294,7 +1231,7 @@ func (s *Service) GPUHeartbeat(ctx context.Context, req GPUHeartbeatRequest) (GP
 		return GPUHeartbeatResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "--client-id is required", nil)
 	}
 
-	modelPath, modelID, manifestDigest, _, key, err := s.resolveGPUModelTarget(req.Path, req.ModelID, req.Digest)
+	modelPath, modelID, manifestDigest, _, key, err := s.resolveGPUModelTarget("", alloc.ModelID, alloc.ManifestDigest)
 	if err != nil {
 		return GPUHeartbeatResult{}, err
 	}
@@ -1352,26 +1289,15 @@ func (s *Service) GPUHeartbeat(ctx context.Context, req GPUHeartbeatRequest) (GP
 
 func (s *Service) GPUDetach(ctx context.Context, req GPUDetachRequest) (GPUDetachResult, error) {
 	start := time.Now()
-	modelID, manifestDigest, modelPath, deviceUUID, _, alloc, allocErr := s.resolveAllocationInput(
-		req.AllocationID,
-		req.ModelID,
-		req.Digest,
-		req.Path,
-		req.DeviceUUID,
-		"",
-	)
-	if allocErr != nil {
-		return GPUDetachResult{}, allocErr
-	}
-	req.ModelID = modelID
-	req.Digest = manifestDigest
-	req.Path = modelPath
-	req.DeviceUUID = deviceUUID
 	allocationID := strings.TrimSpace(req.AllocationID)
-	if alloc != nil {
-		allocationID = alloc.AllocationID
+	if allocationID == "" {
+		return GPUDetachResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "allocation_id is required", nil)
 	}
-	device, err := s.resolveRequestedDevice(ctx, req.DeviceUUID)
+	alloc, err := s.getAllocation(allocationID)
+	if err != nil {
+		return GPUDetachResult{}, err
+	}
+	device, err := s.resolveRequestedDevice(ctx, alloc.DeviceUUID)
 	if err != nil {
 		return GPUDetachResult{}, err
 	}
@@ -1382,7 +1308,7 @@ func (s *Service) GPUDetach(ctx context.Context, req GPUDetachRequest) (GPUDetac
 		return GPUDetachResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "--client-id is required", nil)
 	}
 
-	modelPath, modelID, manifestDigest, _, key, err := s.resolveGPUModelTarget(req.Path, req.ModelID, req.Digest)
+	modelPath, modelID, manifestDigest, _, key, err := s.resolveGPUModelTarget("", alloc.ModelID, alloc.ManifestDigest)
 	if err != nil {
 		return GPUDetachResult{}, err
 	}
@@ -1542,27 +1468,31 @@ func (s *Service) nextAllocationID() string {
 	return fmt.Sprintf("alloc_%d_%d", time.Now().UTC().UnixNano(), s.allocSeq)
 }
 
-func (s *Service) putAllocation(rec *gpuAllocation) {
+func (s *Service) putAllocation(rec *gpuAllocation) error {
 	if rec == nil || strings.TrimSpace(rec.AllocationID) == "" {
-		return
+		return NewAppError(ExitValidation, ReasonValidationFailed, "allocation record is required", nil)
 	}
-	s.allocMu.Lock()
-	defer s.allocMu.Unlock()
-	if s.allocMap == nil {
-		s.allocMap = map[string]*gpuAllocation{}
+	storeRec := &storepkg.AllocationRecord{
+		AllocationID:   strings.TrimSpace(rec.AllocationID),
+		ModelKey:       strings.TrimSpace(rec.ModelKey),
+		ModelID:        strings.TrimSpace(rec.ModelID),
+		ManifestDigest: strings.TrimSpace(rec.ManifestDigest),
+		Path:           strings.TrimSpace(rec.Path),
+		LeaseHolder:    strings.TrimSpace(rec.LeaseHolder),
+		DeviceUUID:     strings.TrimSpace(rec.DeviceUUID),
+		DeviceIndex:    rec.DeviceIndex,
+		Status:         "READY",
+		CreatedAt:      rec.CreatedAt,
 	}
-	cp := *rec
-	s.allocMap[cp.AllocationID] = &cp
+	return s.store.PutAllocation(storeRec)
 }
 
-func (s *Service) deleteAllocation(allocationID string) {
+func (s *Service) deleteAllocation(allocationID string) error {
 	allocationID = strings.TrimSpace(allocationID)
 	if allocationID == "" {
-		return
+		return nil
 	}
-	s.allocMu.Lock()
-	defer s.allocMu.Unlock()
-	delete(s.allocMap, allocationID)
+	return s.store.DeleteAllocation(allocationID)
 }
 
 func (s *Service) getAllocation(allocationID string) (*gpuAllocation, error) {
@@ -1570,14 +1500,24 @@ func (s *Service) getAllocation(allocationID string) (*gpuAllocation, error) {
 	if allocationID == "" {
 		return nil, NewAppError(ExitValidation, ReasonValidationFailed, "allocation_id is required", nil)
 	}
-	s.allocMu.Lock()
-	defer s.allocMu.Unlock()
-	rec, ok := s.allocMap[allocationID]
+	rec, ok, err := s.store.GetAllocation(allocationID)
+	if err != nil {
+		return nil, err
+	}
 	if !ok || rec == nil {
 		return nil, NewAppError(ExitValidation, ReasonValidationFailed, "gpu allocation not found", nil)
 	}
-	cp := *rec
-	return &cp, nil
+	return &gpuAllocation{
+		AllocationID:   rec.AllocationID,
+		ModelKey:       rec.ModelKey,
+		ModelID:        rec.ModelID,
+		ManifestDigest: rec.ManifestDigest,
+		Path:           rec.Path,
+		LeaseHolder:    rec.LeaseHolder,
+		DeviceUUID:     rec.DeviceUUID,
+		DeviceIndex:    rec.DeviceIndex,
+		CreatedAt:      rec.CreatedAt,
+	}, nil
 }
 
 func adoptAllocationField(fieldName, current, expected string) (string, error) {

@@ -279,39 +279,40 @@ func TestGPULoadPersistentLeaseLifecycle(t *testing.T) {
 		t.Fatalf("put model record: %v", err)
 	}
 
-	first, err := svc.GPULoad(context.Background(), GPULoadRequest{
+	first, err := svc.GPUAllocate(context.Background(), GPUAllocateRequest{
 		ModelID:     modelID,
 		Digest:      manifest,
 		LeaseHolder: "holder-a",
 		DeviceUUID:  fakeDeviceUUID0,
 		ChunkBytes:  4 * 1024,
-		Mode:        "persistent",
 		Strict:      true,
 	})
 	if err != nil {
 		t.Fatalf("first gpu load: %v", err)
 	}
-	if !first.Persistent || first.Mode != "persistent" {
-		t.Fatalf("unexpected first load mode: %+v", first)
+	if first.Status != "READY" || strings.TrimSpace(first.AllocationID) == "" {
+		t.Fatalf("unexpected first allocation: %+v", first)
 	}
-	if len(first.Files) != 1 || !first.Files[0].Loaded || first.Files[0].RefCount != 1 {
-		t.Fatalf("unexpected first file result: %+v", first.Files)
+	if first.Files != 1 || first.DirectFiles != 1 {
+		t.Fatalf("unexpected first allocation counters: %+v", first)
 	}
 
-	second, err := svc.GPULoad(context.Background(), GPULoadRequest{
+	second, err := svc.GPUAllocate(context.Background(), GPUAllocateRequest{
 		ModelID:     modelID,
 		Digest:      manifest,
 		LeaseHolder: "holder-b",
 		DeviceUUID:  fakeDeviceUUID0,
 		ChunkBytes:  4 * 1024,
-		Mode:        "persistent",
 		Strict:      true,
 	})
 	if err != nil {
 		t.Fatalf("second gpu load: %v", err)
 	}
-	if len(second.Files) != 1 || second.Files[0].Loaded || second.Files[0].RefCount != 2 {
-		t.Fatalf("unexpected second file result: %+v", second.Files)
+	if second.Status != "READY" || strings.TrimSpace(second.AllocationID) == "" {
+		t.Fatalf("unexpected second allocation: %+v", second)
+	}
+	if second.Files != 1 || second.DirectFiles != 1 {
+		t.Fatalf("unexpected second allocation counters: %+v", second)
 	}
 
 	status, err := svc.GPUListPersistent(context.Background(), fakeDeviceUUID0)
@@ -323,10 +324,7 @@ func TestGPULoadPersistentLeaseLifecycle(t *testing.T) {
 	}
 
 	firstUnload, err := svc.GPUUnload(context.Background(), GPUUnloadRequest{
-		ModelID:     modelID,
-		Digest:      manifest,
-		LeaseHolder: "holder-a",
-		DeviceUUID:  fakeDeviceUUID0,
+		AllocationID: first.AllocationID,
 	})
 	if err != nil {
 		t.Fatalf("first unload: %v", err)
@@ -339,10 +337,7 @@ func TestGPULoadPersistentLeaseLifecycle(t *testing.T) {
 	}
 
 	secondUnload, err := svc.GPUUnload(context.Background(), GPUUnloadRequest{
-		ModelID:     modelID,
-		Digest:      manifest,
-		LeaseHolder: "holder-b",
-		DeviceUUID:  fakeDeviceUUID0,
+		AllocationID: second.AllocationID,
 	})
 	if err != nil {
 		t.Fatalf("second unload: %v", err)
@@ -490,23 +485,23 @@ func TestGPUExportReturnsPersistentIPCHandle(t *testing.T) {
 		t.Fatalf("put model record: %v", err)
 	}
 
-	_, err := svc.GPULoad(context.Background(), GPULoadRequest{
+	alloc, err := svc.GPUAllocate(context.Background(), GPUAllocateRequest{
 		ModelID:     modelID,
 		Digest:      manifest,
 		LeaseHolder: "holder-export",
 		DeviceUUID:  fakeDeviceUUID0,
 		ChunkBytes:  4 * 1024,
-		Mode:        "persistent",
 		Strict:      true,
 	})
 	if err != nil {
 		t.Fatalf("gpu persistent load: %v", err)
 	}
+	if strings.TrimSpace(alloc.AllocationID) == "" {
+		t.Fatalf("expected allocation id from gpu allocate: %+v", alloc)
+	}
 
 	res, err := svc.GPUExport(context.Background(), GPUExportRequest{
-		ModelID:    modelID,
-		Digest:     manifest,
-		DeviceUUID: fakeDeviceUUID0,
+		AllocationID: alloc.AllocationID,
 	})
 	if err != nil {
 		t.Fatalf("gpu export: %v", err)
@@ -548,25 +543,25 @@ func TestGPUAttachHeartbeatDetachBlocksUnloadUntilDetached(t *testing.T) {
 		t.Fatalf("put model record: %v", err)
 	}
 
-	_, err := svc.GPULoad(context.Background(), GPULoadRequest{
+	alloc, err := svc.GPUAllocate(context.Background(), GPUAllocateRequest{
 		ModelID:     modelID,
 		Digest:      manifest,
 		LeaseHolder: "holder-attach",
 		DeviceUUID:  fakeDeviceUUID0,
 		ChunkBytes:  4 * 1024,
-		Mode:        "persistent",
 		Strict:      true,
 	})
 	if err != nil {
 		t.Fatalf("gpu persistent load: %v", err)
 	}
+	if strings.TrimSpace(alloc.AllocationID) == "" {
+		t.Fatalf("expected allocation id from gpu allocate: %+v", alloc)
+	}
 
 	attachRes, err := svc.GPUAttach(context.Background(), GPUAttachRequest{
-		ModelID:    modelID,
-		Digest:     manifest,
-		DeviceUUID: fakeDeviceUUID0,
-		ClientID:   "client-a",
-		TTLSeconds: 60,
+		AllocationID: alloc.AllocationID,
+		ClientID:     "client-a",
+		TTLSeconds:   60,
 	})
 	if err != nil {
 		t.Fatalf("gpu attach: %v", err)
@@ -579,21 +574,16 @@ func TestGPUAttachHeartbeatDetachBlocksUnloadUntilDetached(t *testing.T) {
 	}
 
 	_, err = svc.GPUHeartbeat(context.Background(), GPUHeartbeatRequest{
-		ModelID:    modelID,
-		Digest:     manifest,
-		DeviceUUID: fakeDeviceUUID0,
-		ClientID:   "client-a",
-		TTLSeconds: 60,
+		AllocationID: alloc.AllocationID,
+		ClientID:     "client-a",
+		TTLSeconds:   60,
 	})
 	if err != nil {
 		t.Fatalf("gpu heartbeat: %v", err)
 	}
 
 	_, err = svc.GPUUnload(context.Background(), GPUUnloadRequest{
-		ModelID:     modelID,
-		Digest:      manifest,
-		LeaseHolder: "holder-attach",
-		DeviceUUID:  fakeDeviceUUID0,
+		AllocationID: alloc.AllocationID,
 	})
 	if err == nil {
 		t.Fatalf("expected unload to fail while attachment is active")
@@ -604,10 +594,8 @@ func TestGPUAttachHeartbeatDetachBlocksUnloadUntilDetached(t *testing.T) {
 	}
 
 	detachRes, err := svc.GPUDetach(context.Background(), GPUDetachRequest{
-		ModelID:    modelID,
-		Digest:     manifest,
-		DeviceUUID: fakeDeviceUUID0,
-		ClientID:   "client-a",
+		AllocationID: alloc.AllocationID,
+		ClientID:     "client-a",
 	})
 	if err != nil {
 		t.Fatalf("gpu detach: %v", err)
@@ -617,10 +605,7 @@ func TestGPUAttachHeartbeatDetachBlocksUnloadUntilDetached(t *testing.T) {
 	}
 
 	unloadRes, err := svc.GPUUnload(context.Background(), GPUUnloadRequest{
-		ModelID:     modelID,
-		Digest:      manifest,
-		LeaseHolder: "holder-attach",
-		DeviceUUID:  fakeDeviceUUID0,
+		AllocationID: alloc.AllocationID,
 	})
 	if err != nil {
 		t.Fatalf("gpu unload after detach: %v", err)

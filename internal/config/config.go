@@ -273,6 +273,18 @@ func (c Config) Validate() error {
 	if c.Transfer.StreamBufferBytes <= 0 {
 		return apperr.NewAppError(apperr.ExitValidation, apperr.ReasonValidationFailed, "transfer.stream_buffer_bytes must be > 0", nil)
 	}
+	if c.Download.MaxConcurrentRequestsGlobal <= 0 {
+		return apperr.NewAppError(apperr.ExitValidation, apperr.ReasonValidationFailed, "download.max_concurrent_requests_global must be > 0", nil)
+	}
+	if c.Download.MaxConcurrentRequestsPerModel <= 0 {
+		return apperr.NewAppError(apperr.ExitValidation, apperr.ReasonValidationFailed, "download.max_concurrent_requests_per_model must be > 0", nil)
+	}
+	if c.Download.MaxConcurrentChunksPerBlob <= 0 {
+		return apperr.NewAppError(apperr.ExitValidation, apperr.ReasonValidationFailed, "download.max_concurrent_chunks_per_blob must be > 0", nil)
+	}
+	if c.Download.ChunkSizeBytes <= 0 {
+		return apperr.NewAppError(apperr.ExitValidation, apperr.ReasonValidationFailed, "download.chunk_size_bytes must be > 0", nil)
+	}
 	if c.Retention.MinFreeBytes < 0 {
 		return apperr.NewAppError(apperr.ExitValidation, apperr.ReasonValidationFailed, "retention.min_free_bytes must be >= 0", nil)
 	}
@@ -352,10 +364,6 @@ func (c Config) ReservedFieldWarnings() []string {
 	add(c.Transfer.MaxConnectionsPerRegistry != def.Transfer.MaxConnectionsPerRegistry, "transfer.max_connections_per_registry is reserved and not used")
 	add(c.Transfer.MaxResumeAttempts != def.Transfer.MaxResumeAttempts, "transfer.max_resume_attempts is reserved and not used")
 
-	add(c.Download.MaxConcurrentRequestsGlobal != def.Download.MaxConcurrentRequestsGlobal, "download.max_concurrent_requests_global is reserved and not used")
-	add(c.Download.MaxConcurrentRequestsPerModel != def.Download.MaxConcurrentRequestsPerModel, "download.max_concurrent_requests_per_model is reserved and not used")
-	add(c.Download.MaxConcurrentChunksPerBlob != def.Download.MaxConcurrentChunksPerBlob, "download.max_concurrent_chunks_per_blob is reserved and not used")
-	add(c.Download.ChunkSizeBytes != def.Download.ChunkSizeBytes, "download.chunk_size_bytes is reserved and not used")
 	add(c.Download.RequestTimeoutSec != def.Download.RequestTimeoutSec, "download.request_timeout_sec is reserved and not used")
 	add(c.Download.Retry.Jitter != def.Download.Retry.Jitter, "download.retry.jitter is reserved and not used")
 

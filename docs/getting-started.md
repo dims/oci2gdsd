@@ -164,7 +164,7 @@ cd /path/to/oci2gdsd  # back to repo root where you built the binary
 Expected output (success):
 
 ```json
-{"status":"READY","model_id":"test-model","manifest_digest":"sha256:a3f8c1d2...","model_root_path":"/tmp/oci2gdsd-test/models/test-model/sha256-a3f8c1d2..."}
+{"status":"READY","model_id":"test-model","manifest_digest":"sha256:a3f8c1d2..."}
 ```
 
 What happened:

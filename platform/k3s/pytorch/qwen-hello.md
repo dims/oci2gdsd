@@ -5,14 +5,14 @@
 1. Packaging `Qwen/Qwen3-0.6B` as an OCI artifact with `OCI-ModelProfile-v1`.
 2. Performing model ensure/load through `gpu/allocate` at runtime (no preload init container).
 3. Running `oci2gdsd serve` in a dedicated sidecar container.
-4. Running a FastAPI app that requests `gpu/allocate` + `model/runtime-bundle` and loads from pod-local runtime bundle files (offline mode, no runtime host model-root dependency).
+4. Running a FastAPI app that requests `gpu/allocate` + tokenized runtime-bundle fetch (`GET /v2/runtime-bundles/{token}`) and loads from pod-local runtime bundle files (offline mode, no runtime host model-root dependency).
 5. Exercising `torch.ops.oci2gds.read_into_tensor`, `torch.ops.oci2gds.load_profile`, and a daemon IPC handoff probe at startup.
 
 ## What This Example Demonstrates
 
 - Registry -> daemon-managed OCI preload workflow.
 - Deterministic runtime startup from daemon runtime bundle files (no Hugging Face network fetch at app start).
-- Pod-local daemon API (`/v2/gpu/allocate`, `/v2/model/runtime-bundle`, `/v2/gpu/export`) for runtime startup + IPC probe orchestration.
+- Pod-local daemon API (`/v2/gpu/allocate`, `GET /v2/runtime-bundles/{token}`, `/v2/gpu/export`) for runtime startup + IPC probe orchestration.
 - A runtime `oci2gds` probe path with:
   - optional native cuFile backend (JIT C++ extension build),
   - automatic Python fallback when native prerequisites are missing.

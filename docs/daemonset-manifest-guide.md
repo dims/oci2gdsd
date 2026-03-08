@@ -21,9 +21,9 @@ Runtime contract matrix: [runtime-contract-matrix.md](runtime-contract-matrix.md
 1. Deploys a privileged `oci2gdsd` DaemonSet on GPU nodes.
    - Daemon pod uses `runtimeClassName: nvidia` and sets `NVIDIA_VISIBLE_DEVICES=all`.
 2. Shares hostPath cache root and UNIX socket with workload pods.
-3. Uses an init container (`ensure/status/verify`) to pull OCI model shards.
-4. Runs a PyTorch workload that calls daemon APIs:
-   - `POST /v2/gpu/load` (`mode=persistent`)
+3. Runs runtime workloads that call allocation-centric daemon APIs:
+   - `POST /v2/gpu/allocate`
+   - `GET /v2/runtime-bundles/{token}`
    - `POST /v2/gpu/export`
    - `POST /v2/gpu/tensor-map`
    - `POST /v2/gpu/attach`
@@ -31,7 +31,7 @@ Runtime contract matrix: [runtime-contract-matrix.md](runtime-contract-matrix.md
    - `POST /v2/gpu/detach`
    - `GET /v2/gpu/status`
    - `POST /v2/gpu/unload`
-5. Rebinds model parameter storage to daemon-exported CUDA IPC tensor views before generation.
+4. Rebinds model parameter storage to daemon-exported CUDA IPC tensor views before generation.
 
 For TensorRT-LLM daemon-client mode, the workload:
 
@@ -40,7 +40,7 @@ For TensorRT-LLM daemon-client mode, the workload:
 - Runs `ModelRunnerCpp.from_dir(..., use_gpu_direct_storage=True)`.
 - Verifies daemon `gpu/tensor-map` IPC handle coverage for safetensors shards.
 - Verifies native IPC import coverage and zero fallback in `full` mode.
-- Verifies daemon `gpu/load` + `gpu/status` + `gpu/attach` + `gpu/heartbeat` + `gpu/detach` + `gpu/unload` lifecycle.
+- Verifies daemon allocation lifecycle (`gpu/allocate` + runtime bundle token + `gpu/status` + `gpu/attach` + `gpu/heartbeat` + `gpu/detach` + `gpu/unload`).
 - Mounts host `/run/udev` and `/etc/cufile.json` so cuFile device registration
   can succeed for strict direct-GDS engine loading.
 
