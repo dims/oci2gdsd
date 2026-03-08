@@ -306,22 +306,17 @@ validate_deploy_mode
 if [[ "${REGISTRY_NAMESPACE}" == "oci2gdsd-registry" ]]; then
   REGISTRY_NAMESPACE="oci-model-registry"
 fi
-if [[ -z "${QWEN_HELLO_PROFILE}" ]]; then
-  QWEN_HELLO_PROFILE="host-direct"
+if [[ -z "${OCI2GDSD_ROOT_PATH_SET}" ]]; then
+  OCI2GDSD_ROOT_PATH="/mnt/nvme/oci2gdsd"
 fi
-if [[ "${QWEN_HELLO_PROFILE}" == "host-direct" ]]; then
-  if [[ -z "${OCI2GDSD_ROOT_PATH_SET}" ]]; then
-    OCI2GDSD_ROOT_PATH="/mnt/nvme/oci2gdsd"
-  fi
-  if [[ -z "${OCI2GDS_STRICT_SET}" ]]; then
-    OCI2GDS_STRICT="true"
-  fi
-  if [[ -z "${OCI2GDS_PROBE_STRICT_SET}" ]]; then
-    OCI2GDS_PROBE_STRICT="true"
-  fi
-  if [[ -z "${OCI2GDS_FORCE_NO_COMPAT_SET}" ]]; then
-    OCI2GDS_FORCE_NO_COMPAT="true"
-  fi
+if [[ -z "${OCI2GDS_STRICT_SET}" ]]; then
+  OCI2GDS_STRICT="true"
+fi
+if [[ -z "${OCI2GDS_PROBE_STRICT_SET}" ]]; then
+  OCI2GDS_PROBE_STRICT="true"
+fi
+if [[ -z "${OCI2GDS_FORCE_NO_COMPAT_SET}" ]]; then
+  OCI2GDS_FORCE_NO_COMPAT="true"
 fi
 if [[ "${REQUIRE_DIRECT_GDS}" == "true" && "${OCI2GDSD_ENABLE_GDS_IMAGE}" != "true" ]]; then
   if [[ -n "${OCI2GDSD_ENABLE_GDS_IMAGE_SET}" ]]; then
