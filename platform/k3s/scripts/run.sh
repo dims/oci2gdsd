@@ -84,7 +84,6 @@ wait_for_workload_and_collect() {
 log "starting k3s e2e harness"
 [[ "${E2E_DEPLOY_MODE}" == "daemonset-manifest" ]] || die "k3s harness requires E2E_DEPLOY_MODE=daemonset-manifest"
 [[ "${RUNTIME_PARITY_MODE}" == "full" ]] || die "k3s harness requires RUNTIME_PARITY_MODE=full"
-[[ "${REQUIRE_FULL_IPC_BIND}" == "true" ]] || die "k3s harness requires REQUIRE_FULL_IPC_BIND=true"
 validate_runtime_contracts
 bootstrap_tools
 configure_nvidia_runtime

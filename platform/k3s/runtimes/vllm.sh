@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash
 
+RUNTIME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./common.sh
+source "${RUNTIME_DIR}/common.sh"
+
 runtime_daemon_apply_configmaps() {
   apply_configmap_from_files "${E2E_NAMESPACE}" "${WORKLOAD_DAEMON_CONFIGMAP}" \
     --from-file=vllm_daemon_client.py="${VLLM_DAEMON_CLIENT_SCRIPT}" \
@@ -9,20 +13,7 @@ runtime_daemon_apply_configmaps() {
 
 runtime_daemon_render_job() {
   local rendered="$1"
-  render_template "${WORKLOAD_DAEMON_TEMPLATE}" "${rendered}" \
-    "E2E_NAMESPACE=${E2E_NAMESPACE}" \
-    "OCI2GDSD_IMAGE=${OCI2GDSD_CLI_IMAGE}" \
-    "VLLM_IMAGE=${VLLM_IMAGE}" \
-    "MODEL_REF=${MODEL_REF}" \
-    "MODEL_ID=${MODEL_ID}" \
-    "MODEL_DIGEST=${MODEL_DIGEST}" \
-    "MODEL_ROOT_PATH=${MODEL_ROOT_PATH}" \
-    "LEASE_HOLDER=${LEASE_HOLDER}" \
-    "OCI2GDSD_ROOT_PATH=${OCI2GDSD_ROOT_PATH}" \
-    "OCI2GDSD_SOCKET_HOST_PATH=${OCI2GDSD_SOCKET_HOST_PATH}" \
-    "REQUIRE_DIRECT_GDS=${REQUIRE_DIRECT_GDS}" \
-    "OCI2GDS_STRICT=${OCI2GDS_STRICT}" \
-    "RUNTIME_PARITY_MODE=${RUNTIME_PARITY_MODE}" \
+  runtime_render_job_template "${rendered}" "VLLM_IMAGE" "${VLLM_IMAGE}" \
     "REQUIRE_FULL_IPC_BIND=${REQUIRE_FULL_IPC_BIND}"
 }
 
@@ -31,20 +22,36 @@ runtime_result_log_path() {
 }
 
 runtime_required_markers() {
-  cat <<'EOF'
-DAEMON_MODEL_ENSURE_READY
-DAEMON_RUNTIME_BUNDLE_READY
-DAEMON_GPU_LOAD_READY
-DAEMON_GPU_STATUS_OK
-DAEMON_GPU_ATTACH_OK
-DAEMON_GPU_HEARTBEAT_OK
-VLLM_IPC_TENSOR_MAP_OK
-VLLM_IPC_BIND_OK
-VLLM_LOADER_REGISTERED
-VLLM_OCI2GDS_LOAD_OK
-VLLM_QWEN_INFER_OK
-DAEMON_GPU_DETACH_OK
-DAEMON_GPU_UNLOAD_OK
-VLLM_DAEMON_CLIENT_SUCCESS
-EOF
+  runtime_emit_markers \
+    DAEMON_MODEL_ENSURE_READY \
+    DAEMON_RUNTIME_BUNDLE_READY \
+    DAEMON_GPU_LOAD_READY \
+    DAEMON_GPU_STATUS_OK \
+    DAEMON_GPU_ATTACH_OK \
+    DAEMON_GPU_HEARTBEAT_OK \
+    VLLM_IPC_TENSOR_MAP_OK \
+    VLLM_IPC_BIND_OK \
+    VLLM_LOADER_REGISTERED \
+    VLLM_OCI2GDS_LOAD_OK \
+    VLLM_QWEN_INFER_OK \
+    DAEMON_GPU_DETACH_OK \
+    DAEMON_GPU_UNLOAD_OK \
+    VLLM_DAEMON_CLIENT_SUCCESS
+}
+
+runtime_validate_results() {
+  local log_path="$1"
+  runtime_require_full_parity "vLLM"
+  if [[ "${REQUIRE_FULL_IPC_BIND}" != "true" ]]; then
+    die "vLLM daemon-client requires REQUIRE_FULL_IPC_BIND=true"
+  fi
+  runtime_assert_log_pattern "${log_path}" \
+    'VLLM_IPC_BIND_OK .*status=ok' \
+    "full parity requires VLLM_IPC_BIND_OK status=ok"
+  runtime_assert_log_pattern "${log_path}" \
+    'VLLM_IPC_BIND_OK .*unresolved=0' \
+    "full parity requires VLLM IPC unresolved=0"
+  runtime_assert_log_pattern "${log_path}" \
+    'VLLM_IPC_BIND_OK .*rebound_params=[1-9][0-9]*' \
+    "full parity requires vLLM rebound_params > 0"
 }
