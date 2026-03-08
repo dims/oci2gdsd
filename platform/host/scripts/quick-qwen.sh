@@ -518,8 +518,13 @@ run_host_probe() {
   local probe_log="${RESULTS_DIR}/host-qwen-gds.log"
   local probe_script="${SCRIPT_DIR}/host_qwen_probe.py"
   local native_cpp="${REPO_ROOT}/platform/k3s/pytorch/native/oci2gds_torch_native.cpp"
+  local -a cufile_mount
   [[ -f "${probe_script}" ]] || die "missing probe script: ${probe_script}"
   [[ -f "${native_cpp}" ]] || die "missing native source: ${native_cpp}"
+  cufile_mount=()
+  if [[ -f /etc/cufile.json ]]; then
+    cufile_mount=(-v /etc/cufile.json:/etc/cufile.json:ro)
+  fi
 
   log "running host probe image=${PYTORCH_RUNTIME_IMAGE}"
   maybe_sudo docker run --rm --privileged --gpus all --user 0:0 -i \
@@ -539,6 +544,7 @@ run_host_probe() {
     -v "${OCI2GDSD_ROOT_PATH}:${OCI2GDSD_ROOT_PATH}:ro" \
     -v /run/udev:/run/udev:ro \
     -v /dev:/host-dev:ro \
+    "${cufile_mount[@]}" \
     -v "${probe_script}:/opt/oci2gdsd/host_qwen_probe.py:ro" \
     -v "${native_cpp}:/opt/oci2gdsd/native/oci2gds_torch_native.cpp:ro" \
     "${PYTORCH_RUNTIME_IMAGE}" \

@@ -25,10 +25,10 @@
   - `TXN_COMMITTED`
 - `READY` read contract enforcement.
 - Standalone CLI `gpu load` contract is explicit benchmark mode; `--mode persistent` is rejected in one-shot CLI mode.
-- `serve` command is implemented for long-running process integrations and exposes allocation-centric daemon APIs (`/v2/gpu/allocate`, `GET /v2/runtime-bundles/{token}`, `/v2/gpu/export`, `/v2/gpu/tensor-map`, `/v2/gpu/attach`, `/v2/gpu/heartbeat`, `/v2/gpu/detach`, `/v2/gpu/unload`, `/v2/gpu/status`).
+- `serve` command is implemented for long-running process integrations and exposes allocation-centric daemon APIs (`/v2/gpu/allocate`, `GET /v2/runtime-bundles/{token}`, `/v2/gpu/export`, `/v2/gpu/tensor-map`, `/v2/gpu/attach`, `/v2/gpu/heartbeat`, `/v2/gpu/detach`, `/v2/gpu/unload`, `/v2/gpu/status`), with runtime payloads/flows keyed by `allocation_id` (no runtime path fields).
 - Persistent unload now guards against active attachment clients and requires detach (or TTL expiry) before freeing allocations.
 - GDS persistent loader handles non-4KiB tail bytes by switching tail copy to a non-`O_DIRECT` fd in non-strict mode.
-- `gpu unload` and `gpu status` commands are implemented; they are primarily useful for embedded/long-running process integrations.
+- `gpu unload` and `gpu status` commands are implemented for embedded/long-running process integrations (`gpu unload` is allocation-id based).
 - Lease-aware release and GC behavior.
 - Crash-recovery guardrails for stale temp paths and inconsistent READY entries
   using lightweight READY/metadata/shard-size checks at startup.

@@ -23,20 +23,10 @@ type safeTensorsHeaderTensor struct {
 
 func (s *Service) GPUTensorMap(ctx context.Context, req GPUTensorMapRequest) (GPUTensorMapResult, error) {
 	start := time.Now()
-	allocationID := strings.TrimSpace(req.AllocationID)
-	if allocationID == "" {
-		return GPUTensorMapResult{}, NewAppError(ExitValidation, ReasonValidationFailed, "allocation_id is required", nil)
-	}
-	alloc, err := s.getAllocation(allocationID)
+	target, err := s.resolveAllocationTarget(ctx, req.AllocationID)
 	if err != nil {
 		return GPUTensorMapResult{}, err
 	}
-	device, err := s.resolveRequestedDevice(ctx, alloc.DeviceUUID)
-	if err != nil {
-		return GPUTensorMapResult{}, err
-	}
-	req.DeviceUUID = device.UUID
-	req.Device = device.Index
 	if req.MaxShards <= 0 {
 		req.MaxShards = 0
 	}
@@ -44,16 +34,12 @@ func (s *Service) GPUTensorMap(ctx context.Context, req GPUTensorMapRequest) (GP
 		req.MaxTensors = 0
 	}
 
-	modelPath, modelID, manifestDigest, md, key, err := s.resolveGPUModelTarget("", alloc.ModelID, alloc.ManifestDigest)
-	if err != nil {
-		return GPUTensorMapResult{}, err
-	}
-	format := strings.ToLower(strings.TrimSpace(md.Profile.Format))
+	format := strings.ToLower(strings.TrimSpace(target.Metadata.Profile.Format))
 	if format != "" && format != "safetensors" {
-		return GPUTensorMapResult{}, NewAppError(ExitValidation, ReasonValidationFailed, fmt.Sprintf("gpu tensor-map only supports safetensors format; got %q", md.Profile.Format), nil)
+		return GPUTensorMapResult{}, NewAppError(ExitValidation, ReasonValidationFailed, fmt.Sprintf("gpu tensor-map only supports safetensors format; got %q", target.Metadata.Profile.Format), nil)
 	}
 
-	snapshot, err := s.getOrBuildTensorMapSnapshot(key, modelID, manifestDigest, modelPath, md)
+	snapshot, err := s.getOrBuildTensorMapSnapshot(target.ModelKey, target.ModelID, target.ManifestDigest, target.ModelPath, target.Metadata)
 	if err != nil {
 		return GPUTensorMapResult{}, err
 	}
@@ -61,7 +47,7 @@ func (s *Service) GPUTensorMap(ctx context.Context, req GPUTensorMapRequest) (GP
 	tensors := cloneTensorDescriptors(snapshot.Tensors)
 	if req.MaxShards > 0 {
 		allowedShards := map[string]struct{}{}
-		shards, shardErr := gpuWeightShards(md.Profile)
+		shards, shardErr := gpuWeightShards(target.Metadata.Profile)
 		if shardErr != nil {
 			return GPUTensorMapResult{}, shardErr
 		}
@@ -96,21 +82,20 @@ func (s *Service) GPUTensorMap(ctx context.Context, req GPUTensorMapRequest) (GP
 			if err := ValidateShardName(shardName); err != nil {
 				return GPUTensorMapResult{}, NewAppError(ExitValidation, ReasonValidationFailed, fmt.Sprintf("invalid shard name %q: %v", shardName, err), nil)
 			}
-			shardPath := filepath.Join(modelPath, "shards", shardName)
+			shardPath := filepath.Join(target.ModelPath, "shards", shardName)
 			res, exportErr := s.gpuLoader.ExportPersistent(ctx, GPULoadFileRequest{
 				Path:   shardPath,
-				Device: req.Device,
+				Device: target.DeviceIndex,
 			})
 			if exportErr != nil {
 				appErr := AsAppError(exportErr)
 				return GPUTensorMapResult{
 					Status:         "FAILED",
-					AllocationID:   allocationID,
-					ModelID:        modelID,
-					ManifestDigest: manifestDigest,
-					Path:           modelPath,
-					DeviceUUID:     req.DeviceUUID,
-					DeviceIndex:    req.Device,
+					AllocationID:   target.AllocationID,
+					ModelID:        target.ModelID,
+					ManifestDigest: target.ManifestDigest,
+					DeviceUUID:     target.DeviceUUID,
+					DeviceIndex:    target.DeviceIndex,
 					Loader:         s.gpuLoader.Name(),
 					Format:         "safetensors",
 					ReasonCode:     appErr.Reason,
@@ -139,12 +124,11 @@ func (s *Service) GPUTensorMap(ctx context.Context, req GPUTensorMapRequest) (GP
 
 	return GPUTensorMapResult{
 		Status:           "READY",
-		AllocationID:     allocationID,
-		ModelID:          modelID,
-		ManifestDigest:   manifestDigest,
-		Path:             modelPath,
-		DeviceUUID:       req.DeviceUUID,
-		DeviceIndex:      req.Device,
+		AllocationID:     target.AllocationID,
+		ModelID:          target.ModelID,
+		ManifestDigest:   target.ManifestDigest,
+		DeviceUUID:       target.DeviceUUID,
+		DeviceIndex:      target.DeviceIndex,
 		Loader:           s.gpuLoader.Name(),
 		Format:           "safetensors",
 		Tensors:          tensors,

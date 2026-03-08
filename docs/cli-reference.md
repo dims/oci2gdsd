@@ -293,8 +293,8 @@ Returns non-zero (`ExitPolicy`) when direct GPU path is unavailable.
 
 ## `gpu load`
 
-Loads shard files into GPU memory via the GDS loader (when available). In `benchmark` mode,
-reports throughput and progress metadata, then releases GPU memory.
+Runs standalone benchmark reads through the GDS loader (when available). This command is
+one-shot and does not create persistent daemon allocations.
 
 ```bash
 # Benchmark mode: load shards, report throughput, release
@@ -321,34 +321,26 @@ Flags:
 Mode semantics:
 
 - `benchmark`: reads shards through the GDS path and reports throughput. GPU memory is freed on completion.
-- `persistent`: **not allowed in standalone CLI** — use `serve` mode for persistent GPU allocations.
+- `persistent`: rejected in standalone CLI mode; persistent allocations are daemon-only (`/v2/gpu/allocate`).
 
 ---
 
 ## `gpu unload`
 
-Releases persistent GPU allocations for a model. Only relevant when using `serve` daemon mode.
+Releases a daemon-managed persistent allocation by `allocation_id`.
 
 ```bash
 oci2gdsd gpu unload \
-  --model-id qwen3-0.6b \
-  --digest sha256:abc123... \
-  --lease-holder my-pod-run-1 \
-  --device-uuid GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee \
+  --allocation-id alloc_1710000000000000000_1 \
   --json
 ```
 
 Flags:
 
-- `--model-id <id>`
-- `--digest sha256:...`
-- `--path <published-model-path>`
-- `--lease-holder <holder>` (required)
-- `--device-uuid <GPU-...>` (required)
+- `--allocation-id <id>` (required)
 - `--json`
 
-Note: in standalone CLI mode, persistent loads are rejected, so `gpu unload` is primarily
-useful for embedded or daemon integrations.
+`gpu unload` is intended for embedded/daemon integrations where allocation IDs are tracked.
 
 ---
 
@@ -412,6 +404,7 @@ Runtime daemon-client paths are allocation-centric: runtime callers first create
 allocation (`/v2/gpu/allocate`), then fetch runtime files via tokenized bundle
 download (`/v2/runtime-bundles/{token}`), and then use allocation-scoped GPU
 lifecycle calls (`attach`, `heartbeat`, `tensor-map`, `export`, `detach`, `unload`).
+`/v2/gpu/load` is allocation-only (`allocation_id` request surface).
 
 `POST /v2/gpu/tensor-map` returns a safetensors-derived tensor index for each shard
 with byte ranges and optional exported CUDA IPC handle metadata. This endpoint is used by

@@ -25,7 +25,6 @@ type RuntimeBundleResult struct {
 	AllocationID   string              `json:"allocation_id,omitempty"`
 	ModelID        string              `json:"model_id,omitempty"`
 	ManifestDigest string              `json:"manifest_digest,omitempty"`
-	Path           string              `json:"-"`
 	Files          []RuntimeBundleFile `json:"files"`
 	FileCount      int                 `json:"file_count"`
 	TotalBytes     int64               `json:"total_bytes"`
@@ -123,7 +122,6 @@ func (s *Service) RuntimeBundle(ctx context.Context, req RuntimeBundleRequest) (
 		AllocationID:   allocationID,
 		ModelID:        modelID,
 		ManifestDigest: manifestDigest,
-		Path:           modelPath,
 		Files:          files,
 		FileCount:      len(files),
 		TotalBytes:     total,

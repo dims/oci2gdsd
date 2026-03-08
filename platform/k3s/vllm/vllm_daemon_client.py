@@ -631,14 +631,8 @@ def main():
         )
         assert_http_ok(post_code, post_payload, "post-unload gpu/status")
         post_files = post_payload.get("files", []) if isinstance(post_payload, dict) else []
-        still_loaded = []
-        digest_token = model_digest.replace(":", "-")
-        for entry in post_files:
-            p = str(entry.get("path", "")).strip()
-            if p and f"/{model_id}/{digest_token}/" in p:
-                still_loaded.append(p)
-        if still_loaded:
-            raise RuntimeError(f"model paths still loaded after unload: {still_loaded}")
+        if post_files:
+            raise RuntimeError(f"persistent allocations still loaded after unload: count={len(post_files)}")
     finally:
         if attached:
             detach_req = {

@@ -123,7 +123,7 @@ CGO_ENABLED=1 go build -tags gds ./cmd/oci2gdsd
 | `profile inspect` | Summarize profile metadata |
 | `gpu devices` | List visible GPUs |
 | `gpu probe` | Validate GDS capability for a GPU |
-| `gpu load` | Benchmark or persistent load path (mode-dependent) |
+| `gpu load` | Standalone benchmark shard-read path |
 | `gpu status` / `gpu unload` | Inspect and release daemon-managed GPU allocations |
 | `serve` | Start daemon Unix socket API |
 

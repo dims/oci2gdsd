@@ -133,7 +133,7 @@ No metrics endpoint/event pipeline is wired yet.
 
 Actively used:
 
-- `security.model_id_allowlist_regex` (`active`): optional regex gate for `--model-id` on service-backed paths (`ensure`, `status`, `release`, `verify`, `gpu load/unload` when model-id is provided).
+- `security.model_id_allowlist_regex` (`active`): optional regex gate for `--model-id` on service-backed paths (`ensure`, `status`, `release`, `verify`, and standalone `gpu load` when model-id is provided).
 
 Behavior:
 

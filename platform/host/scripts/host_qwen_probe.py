@@ -41,12 +41,34 @@ def ensure_runtime_links() -> None:
 def configure_cufile_env(force_no_compat: bool) -> str:
     if not force_no_compat:
         return ""
+    cfg = {}
+    base_cfg_path = Path("/etc/cufile.json")
+    if base_cfg_path.exists():
+        try:
+            cfg = json.loads(base_cfg_path.read_text(encoding="utf-8"))
+            if not isinstance(cfg, dict):
+                cfg = {}
+        except Exception:
+            cfg = {}
     cfg_path = Path("/tmp/cufile-host-e2e.json")
-    cfg = {
-        "logging": {"level": "ERROR"},
-        "profile": {"cufile_stats": 3},
-        "properties": {"allow_compat_mode": False},
-    }
+    logging_cfg = cfg.get("logging")
+    if not isinstance(logging_cfg, dict):
+        logging_cfg = {}
+    logging_cfg["level"] = "ERROR"
+    cfg["logging"] = logging_cfg
+
+    profile_cfg = cfg.get("profile")
+    if not isinstance(profile_cfg, dict):
+        profile_cfg = {}
+    profile_cfg["cufile_stats"] = 3
+    cfg["profile"] = profile_cfg
+
+    properties_cfg = cfg.get("properties")
+    if not isinstance(properties_cfg, dict):
+        properties_cfg = {}
+    properties_cfg["allow_compat_mode"] = False
+    cfg["properties"] = properties_cfg
+
     cfg_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     os.environ["CUFILE_ENV_PATH_JSON"] = str(cfg_path)
     return str(cfg_path)

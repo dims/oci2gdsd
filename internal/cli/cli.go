@@ -478,7 +478,6 @@ func runGPULoad(ctx context.Context, svc *app.Service, args []string, globalJSON
 	var modelID string
 	var digest string
 	var path string
-	var leaseHolder string
 	var deviceUUID string
 	var chunkBytes string
 	var maxShards int
@@ -488,7 +487,6 @@ func runGPULoad(ctx context.Context, svc *app.Service, args []string, globalJSON
 	fs.StringVar(&modelID, "model-id", "", "model id")
 	fs.StringVar(&digest, "digest", "", "manifest digest")
 	fs.StringVar(&path, "path", "", "local published model path")
-	fs.StringVar(&leaseHolder, "lease-holder", "", "lease holder (required for --mode persistent)")
 	fs.StringVar(&deviceUUID, "device-uuid", "", "GPU device UUID (GPU-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)")
 	fs.StringVar(&chunkBytes, "chunk-bytes", "16MiB", "read chunk bytes")
 	fs.IntVar(&maxShards, "max-shards", 0, "maximum shards to load (0=all)")
@@ -499,6 +497,18 @@ func runGPULoad(ctx context.Context, svc *app.Service, args []string, globalJSON
 		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid gpu load flags", err), commandJSON, stderr)
 	}
 	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode != "benchmark" && mode != "persistent" {
+		return emitError(
+			app.NewAppError(
+				app.ExitValidation,
+				app.ReasonValidationFailed,
+				"gpu load --mode must be one of: benchmark,persistent",
+				nil,
+			),
+			commandJSON,
+			stderr,
+		)
+	}
 	if mode == "persistent" {
 		return emitError(
 			app.NewAppError(
@@ -527,16 +537,14 @@ func runGPULoad(ctx context.Context, svc *app.Service, args []string, globalJSON
 	if err != nil {
 		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid --chunk-bytes", err), commandJSON, stderr)
 	}
-	res, err := svc.GPULoad(ctx, app.GPULoadRequest{
-		ModelID:     modelID,
-		Digest:      digest,
-		Path:        path,
-		LeaseHolder: leaseHolder,
-		DeviceUUID:  deviceUUID,
-		ChunkBytes:  chunk,
-		MaxShards:   maxShards,
-		Strict:      strict,
-		Mode:        mode,
+	res, err := svc.GPUBenchmarkLoadStandalone(ctx, app.GPUStandaloneBenchmarkRequest{
+		ModelID:    modelID,
+		Digest:     digest,
+		Path:       path,
+		DeviceUUID: deviceUUID,
+		ChunkBytes: chunk,
+		MaxShards:  maxShards,
+		Strict:     strict,
 	})
 	if commandJSON {
 		_ = emitJSON(stdout, res)
@@ -556,27 +564,15 @@ func runGPULoad(ctx context.Context, svc *app.Service, args []string, globalJSON
 func runGPUUnload(ctx context.Context, svc *app.Service, args []string, globalJSON bool, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("gpu unload", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	var modelID string
-	var digest string
-	var path string
-	var leaseHolder string
-	var deviceUUID string
+	var allocationID string
 	var commandJSON bool
-	fs.StringVar(&modelID, "model-id", "", "model id")
-	fs.StringVar(&digest, "digest", "", "manifest digest")
-	fs.StringVar(&path, "path", "", "local published model path")
-	fs.StringVar(&leaseHolder, "lease-holder", "", "lease holder")
-	fs.StringVar(&deviceUUID, "device-uuid", "", "GPU device UUID (GPU-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)")
+	fs.StringVar(&allocationID, "allocation-id", "", "allocation id")
 	fs.BoolVar(&commandJSON, "json", globalJSON, "json output")
 	if err := fs.Parse(args); err != nil {
 		return emitError(app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid gpu unload flags", err), commandJSON, stderr)
 	}
 	res, err := svc.GPUUnload(ctx, app.GPUUnloadRequest{
-		ModelID:     modelID,
-		Digest:      digest,
-		Path:        path,
-		LeaseHolder: leaseHolder,
-		DeviceUUID:  deviceUUID,
+		AllocationID: allocationID,
 	})
 	if commandJSON {
 		_ = emitJSON(stdout, res)

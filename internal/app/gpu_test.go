@@ -242,8 +242,7 @@ func (l *fakePersistentLoader) ListPersistent(_ context.Context, _ int) ([]GPULo
 func TestGPULoadInvalidModeRejected(t *testing.T) {
 	svc := &Service{}
 	_, err := svc.GPULoad(context.Background(), GPULoadRequest{
-		DeviceUUID: fakeDeviceUUID0,
-		Mode:       "unknown",
+		Mode: "unknown",
 	})
 	if err == nil {
 		t.Fatalf("expected error for invalid mode")
@@ -663,15 +662,26 @@ func TestGPULoadPersistentRollbackOnShardFailure(t *testing.T) {
 	if err := svc.store.Put(rec); err != nil {
 		t.Fatalf("put model record: %v", err)
 	}
+	allocationID := "alloc-rollback"
+	if err := svc.putAllocation(&gpuAllocation{
+		AllocationID:   allocationID,
+		ModelKey:       modelKey(modelID, manifest),
+		ModelID:        modelID,
+		ManifestDigest: manifest,
+		Path:           modelPath,
+		LeaseHolder:    "holder-rollback",
+		DeviceUUID:     fakeDeviceUUID0,
+		DeviceIndex:    0,
+		CreatedAt:      now,
+	}); err != nil {
+		t.Fatalf("put allocation record: %v", err)
+	}
 
 	_, err := svc.GPULoad(context.Background(), GPULoadRequest{
-		ModelID:     modelID,
-		Digest:      manifest,
-		LeaseHolder: "holder-rollback",
-		DeviceUUID:  fakeDeviceUUID0,
-		ChunkBytes:  4 * 1024,
-		Mode:        "persistent",
-		Strict:      true,
+		AllocationID: allocationID,
+		ChunkBytes:   4 * 1024,
+		Mode:         "persistent",
+		Strict:       true,
 	})
 	if err == nil {
 		t.Fatalf("expected persistent load failure")

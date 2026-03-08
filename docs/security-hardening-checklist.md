@@ -7,7 +7,7 @@ It is intentionally implementation-scoped (no backlog-only items).
 
 - [x] `ValidateModelID` enforced on service entrypoints.
   - `ensure`, `status`, `release`, `verify`
-  - `gpu load` / `gpu unload` when model-id + digest path is used
+  - `gpu load` when model-id + digest path is used
 - [x] Canonical root-boundary validation before destructive deletes.
   - `release --cleanup`
   - `gc` delete path
