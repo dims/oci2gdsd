@@ -405,6 +405,8 @@ allocation (`/v2/gpu/allocate`), then fetch runtime files via tokenized bundle
 download (`/v2/runtime-bundles/{token}`), and then use allocation-scoped GPU
 lifecycle calls (`attach`, `heartbeat`, `tensor-map`, `export`, `detach`, `unload`).
 `/v2/gpu/load` is allocation-only (`allocation_id` request surface).
+Daemon v2 JSON handlers reject unknown request fields (strict schema decode) and
+return `VALIDATION_FAILED` for malformed payloads.
 
 `POST /v2/gpu/tensor-map` returns a safetensors-derived tensor index for each shard
 with byte ranges and optional exported CUDA IPC handle metadata. This endpoint is used by

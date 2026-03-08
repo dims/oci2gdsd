@@ -163,6 +163,12 @@ oci2gdsd gc --policy lru_no_lease --min-free-bytes 200G --json
 The public verify targets run DaemonSet manifest mode (`verify-k3s-{qwen,tensor,vllm}`):
 node-local `oci2gdsd serve` DaemonSet + daemon-client workloads with full parity checks.
 
+Runtime policy in this mode:
+
+- runtime pods are allocation-centric (`allocation_id` + runtime-bundle token flow)
+- runtime pods have no host model-root access (`MODEL_ROOT_PATH`/`oci2gdsd-root`/`preload-model` patterns are forbidden)
+- runtime logs must include `DAEMON_NO_RUNTIME_ARTIFACT_ACCESS_OK`
+
 ## Strict GDS Guidance
 
 For direct-GDS qualification and remediation, use:
@@ -186,6 +192,22 @@ Current contract in this repo:
 - `gpu load --mode benchmark` (CLI): throughput probe path; GPU buffers are released before command exit.
 - Daemon API persistent mode (`serve` + `/v2/gpu/load`): daemon owns persistent allocations for process lifetime and can export CUDA IPC metadata.
 - Daemon API lifecycle includes attach/heartbeat/detach endpoints and tensor-map metadata used by runtime integration checks.
+
+## Performance Model
+
+Daemonset verification uses a two-leg model:
+
+1. Artifact leg (cold/warm): `gpu/allocate` + runtime-bundle token hydration.
+2. Runtime leg (policy leg): IPC parity binding + runtime inference path checks.
+
+TensorRT policy:
+
+- `TENSORRT_STARTUP_MODE=parity` (default): no fastpath marker allowed.
+- `TENSORRT_STARTUP_MODE=fast`: fastpath marker required with explicit `cache_hit=true|false`.
+
+Harness emits per-run summary JSON:
+
+- `platform/k3s/work/artifacts/results/workload-perf-summary.json`
 
 ## Packaging Models as OCI Artifacts
 

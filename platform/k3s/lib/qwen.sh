@@ -38,6 +38,21 @@ assert_profile_probe_perf_gates() {
     die "profile probe throughput regression exceeded threshold: current=${throughput} baseline=${baseline_throughput} max_regression_pct=${max_reg_pct} min_allowed=${min_allowed}"
 }
 
+assert_qwen_no_artifact_access_manifest() {
+  local rendered="$1"
+  local forbidden=(
+    '-[[:space:]]+name:[[:space:]]*MODEL_ROOT_PATH'
+    '-[[:space:]]+name:[[:space:]]*oci2gdsd-root'
+    '-[[:space:]]+name:[[:space:]]*preload-model'
+  )
+  local pattern
+  for pattern in "${forbidden[@]}"; do
+    if grep -Eq "${pattern}" "${rendered}"; then
+      die "qwen-hello manifest must not expose runtime artifact roots: ${pattern}"
+    fi
+  done
+}
+
 validate_qwen_hello_example() {
   local template="${QWEN_HELLO_TEMPLATE}"
   local app_dir="${REPO_ROOT}/platform/k3s/pytorch/app"
@@ -80,6 +95,7 @@ validate_qwen_hello_example() {
     "OCI2GDS_DAEMON_PROBE_SHARDS=${OCI2GDS_DAEMON_PROBE_SHARDS}" \
     "PYTORCH_RUNTIME_IMAGE=${PYTORCH_RUNTIME_IMAGE}" \
     "LEASE_HOLDER=${LEASE_HOLDER}"
+  assert_qwen_no_artifact_access_manifest "${rendered}"
 
   if ! grep -q 'runtimeClassName: nvidia' "${rendered}"; then
     gsed -i 's|restartPolicy: Always|restartPolicy: Always\

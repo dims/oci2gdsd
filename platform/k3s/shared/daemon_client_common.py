@@ -22,6 +22,53 @@ def parse_bool_env(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def assert_no_runtime_artifact_access():
+    forbidden_env = []
+    for name in ("MODEL_ROOT_PATH",):
+        if os.environ.get(name, "").strip():
+            forbidden_env.append(name)
+    if forbidden_env:
+        raise RuntimeError(f"runtime artifact path envs must be unset: {forbidden_env}")
+
+    forbidden_mount_points = {
+        "/var/lib/oci2gdsd",
+        "/var/lib/oci2gdsd/models",
+    }
+    mount_hits = []
+    try:
+        with open("/proc/self/mountinfo", "r", encoding="utf-8") as f:
+            for line in f:
+                parts = line.strip().split(" ")
+                if len(parts) < 5:
+                    continue
+                mount_point = parts[4].replace("\\040", " ")
+                if mount_point in forbidden_mount_points or mount_point.startswith("/var/lib/oci2gdsd/models/"):
+                    mount_hits.append(mount_point)
+    except FileNotFoundError:
+        pass
+    if mount_hits:
+        raise RuntimeError(f"runtime container must not mount daemon artifact roots: {sorted(set(mount_hits))}")
+
+    root = Path("/var/lib/oci2gdsd/models")
+    if root.exists():
+        artifact_markers = [
+            p
+            for p in (
+                list(root.glob("**/*.safetensors"))
+                + list(root.glob("**/metadata/model.json"))
+                + list(root.glob("**/READY"))
+            )
+            if p.is_file()
+        ]
+        if artifact_markers:
+            sample = [str(p) for p in artifact_markers[:3]]
+            raise RuntimeError(
+                f"runtime container has direct model artifacts under {root}; sample={sample}"
+            )
+
+    print("DAEMON_NO_RUNTIME_ARTIFACT_ACCESS_OK pathless_runtime=true")
+
+
 def resolve_device_uuid(device_index: int) -> str:
     explicit = os.environ.get("DEVICE_UUID", "").strip()
     if explicit:

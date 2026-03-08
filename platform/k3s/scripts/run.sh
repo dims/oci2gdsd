@@ -12,6 +12,9 @@ trap 'stop_registry_port_forward' EXIT
 WORKLOAD_JOB_NAME=""
 WORKLOAD_CONTAINER_NAME=""
 WORKLOAD_RESULT_LOG=""
+WORKLOAD_DURATION_MS=0
+WORKLOAD_FASTPATH_PHASE="n/a"
+WORKLOAD_FASTPATH_CACHE_HIT="n/a"
 
 wait_for_job_completion_or_fail() {
   local job_name="$1"
@@ -44,6 +47,9 @@ deploy_daemonset_workload_job() {
   runtime_daemon_apply_configmaps
   local rendered="${RENDERED_DIR}/${WORKLOAD_RUNTIME}-daemon-client-job.yaml"
   runtime_daemon_render_job "${rendered}"
+  if declare -F runtime_assert_no_artifact_access_manifest >/dev/null 2>&1; then
+    runtime_assert_no_artifact_access_manifest "${rendered}"
+  fi
   kube -n "${E2E_NAMESPACE}" delete "job/${WORKLOAD_DAEMON_JOB_NAME}" --ignore-not-found >/dev/null
   kube apply -f "${rendered}"
   WORKLOAD_RESULT_LOG="$(runtime_result_log_path)"
@@ -51,10 +57,48 @@ deploy_daemonset_workload_job() {
   WORKLOAD_CONTAINER_NAME="${WORKLOAD_DAEMON_CONTAINER_NAME}"
 }
 
+write_workload_perf_summary() {
+  local summary_path="${RESULTS_DIR}/workload-perf-summary.json"
+  local startup_mode="n/a"
+  local parity_mode="${RUNTIME_PARITY_MODE}"
+  if [[ "${WORKLOAD_RUNTIME}" == "tensorrt" ]]; then
+    startup_mode="${TENSORRT_STARTUP_MODE}"
+    if grep -Eq 'TENSORRT_ENGINE_FASTPATH_OK .*cache_hit=true' "${WORKLOAD_RESULT_LOG}"; then
+      WORKLOAD_FASTPATH_CACHE_HIT="true"
+      WORKLOAD_FASTPATH_PHASE="warm"
+    elif grep -Eq 'TENSORRT_ENGINE_FASTPATH_OK .*cache_hit=false' "${WORKLOAD_RESULT_LOG}"; then
+      WORKLOAD_FASTPATH_CACHE_HIT="false"
+      WORKLOAD_FASTPATH_PHASE="cold"
+    fi
+  fi
+  jq -n \
+    --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg runtime "${WORKLOAD_RUNTIME}" \
+    --arg parity_mode "${parity_mode}" \
+    --arg startup_mode "${startup_mode}" \
+    --arg fastpath_phase "${WORKLOAD_FASTPATH_PHASE}" \
+    --arg fastpath_cache_hit "${WORKLOAD_FASTPATH_CACHE_HIT}" \
+    --argjson workload_duration_ms "${WORKLOAD_DURATION_MS}" \
+    '{
+      timestamp: $ts,
+      runtime: $runtime,
+      parity_mode: $parity_mode,
+      startup_mode: $startup_mode,
+      workload_duration_ms: $workload_duration_ms,
+      fastpath_phase: $fastpath_phase,
+      fastpath_cache_hit: $fastpath_cache_hit
+    }' > "${summary_path}"
+  log "wrote workload perf summary: ${summary_path}"
+}
+
 wait_for_workload_and_collect() {
   log "waiting for workload job completion: ${WORKLOAD_JOB_NAME}"
   local rc=0
+  local started_at ended_at
+  started_at="$(date +%s)"
   wait_for_job_completion_or_fail "${WORKLOAD_JOB_NAME}" 1800 || rc=$?
+  ended_at="$(date +%s)"
+  WORKLOAD_DURATION_MS="$(( (ended_at - started_at) * 1000 ))"
   if [[ "${rc}" -ne 0 ]]; then
     collect_debug
     kube -n "${E2E_NAMESPACE}" logs "job/${WORKLOAD_JOB_NAME}" -c "${WORKLOAD_CONTAINER_NAME}" || true
@@ -78,6 +122,7 @@ wait_for_workload_and_collect() {
   if declare -F runtime_validate_results >/dev/null 2>&1; then
     runtime_validate_results "${WORKLOAD_RESULT_LOG}"
   fi
+  write_workload_perf_summary
   capture_daemonset_logs "${RESULTS_DIR}/daemonset.log" || true
 }
 

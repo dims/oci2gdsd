@@ -88,7 +88,6 @@ runtime_drift_checkpoint "pre-qwen-deploy"
 
 if ! validate_qwen_hello_example; then
   collect_debug
-  kube -n "${QWEN_HELLO_NAMESPACE}" logs deploy/qwen-hello -c preload-model || true
   kube -n "${QWEN_HELLO_NAMESPACE}" logs deploy/qwen-hello -c oci2gdsd-daemon || true
   kube -n "${QWEN_HELLO_NAMESPACE}" logs deploy/qwen-hello -c pytorch-api || true
   die "qwen-hello quick iterate validation failed"

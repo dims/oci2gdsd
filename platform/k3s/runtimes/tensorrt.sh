@@ -26,6 +26,7 @@ runtime_result_log_path() {
 runtime_required_markers() {
   runtime_emit_markers \
     DAEMON_MODEL_ENSURE_READY \
+    DAEMON_NO_RUNTIME_ARTIFACT_ACCESS_OK \
     DAEMON_GPU_ALLOCATE_READY \
     DAEMON_RUNTIME_BUNDLE_READY \
     DAEMON_GPU_LOAD_READY \
@@ -47,6 +48,24 @@ runtime_required_markers() {
 runtime_validate_results() {
   local log_path="$1"
   runtime_require_full_parity "TensorRT"
+  runtime_assert_log_pattern "${log_path}" \
+    'TENSORRT_STARTUP_MODE_OK mode=(parity|fast)' \
+    "TensorRT run must report startup mode"
+  if [[ "${TENSORRT_STARTUP_MODE}" == "parity" ]]; then
+    runtime_assert_log_pattern "${log_path}" \
+      'TENSORRT_ENGINE_BUILD_OK .*startup_mode=parity' \
+      "parity mode must emit startup_mode=parity engine build marker"
+    if grep -Eq 'TENSORRT_ENGINE_FASTPATH_OK' "${log_path}"; then
+      die "parity mode must not emit fastpath marker"
+    fi
+  else
+    runtime_assert_log_pattern "${log_path}" \
+      'TENSORRT_ENGINE_BUILD_OK .*startup_mode=fast' \
+      "fast mode must emit startup_mode=fast engine build marker"
+    runtime_assert_log_pattern "${log_path}" \
+      'TENSORRT_ENGINE_FASTPATH_OK .*cache_hit=(true|false) .*built=(true|false)' \
+      "fast mode must emit fastpath cache hit/miss marker"
+  fi
   runtime_assert_log_pattern "${log_path}" \
     'TENSORRT_IPC_BIND_OK .*status=ok' \
     "full parity requires TENSORRT_IPC_BIND_OK status=ok"

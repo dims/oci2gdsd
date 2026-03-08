@@ -40,3 +40,18 @@ runtime_assert_log_pattern() {
   local message="$3"
   grep -Eq "${pattern}" "${log_path}" || die "${message}"
 }
+
+runtime_assert_no_artifact_access_manifest() {
+  local rendered="$1"
+  local forbidden=(
+    '-[[:space:]]+name:[[:space:]]*MODEL_ROOT_PATH'
+    '-[[:space:]]+name:[[:space:]]*oci2gdsd-root'
+    '-[[:space:]]+name:[[:space:]]*preload-model'
+  )
+  local pattern
+  for pattern in "${forbidden[@]}"; do
+    if grep -Eq "${pattern}" "${rendered}"; then
+      die "rendered daemon-client manifest must not expose runtime artifact paths: ${pattern}"
+    fi
+  done
+}

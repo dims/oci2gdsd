@@ -13,6 +13,7 @@ from transformers import AutoTokenizer
 
 from daemon_client_common import (
     assert_http_ok,
+    assert_no_runtime_artifact_access,
     create_gpu_allocation,
     hydrate_runtime_bundle,
     parse_bool_env,
@@ -553,6 +554,7 @@ class HeartbeatKeeper:
 
 def main():
     runtime_root = Path(os.environ.get("RUNTIME_BUNDLE_ROOT", "/tmp/oci2gdsd-runtime-bundle"))
+    assert_no_runtime_artifact_access()
     model_ref = os.environ["MODEL_REF"]
     model_id = os.environ["MODEL_ID"]
     model_digest = os.environ.get("MODEL_DIGEST", "").strip()

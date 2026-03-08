@@ -45,6 +45,13 @@ All 3 run in daemonset-manifest mode with parity checks enabled. TensorRT also
 supports `TENSORRT_STARTUP_MODE=fast` for cached engine reuse while keeping
 `RUNTIME_PARITY_MODE=full`.
 
+Runtime no-artifact policy is enforced in both manifest validation and runtime logs:
+
+- no `MODEL_ROOT_PATH` env
+- no `oci2gdsd-root` runtime mount
+- no `preload-model` init flow
+- required runtime marker: `DAEMON_NO_RUNTIME_ARTIFACT_ACCESS_OK`
+
 ## What Prereq Validates
 
 `make prereq-k3s` (via stage chain `prereq-local` -> `prereq-host-gds` ->
@@ -142,6 +149,19 @@ Harness outputs under `platform/k3s/work/artifacts/results`:
 - `release-gc.log`
 - `environment-report.txt`
 - `runtime-contract-report.json`
+- `workload-perf-summary.json`
+
+## Perf Policy
+
+Harness reports a two-leg performance model:
+
+1. Artifact leg: allocation + runtime bundle retrieval.
+2. Runtime leg: parity bind/import + inference startup.
+
+TensorRT split policy:
+
+- `TENSORRT_STARTUP_MODE=parity` must not emit fastpath markers.
+- `TENSORRT_STARTUP_MODE=fast` must emit `TENSORRT_ENGINE_FASTPATH_OK` and classify run as cold (`cache_hit=false`) or warm (`cache_hit=true`) in `workload-perf-summary.json`.
 
 ## Cleanup
 

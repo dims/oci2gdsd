@@ -18,6 +18,10 @@ Report artifact:
 
 - `platform/k3s/work/artifacts/results/runtime-contract-report.json`
 
+Related harness outputs:
+
+- `platform/k3s/work/artifacts/results/workload-perf-summary.json`
+
 ## Baseline Requirements (All daemon-client runtimes)
 
 | Requirement | Status | Why |
@@ -46,6 +50,7 @@ Report artifact:
 | vLLM-specific backend env (`VLLM_ATTENTION_BACKEND`) | NOT-NEEDED | NOT-NEEDED | REQUIRED |
 | Full parity bind gate env (`REQUIRE_FULL_IPC_BIND`) | NOT-NEEDED | OPTIONAL | REQUIRED |
 | Runtime model ref env (`MODEL_REF`) | REQUIRED | REQUIRED | REQUIRED |
+| Runtime no-artifact marker (`DAEMON_NO_RUNTIME_ARTIFACT_ACCESS_OK`) | REQUIRED | REQUIRED | REQUIRED |
 
 ## qwen-hello Profile Contract
 
@@ -71,5 +76,9 @@ When adding/changing runtime manifests:
    - `make verify-k3s-qwen`
    - `make verify-k3s-tensor`
    - `make verify-k3s-vllm`
+5. Confirm runtime logs still emit `DAEMON_NO_RUNTIME_ARTIFACT_ACCESS_OK`.
+6. For TensorRT, confirm startup split policy still holds:
+   - parity mode: no fastpath marker
+   - fast mode: `TENSORRT_ENGINE_FASTPATH_OK cache_hit=...`
 
 If a contract rule is no longer needed, remove it from the contract and document why in this file.

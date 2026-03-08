@@ -32,6 +32,7 @@ Runtime contract matrix: [runtime-contract-matrix.md](runtime-contract-matrix.md
    - `GET /v2/gpu/status`
    - `POST /v2/gpu/unload`
 4. Rebinds model parameter storage to daemon-exported CUDA IPC tensor views before generation.
+5. Enforces runtime no-artifact-access policy in both rendered manifests and runtime execution logs.
 
 For TensorRT-LLM daemon-client mode, the workload:
 
@@ -43,6 +44,9 @@ For TensorRT-LLM daemon-client mode, the workload:
 - Verifies daemon allocation lifecycle (`gpu/allocate` + runtime bundle token + `gpu/status` + `gpu/attach` + `gpu/heartbeat` + `gpu/detach` + `gpu/unload`).
 - Mounts host `/run/udev` and `/etc/cufile.json` so cuFile device registration
   can succeed for strict direct-GDS engine loading.
+- Enforces startup-mode split policy:
+  - `TENSORRT_STARTUP_MODE=parity`: fastpath markers are forbidden.
+  - `TENSORRT_STARTUP_MODE=fast`: fastpath cache marker is required.
 
 For vLLM daemon-client mode, the workload:
 
@@ -90,8 +94,10 @@ Failures emit `platform/k3s/work/artifacts/results/runtime-contract-report.json`
 The daemon-client workload log (`platform/k3s/work/artifacts/results/pytorch-daemon-client.log`) must include:
 
 - `DAEMON_MODEL_ENSURE_READY`
+- `DAEMON_NO_RUNTIME_ARTIFACT_ACCESS_OK`
 - `DAEMON_RUNTIME_BUNDLE_READY`
 - `DAEMON_GPU_LOAD_READY`
+- `DAEMON_NO_RUNTIME_ARTIFACT_ACCESS_OK`
 - `DAEMON_GPU_STATUS_OK`
 - `DAEMON_GPU_ATTACH_OK`
 - `DAEMON_GPU_HEARTBEAT_OK`
@@ -110,6 +116,7 @@ For `RUNTIME_PARITY_MODE=full` (required), harness also validates:
 TensorRT daemon-client log (`platform/k3s/work/artifacts/results/tensorrt-daemon-client.log`) must include:
 
 - `DAEMON_GPU_LOAD_READY`
+- `DAEMON_NO_RUNTIME_ARTIFACT_ACCESS_OK`
 - `DAEMON_GPU_STATUS_OK`
 - `DAEMON_GPU_ATTACH_OK`
 - `DAEMON_GPU_HEARTBEAT_OK`
@@ -133,6 +140,16 @@ For `RUNTIME_PARITY_MODE=full`, harness also validates:
 When `TENSORRT_STARTUP_MODE=fast`, logs additionally emit:
 
 - `TENSORRT_ENGINE_FASTPATH_OK cache_hit=... built=...`
+
+Per-run perf summary artifact:
+
+- `platform/k3s/work/artifacts/results/workload-perf-summary.json`
+  - includes runtime, parity mode, startup mode, workload duration, and TensorRT fastpath cold/warm classification.
+
+Two-leg perf model tracked by the harness:
+
+1. artifact leg (`gpu/allocate` + runtime-bundle transfer)
+2. runtime leg (IPC parity bind/import + inference startup)
 
 vLLM daemon-client log (`platform/k3s/work/artifacts/results/vllm-daemon-client.log`) must include:
 

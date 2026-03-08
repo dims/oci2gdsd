@@ -75,6 +75,9 @@ Actively used in ensure download scheduling/buffering:
 - `download.max_concurrent_chunks_per_blob` (`active`): contributes to effective per-model shard-worker fanout.
 - `download.chunk_size_bytes` (`active`): chunk/buffer size used for shard download streaming.
 
+In daemonset runs this controls the artifact leg (allocation + runtime-bundle preparation)
+of the two-leg startup model before runtime parity/inference validation.
+
 Still reserved:
 
 - `download.request_timeout_sec` (`reserved`)
