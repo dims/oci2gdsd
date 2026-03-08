@@ -4,6 +4,9 @@
 testharness/local-e2e/work/
 testharness/k3s-e2e/work/
 testharness/host-e2e/work/
+platform/local/work/
+platform/k3s/work/
+platform/host/work/
 
 # macOS
 .DS_Store
