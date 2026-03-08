@@ -377,6 +377,94 @@ func TestGPULoadPersistentLeaseLifecycle(t *testing.T) {
 	}
 }
 
+func TestGPUAllocationIDAttachDetachUnloadFlow(t *testing.T) {
+	svc := newStateOnlyService(t)
+	loader := newFakePersistentLoader()
+	svc.gpuLoader = loader
+
+	modelID := "demo"
+	manifest := "sha256:" + strings.Repeat("9", 64)
+	modelPath, shardSize := writeReadyModelForGPUTest(t, svc.cfg.ModelRoot, modelID, manifest)
+
+	now := time.Now().UTC()
+	rec := &storepkg.ModelRecord{
+		Key:            modelKey(modelID, manifest),
+		ModelID:        modelID,
+		ManifestDigest: manifest,
+		Status:         StateReady,
+		Path:           modelPath,
+		Bytes:          shardSize,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		LastAccessedAt: now,
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatalf("put model record: %v", err)
+	}
+
+	alloc, err := svc.GPUAllocate(context.Background(), GPUAllocateRequest{
+		ModelID:     modelID,
+		Digest:      manifest,
+		LeaseHolder: "holder-alloc",
+		DeviceUUID:  fakeDeviceUUID0,
+		Strict:      true,
+	})
+	if err != nil {
+		t.Fatalf("gpu allocate: %v", err)
+	}
+	if alloc.Status != "READY" || strings.TrimSpace(alloc.AllocationID) == "" {
+		t.Fatalf("unexpected allocation response: %+v", alloc)
+	}
+	if alloc.Files != 1 || alloc.DirectFiles != 1 {
+		t.Fatalf("unexpected allocation file counters: %+v", alloc)
+	}
+
+	attachRes, err := svc.GPUAttach(context.Background(), GPUAttachRequest{
+		AllocationID: alloc.AllocationID,
+		ClientID:     "client-alloc",
+		TTLSeconds:   120,
+	})
+	if err != nil {
+		t.Fatalf("gpu attach: %v", err)
+	}
+	if attachRes.AttachedFiles != 1 {
+		t.Fatalf("expected attached_files=1, got %+v", attachRes)
+	}
+
+	hbRes, err := svc.GPUHeartbeat(context.Background(), GPUHeartbeatRequest{
+		AllocationID: alloc.AllocationID,
+		ClientID:     "client-alloc",
+		TTLSeconds:   120,
+	})
+	if err != nil {
+		t.Fatalf("gpu heartbeat: %v", err)
+	}
+	if strings.TrimSpace(hbRes.ExpiresAt) == "" {
+		t.Fatalf("expected heartbeat expires_at, got %+v", hbRes)
+	}
+
+	detachRes, err := svc.GPUDetach(context.Background(), GPUDetachRequest{
+		AllocationID: alloc.AllocationID,
+		ClientID:     "client-alloc",
+	})
+	if err != nil {
+		t.Fatalf("gpu detach: %v", err)
+	}
+	if detachRes.DetachedFiles != 1 {
+		t.Fatalf("expected detached_files=1, got %+v", detachRes)
+	}
+
+	unloadRes, err := svc.GPUUnload(context.Background(), GPUUnloadRequest{
+		AllocationID: alloc.AllocationID,
+	})
+	if err != nil {
+		t.Fatalf("gpu unload by allocation_id: %v", err)
+	}
+	if unloadRes.ReleasedBytes != shardSize {
+		t.Fatalf("expected released bytes=%d, got %+v", shardSize, unloadRes)
+	}
+}
+
 func TestGPUExportReturnsPersistentIPCHandle(t *testing.T) {
 	svc := newStateOnlyService(t)
 	loader := newFakePersistentLoader()

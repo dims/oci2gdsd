@@ -23,6 +23,25 @@ type safeTensorsHeaderTensor struct {
 
 func (s *Service) GPUTensorMap(ctx context.Context, req GPUTensorMapRequest) (GPUTensorMapResult, error) {
 	start := time.Now()
+	modelID, manifestDigest, modelPath, deviceUUID, _, alloc, allocErr := s.resolveAllocationInput(
+		req.AllocationID,
+		req.ModelID,
+		req.Digest,
+		req.Path,
+		req.DeviceUUID,
+		"",
+	)
+	if allocErr != nil {
+		return GPUTensorMapResult{}, allocErr
+	}
+	req.ModelID = modelID
+	req.Digest = manifestDigest
+	req.Path = modelPath
+	req.DeviceUUID = deviceUUID
+	allocationID := strings.TrimSpace(req.AllocationID)
+	if alloc != nil {
+		allocationID = alloc.AllocationID
+	}
 	device, err := s.resolveRequestedDevice(ctx, req.DeviceUUID)
 	if err != nil {
 		return GPUTensorMapResult{}, err
@@ -68,6 +87,7 @@ func (s *Service) GPUTensorMap(ctx context.Context, req GPUTensorMapRequest) (GP
 				appErr := AsAppError(exportErr)
 				return GPUTensorMapResult{
 					Status:         "FAILED",
+					AllocationID:   allocationID,
 					ModelID:        modelID,
 					ManifestDigest: manifestDigest,
 					Path:           modelPath,
@@ -115,6 +135,7 @@ func (s *Service) GPUTensorMap(ctx context.Context, req GPUTensorMapRequest) (GP
 			if appendTensor(entry) {
 				return GPUTensorMapResult{
 					Status:           "READY",
+					AllocationID:     allocationID,
 					ModelID:          modelID,
 					ManifestDigest:   manifestDigest,
 					Path:             modelPath,
@@ -135,6 +156,7 @@ func (s *Service) GPUTensorMap(ctx context.Context, req GPUTensorMapRequest) (GP
 
 	return GPUTensorMapResult{
 		Status:           "READY",
+		AllocationID:     allocationID,
 		ModelID:          modelID,
 		ManifestDigest:   manifestDigest,
 		Path:             modelPath,

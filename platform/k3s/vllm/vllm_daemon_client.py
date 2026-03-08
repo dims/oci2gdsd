@@ -11,8 +11,8 @@ import torch
 
 from daemon_client_common import (
     assert_http_ok,
-    ensure_model_ready,
-    hydrate_model_root,
+    create_gpu_allocation,
+    hydrate_runtime_bundle,
     parse_bool_env,
     resolve_device_uuid,
     torch_dtype_from_safetensors,
@@ -453,10 +453,10 @@ def run_vllm_infer(model_id: str, model_digest: str, runtime_dir: Path, device_i
 
 
 def main():
-    model_root = Path(os.environ.get("MODEL_ROOT_PATH", "/tmp/oci2gdsd-model-root"))
+    runtime_root = Path(os.environ.get("RUNTIME_BUNDLE_ROOT", "/tmp/oci2gdsd-runtime-bundle"))
     model_ref = os.environ["MODEL_REF"]
     model_id = os.environ["MODEL_ID"]
-    model_digest = os.environ["MODEL_DIGEST"]
+    model_digest = os.environ.get("MODEL_DIGEST", "").strip()
     lease_holder = os.environ.get("LEASE_HOLDER", "vllm-daemon-client")
     socket_path = os.environ.get("OCI2GDS_DAEMON_SOCKET", "/run/oci2gdsd/daemon.sock")
     device_index = int(os.environ.get("DEVICE_INDEX", "0"))
@@ -468,10 +468,23 @@ def main():
     if parity_mode != "full":
         raise RuntimeError("vLLM daemon-client requires RUNTIME_PARITY_MODE=full; path-backed modes are removed")
 
-    ensure_model_ready(socket_path, model_ref, model_id, lease_holder)
-    hydrate_model_root(socket_path, model_root, model_id, model_digest)
+    allocation = create_gpu_allocation(
+        socket_path=socket_path,
+        model_ref=model_ref,
+        model_id=model_id,
+        lease_holder=lease_holder,
+        device_uuid=device_uuid,
+        strict=strict_load,
+    )
+    allocation_id = str(allocation.get("allocation_id", "")).strip()
+    if not allocation_id:
+        raise RuntimeError(f"gpu/allocate returned empty allocation_id: {allocation}")
+    model_digest = str(allocation.get("manifest_digest", model_digest)).strip()
+    if not model_digest:
+        raise RuntimeError(f"gpu/allocate returned empty manifest digest: {allocation}")
+    hydrate_runtime_bundle(socket_path, runtime_root, allocation_id, include_weights=False)
 
-    metadata_path = model_root / "metadata" / "model.json"
+    metadata_path = runtime_root / "metadata" / "model.json"
     if not metadata_path.exists():
         raise RuntimeError(f"metadata missing at {metadata_path}")
 
@@ -497,28 +510,17 @@ def main():
     attach_client_id = f"{lease_holder}-vllm-{os.getpid()}"
 
     try:
-        load_req = {
-            "model_id": model_id,
-            "digest": model_digest,
-            "lease_holder": lease_holder,
-            "device_uuid": device_uuid,
-            "chunk_bytes": 4 * 1024 * 1024,
-            "strict": strict_load,
-            "mode": "persistent",
-        }
-        load_code, load_payload = unix_http_json(socket_path, "POST", "/v1/gpu/load", load_req, timeout_seconds=900)
-        assert_http_ok(load_code, load_payload, "gpu/load")
-        files = load_payload.get("files", []) if isinstance(load_payload, dict) else []
-        if not files:
-            raise RuntimeError(f"gpu/load returned no files: {load_payload}")
-        direct_files = sum(1 for entry in files if bool(entry.get("direct", False)))
+        total_files = int(allocation.get("files", 0))
+        direct_files = int(allocation.get("direct_files", 0))
+        if total_files <= 0:
+            raise RuntimeError(f"gpu/allocate returned no files: {allocation}")
         if require_direct and direct_files == 0:
-            raise RuntimeError(f"gpu/load returned zero direct files in strict run: {load_payload}")
+            raise RuntimeError(f"gpu/allocate returned zero direct files in strict run: {allocation}")
         load_ready = True
         print(
             "DAEMON_GPU_LOAD_READY "
-            f"files={len(files)} direct_files={direct_files} "
-            f"mode={load_payload.get('mode', '')} persistent={load_payload.get('persistent', False)} "
+            f"files={total_files} direct_files={direct_files} "
+            "mode=persistent persistent=True "
             f"strict={strict_load}"
         )
 
@@ -536,9 +538,7 @@ def main():
         print(f"DAEMON_GPU_STATUS_OK files={len(status_files)}")
 
         attach_req = {
-            "model_id": model_id,
-            "digest": model_digest,
-            "device_uuid": device_uuid,
+            "allocation_id": allocation_id,
             "client_id": attach_client_id,
             "ttl_seconds": 300,
         }
@@ -553,9 +553,7 @@ def main():
         )
 
         hb_req = {
-            "model_id": model_id,
-            "digest": model_digest,
-            "device_uuid": device_uuid,
+            "allocation_id": allocation_id,
             "client_id": attach_client_id,
             "ttl_seconds": 300,
         }
@@ -564,9 +562,7 @@ def main():
         print(f"DAEMON_GPU_HEARTBEAT_OK expires_at={hb_payload.get('expires_at', '')}")
 
         tensor_req = {
-            "model_id": model_id,
-            "digest": model_digest,
-            "device_uuid": device_uuid,
+            "allocation_id": allocation_id,
             "max_shards": 0,
             "max_tensors": int(os.environ.get("MAX_TENSOR_MAP_TENSORS", "0")),
             "include_handles": True,
@@ -579,7 +575,7 @@ def main():
         tensor_bytes = sum(int(t.get("byte_length", 0)) for t in tensors)
         print(f"VLLM_IPC_TENSOR_MAP_OK tensors={len(tensors)} tensor_bytes={tensor_bytes}")
 
-        runtime_dir = build_runtime_dir(model_root)
+        runtime_dir = build_runtime_dir(runtime_root)
         answer_sha, answer_len, bind_stats = run_vllm_infer(
             model_id=model_id,
             model_digest=model_digest,
@@ -609,9 +605,7 @@ def main():
         print(f"VLLM_QWEN_INFER_OK answer_sha256={answer_sha} answer_len={answer_len}")
 
         detach_req = {
-            "model_id": model_id,
-            "digest": model_digest,
-            "device_uuid": device_uuid,
+            "allocation_id": allocation_id,
             "client_id": attach_client_id,
         }
         detach_code, detach_payload = unix_http_json(socket_path, "POST", "/v1/gpu/detach", detach_req, timeout_seconds=120)
@@ -619,12 +613,7 @@ def main():
         attached = False
         print(f"DAEMON_GPU_DETACH_OK detached_files={detach_payload.get('detached_files', 0)}")
 
-        unload_req = {
-            "model_id": model_id,
-            "digest": model_digest,
-            "lease_holder": lease_holder,
-            "device_uuid": device_uuid,
-        }
+        unload_req = {"allocation_id": allocation_id}
         unload_code, unload_payload = unix_http_json(socket_path, "POST", "/v1/gpu/unload", unload_req, timeout_seconds=300)
         assert_http_ok(unload_code, unload_payload, "gpu/unload")
         load_ready = False
@@ -650,9 +639,7 @@ def main():
     finally:
         if attached:
             detach_req = {
-                "model_id": model_id,
-                "digest": model_digest,
-                "device_uuid": device_uuid,
+                "allocation_id": allocation_id,
                 "client_id": attach_client_id,
             }
             try:
@@ -669,12 +656,7 @@ def main():
                 print(f"DAEMON_GPU_DETACH_WARN error={exc}")
 
         if load_ready:
-            unload_req = {
-                "model_id": model_id,
-                "digest": model_digest,
-                "lease_holder": lease_holder,
-                "device_uuid": device_uuid,
-            }
+            unload_req = {"allocation_id": allocation_id}
             try:
                 unload_code, unload_payload = unix_http_json(
                     socket_path,

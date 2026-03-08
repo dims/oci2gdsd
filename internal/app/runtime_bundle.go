@@ -9,6 +9,7 @@ import (
 )
 
 type RuntimeBundleRequest struct {
+	AllocationID   string `json:"allocation_id"`
 	ModelID        string `json:"model_id"`
 	Digest         string `json:"digest"`
 	Path           string `json:"path"`
@@ -24,6 +25,7 @@ type RuntimeBundleFile struct {
 
 type RuntimeBundleResult struct {
 	Status         string              `json:"status"`
+	AllocationID   string              `json:"allocation_id,omitempty"`
 	ModelID        string              `json:"model_id,omitempty"`
 	ManifestDigest string              `json:"manifest_digest,omitempty"`
 	Path           string              `json:"path"`
@@ -39,6 +41,25 @@ func (s *Service) RuntimeBundle(ctx context.Context, req RuntimeBundleRequest) (
 	case <-ctx.Done():
 		return RuntimeBundleResult{}, NewAppError(ExitRegistry, ReasonRegistryTimeout, "context canceled before runtime bundle resolution", ctx.Err())
 	default:
+	}
+
+	modelID, manifestDigest, modelPath, _, _, alloc, allocErr := s.resolveAllocationInput(
+		req.AllocationID,
+		req.ModelID,
+		req.Digest,
+		req.Path,
+		"",
+		"",
+	)
+	if allocErr != nil {
+		return RuntimeBundleResult{}, allocErr
+	}
+	req.ModelID = modelID
+	req.Digest = manifestDigest
+	req.Path = modelPath
+	allocationID := strings.TrimSpace(req.AllocationID)
+	if alloc != nil {
+		allocationID = alloc.AllocationID
 	}
 
 	modelPath, modelID, manifestDigest, md, _, err := s.resolveGPUModelTarget(req.Path, req.ModelID, req.Digest)
@@ -116,6 +137,7 @@ func (s *Service) RuntimeBundle(ctx context.Context, req RuntimeBundleRequest) (
 
 	return RuntimeBundleResult{
 		Status:         "READY",
+		AllocationID:   allocationID,
 		ModelID:        modelID,
 		ManifestDigest: manifestDigest,
 		Path:           modelPath,

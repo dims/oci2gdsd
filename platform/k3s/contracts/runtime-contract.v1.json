@@ -32,6 +32,7 @@
         "python[[:space:]]+/scripts/pytorch_daemon_client\\.py"
       ],
       "forbidden_patterns": [
+        "-[[:space:]]+name:[[:space:]]*MODEL_ROOT_PATH",
         "-[[:space:]]+name:[[:space:]]*oci2gdsd-root",
         "-[[:space:]]+name:[[:space:]]*preload-model"
       ]
@@ -45,6 +46,7 @@
         "python3[[:space:]]+/scripts/tensorrt_daemon_client\\.py"
       ],
       "forbidden_patterns": [
+        "-[[:space:]]+name:[[:space:]]*MODEL_ROOT_PATH",
         "-[[:space:]]+name:[[:space:]]*oci2gdsd-root",
         "-[[:space:]]+name:[[:space:]]*preload-model"
       ]
@@ -59,6 +61,7 @@
         "python[[:space:]]+/scripts/vllm_daemon_client\\.py"
       ],
       "forbidden_patterns": [
+        "-[[:space:]]+name:[[:space:]]*MODEL_ROOT_PATH",
         "-[[:space:]]+name:[[:space:]]*oci2gdsd-root",
         "-[[:space:]]+name:[[:space:]]*preload-model"
       ]

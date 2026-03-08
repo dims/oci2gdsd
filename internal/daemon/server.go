@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"archive/tar"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -65,6 +64,7 @@ func Serve(ctx context.Context, svc *app.Service, cfg ServerConfig) error {
 	mux.HandleFunc("/v1/model/ensure", h.handleModelEnsure)
 	mux.HandleFunc("/v1/model/verify", h.handleModelVerify)
 	mux.HandleFunc("/v1/model/runtime-bundle", h.handleModelRuntimeBundle)
+	mux.HandleFunc("/v1/gpu/allocate", h.handleGPUAllocate)
 	mux.HandleFunc("/v1/gpu/load", h.handleGPULoad)
 	mux.HandleFunc("/v1/gpu/unload", h.handleGPUUnload)
 	mux.HandleFunc("/v1/gpu/status", h.handleGPUStatus)
@@ -191,6 +191,7 @@ func (h *handler) handleModelRuntimeBundle(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var wireReq struct {
+		AllocationID   string `json:"allocation_id"`
 		ModelID        string `json:"model_id"`
 		Digest         string `json:"digest"`
 		Path           string `json:"path"`
@@ -205,6 +206,7 @@ func (h *handler) handleModelRuntimeBundle(w http.ResponseWriter, r *http.Reques
 		includeWeights = *wireReq.IncludeWeights
 	}
 	res, err := h.svc.RuntimeBundle(r.Context(), app.RuntimeBundleRequest{
+		AllocationID:   wireReq.AllocationID,
 		ModelID:        wireReq.ModelID,
 		Digest:         wireReq.Digest,
 		Path:           wireReq.Path,
@@ -215,32 +217,44 @@ func (h *handler) handleModelRuntimeBundle(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	var buf bytes.Buffer
-	tw := tar.NewWriter(&buf)
+	w.Header().Set("Content-Type", "application/x-tar")
+	w.Header().Set("X-Oci2gdsd-Model-Id", res.ModelID)
+	w.Header().Set("X-Oci2gdsd-Manifest-Digest", res.ManifestDigest)
+	if strings.TrimSpace(res.AllocationID) != "" {
+		w.Header().Set("X-Oci2gdsd-Allocation-Id", res.AllocationID)
+	}
+	w.WriteHeader(http.StatusOK)
+	tw := tar.NewWriter(w)
 	for _, f := range res.Files {
-		payload, readErr := os.ReadFile(f.SourcePath)
-		if readErr != nil {
-			writeAppError(w, app.NewAppError(app.ExitFilesystem, app.ReasonFilesystemError, "failed reading runtime bundle source file", readErr))
+		src, openErr := os.Open(f.SourcePath)
+		if openErr != nil {
+			_ = tw.Close()
+			_, _ = fmt.Fprintf(os.Stderr, "daemon open runtime bundle source failed: %v\n", openErr)
 			return
 		}
-		mode := int64(f.Mode.Perm())
 		hdr := &tar.Header{
 			Name:    f.ArchivePath,
-			Mode:    mode,
-			Size:    int64(len(payload)),
+			Mode:    int64(f.Mode.Perm()),
+			Size:    f.Size,
 			ModTime: time.Now().UTC(),
 		}
 		if err := tw.WriteHeader(hdr); err != nil {
-			writeAppError(w, app.NewAppError(app.ExitFilesystem, app.ReasonFilesystemError, "failed writing runtime bundle tar header", err))
+			_ = src.Close()
+			_ = tw.Close()
+			_, _ = fmt.Fprintf(os.Stderr, "daemon write runtime bundle header failed: %v\n", err)
 			return
 		}
-		if _, err := tw.Write(payload); err != nil {
-			writeAppError(w, app.NewAppError(app.ExitFilesystem, app.ReasonFilesystemError, "failed writing runtime bundle tar payload", err))
+		if _, err := io.Copy(tw, src); err != nil {
+			_ = src.Close()
+			_ = tw.Close()
+			_, _ = fmt.Fprintf(os.Stderr, "daemon stream runtime bundle payload failed: %v\n", err)
 			return
 		}
+		_ = src.Close()
 	}
 
 	manifestPayload, err := json.Marshal(map[string]any{
+		"allocation_id":   res.AllocationID,
 		"model_id":        res.ModelID,
 		"manifest_digest": res.ManifestDigest,
 		"file_count":      res.FileCount,
@@ -258,17 +272,48 @@ func (h *handler) handleModelRuntimeBundle(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	if err := tw.Close(); err != nil {
-		writeAppError(w, app.NewAppError(app.ExitFilesystem, app.ReasonFilesystemError, "failed closing runtime bundle tar writer", err))
+		_, _ = fmt.Fprintf(os.Stderr, "daemon close runtime bundle writer failed: %v\n", err)
+	}
+}
+
+func (h *handler) handleGPUAllocate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w)
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/x-tar")
-	w.Header().Set("X-Oci2gdsd-Model-Id", res.ModelID)
-	w.Header().Set("X-Oci2gdsd-Manifest-Digest", res.ManifestDigest)
-	w.WriteHeader(http.StatusOK)
-	if _, err := io.Copy(w, &buf); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "daemon write runtime bundle failed: %v\n", err)
+	var wireReq struct {
+		Ref         string `json:"ref"`
+		ModelID     string `json:"model_id"`
+		Digest      string `json:"digest"`
+		LeaseHolder string `json:"lease_holder"`
+		DeviceUUID  string `json:"device_uuid"`
+		ChunkBytes  int64  `json:"chunk_bytes"`
+		MaxShards   int    `json:"max_shards"`
+		Strict      *bool  `json:"strict"`
 	}
+	if err := decodeJSONBody(r, &wireReq); err != nil {
+		writeAppError(w, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid gpu allocate request body", err))
+		return
+	}
+	req := app.GPUAllocateRequest{
+		Ref:         wireReq.Ref,
+		ModelID:     wireReq.ModelID,
+		Digest:      wireReq.Digest,
+		LeaseHolder: wireReq.LeaseHolder,
+		DeviceUUID:  wireReq.DeviceUUID,
+		ChunkBytes:  wireReq.ChunkBytes,
+		MaxShards:   wireReq.MaxShards,
+		Strict:      true,
+	}
+	if wireReq.Strict != nil {
+		req.Strict = *wireReq.Strict
+	}
+	res, err := h.svc.GPUAllocate(r.Context(), req)
+	if err != nil {
+		writeAppErrorWithResult(w, err, res)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 func (h *handler) handleGPULoad(w http.ResponseWriter, r *http.Request) {
@@ -277,30 +322,32 @@ func (h *handler) handleGPULoad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var wireReq struct {
-		ModelID     string `json:"model_id"`
-		Digest      string `json:"digest"`
-		Path        string `json:"path"`
-		LeaseHolder string `json:"lease_holder"`
-		DeviceUUID  string `json:"device_uuid"`
-		ChunkBytes  int64  `json:"chunk_bytes"`
-		MaxShards   int    `json:"max_shards"`
-		Strict      *bool  `json:"strict"`
-		Mode        string `json:"mode"`
+		AllocationID string `json:"allocation_id"`
+		ModelID      string `json:"model_id"`
+		Digest       string `json:"digest"`
+		Path         string `json:"path"`
+		LeaseHolder  string `json:"lease_holder"`
+		DeviceUUID   string `json:"device_uuid"`
+		ChunkBytes   int64  `json:"chunk_bytes"`
+		MaxShards    int    `json:"max_shards"`
+		Strict       *bool  `json:"strict"`
+		Mode         string `json:"mode"`
 	}
 	if err := decodeJSONBody(r, &wireReq); err != nil {
 		writeAppError(w, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid gpu load request body", err))
 		return
 	}
 	req := app.GPULoadRequest{
-		ModelID:     wireReq.ModelID,
-		Digest:      wireReq.Digest,
-		Path:        wireReq.Path,
-		LeaseHolder: wireReq.LeaseHolder,
-		DeviceUUID:  wireReq.DeviceUUID,
-		ChunkBytes:  wireReq.ChunkBytes,
-		MaxShards:   wireReq.MaxShards,
-		Mode:        wireReq.Mode,
-		Strict:      true,
+		AllocationID: wireReq.AllocationID,
+		ModelID:      wireReq.ModelID,
+		Digest:       wireReq.Digest,
+		Path:         wireReq.Path,
+		LeaseHolder:  wireReq.LeaseHolder,
+		DeviceUUID:   wireReq.DeviceUUID,
+		ChunkBytes:   wireReq.ChunkBytes,
+		MaxShards:    wireReq.MaxShards,
+		Mode:         wireReq.Mode,
+		Strict:       true,
 	}
 	if wireReq.Strict != nil {
 		req.Strict = *wireReq.Strict
@@ -396,6 +443,7 @@ func (h *handler) handleGPUTensorMap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var wireReq struct {
+		AllocationID   string `json:"allocation_id"`
 		ModelID        string `json:"model_id"`
 		Digest         string `json:"digest"`
 		Path           string `json:"path"`
@@ -413,6 +461,7 @@ func (h *handler) handleGPUTensorMap(w http.ResponseWriter, r *http.Request) {
 		includeHandles = *wireReq.IncludeHandles
 	}
 	req := app.GPUTensorMapRequest{
+		AllocationID:   wireReq.AllocationID,
 		ModelID:        wireReq.ModelID,
 		Digest:         wireReq.Digest,
 		Path:           wireReq.Path,

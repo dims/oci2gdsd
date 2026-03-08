@@ -181,14 +181,48 @@ def ensure_model_ready(socket_path: str, model_ref: str, model_id: str, lease_ho
     print(f"DAEMON_MODEL_ENSURE_READY model_id={payload.get('model_id', model_id)} digest={payload.get('manifest_digest', '')}")
 
 
-def hydrate_model_root(socket_path: str, model_root: Path, model_id: str, model_digest: str):
-    if model_root.exists():
-        shutil.rmtree(model_root)
-    model_root.mkdir(parents=True, exist_ok=True)
+def create_gpu_allocation(
+    socket_path: str,
+    model_ref: str,
+    model_id: str,
+    lease_holder: str,
+    device_uuid: str,
+    strict: bool,
+):
     req = {
+        "ref": model_ref,
         "model_id": model_id,
-        "digest": model_digest,
-        "include_weights": False,
+        "lease_holder": lease_holder,
+        "device_uuid": device_uuid,
+        "chunk_bytes": 4 * 1024 * 1024,
+        "max_shards": 0,
+        "strict": bool(strict),
+    }
+    code, payload = unix_http_json(socket_path, "POST", "/v1/gpu/allocate", req, timeout_seconds=1800)
+    assert_http_ok(code, payload, "gpu/allocate")
+    if str(payload.get("status", "")).upper() != "READY":
+        raise RuntimeError(f"gpu/allocate did not return READY: {payload}")
+    allocation_id = str(payload.get("allocation_id", "")).strip()
+    if not allocation_id:
+        raise RuntimeError(f"gpu/allocate returned empty allocation_id: {payload}")
+    model_id_out = str(payload.get("model_id", model_id)).strip()
+    digest_out = str(payload.get("manifest_digest", "")).strip()
+    print(f"DAEMON_MODEL_ENSURE_READY model_id={model_id_out} digest={digest_out}")
+    print(
+        "DAEMON_GPU_ALLOCATE_READY "
+        f"allocation_id={allocation_id} model_id={model_id_out} digest={digest_out} "
+        f"files={payload.get('files', 0)} direct_files={payload.get('direct_files', 0)}"
+    )
+    return payload
+
+
+def hydrate_runtime_bundle(socket_path: str, runtime_root: Path, allocation_id: str, include_weights: bool = False):
+    if runtime_root.exists():
+        shutil.rmtree(runtime_root)
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    req = {
+        "allocation_id": allocation_id,
+        "include_weights": bool(include_weights),
     }
     code, _, payload = unix_http_request(
         socket_path=socket_path,
@@ -201,12 +235,12 @@ def hydrate_model_root(socket_path: str, model_root: Path, model_id: str, model_
         text = payload.decode("utf-8", errors="replace")
         raise RuntimeError(f"model/runtime-bundle failed: code={code} body={text}")
     with tarfile.open(fileobj=io.BytesIO(payload), mode="r:") as tf:
-        tf.extractall(path=str(model_root))
-    if not (model_root / "metadata" / "model.json").exists():
-        raise RuntimeError(f"runtime bundle missing metadata/model.json in {model_root}")
-    if not (model_root / "shards" / "config.json").exists():
-        raise RuntimeError(f"runtime bundle missing shards/config.json in {model_root}")
-    print(f"DAEMON_RUNTIME_BUNDLE_READY files_root={model_root}")
+        tf.extractall(path=str(runtime_root))
+    if not (runtime_root / "metadata" / "model.json").exists():
+        raise RuntimeError(f"runtime bundle missing metadata/model.json in {runtime_root}")
+    if not (runtime_root / "shards" / "config.json").exists():
+        raise RuntimeError(f"runtime bundle missing shards/config.json in {runtime_root}")
+    print(f"DAEMON_RUNTIME_BUNDLE_READY files_root={runtime_root}")
 
 
 def _native_cpp_source_path() -> Path:

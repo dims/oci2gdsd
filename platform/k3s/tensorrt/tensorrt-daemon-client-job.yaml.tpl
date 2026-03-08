@@ -58,12 +58,12 @@ spec:
         env:
         - name: MODEL_REF
           value: "__MODEL_REF__"
-        - name: MODEL_ROOT_PATH
-          value: "/tmp/oci2gdsd-model-root"
         - name: MODEL_ID
           value: "__MODEL_ID__"
         - name: MODEL_DIGEST
           value: "__MODEL_DIGEST__"
+        - name: RUNTIME_BUNDLE_ROOT
+          value: "/tmp/oci2gdsd-runtime-bundle"
         - name: LEASE_HOLDER
           value: "__LEASE_HOLDER__"
         - name: OCI2GDS_DAEMON_SOCKET

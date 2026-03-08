@@ -24,6 +24,7 @@ runtime_result_log_path() {
 runtime_required_markers() {
   runtime_emit_markers \
     DAEMON_MODEL_ENSURE_READY \
+    DAEMON_GPU_ALLOCATE_READY \
     DAEMON_RUNTIME_BUNDLE_READY \
     DAEMON_GPU_LOAD_READY \
     DAEMON_GPU_TENSOR_MAP_OK \

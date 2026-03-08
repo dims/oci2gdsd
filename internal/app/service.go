@@ -30,6 +30,9 @@ type Service struct {
 	attachMu  sync.Mutex
 	attachTTL time.Duration
 	attachMap map[string]*gpuClientAttachment
+	allocMu   sync.Mutex
+	allocSeq  uint64
+	allocMap  map[string]*gpuAllocation
 	// Optional allowlist regex for tenant-safe model identifiers.
 	modelIDAllowlist *regexp.Regexp
 }
@@ -45,6 +48,18 @@ type gpuClientAttachment struct {
 	ShardPaths      []string
 	ExpiresAt       time.Time
 	LastHeartbeatAt time.Time
+}
+
+type gpuAllocation struct {
+	AllocationID   string
+	ModelKey       string
+	ModelID        string
+	ManifestDigest string
+	Path           string
+	LeaseHolder    string
+	DeviceUUID     string
+	DeviceIndex    int
+	CreatedAt      time.Time
 }
 
 func (s *Service) MinFreeBytesDefault() int64 {
@@ -154,6 +169,7 @@ func NewService(cfg configpkg.Config, fetcher ModelFetcher, gpuLoader GPULoader)
 		gpuLoader:        gpuLoader,
 		attachTTL:        5 * time.Minute,
 		attachMap:        map[string]*gpuClientAttachment{},
+		allocMap:         map[string]*gpuAllocation{},
 		modelIDAllowlist: modelIDAllowlist,
 	}
 	if err := s.Recover(); err != nil {
