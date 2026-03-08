@@ -11,6 +11,7 @@
       "-[[:space:]]+name:[[:space:]]*OCI2GDS_DAEMON_SOCKET",
       "-[[:space:]]+name:[[:space:]]*DEVICE_UUID",
       "-[[:space:]]+name:[[:space:]]*DEVICE_INDEX",
+      "-[[:space:]]+name:[[:space:]]*PERF_MODE",
       "-[[:space:]]+name:[[:space:]]*host-udev",
       "mountPath:[[:space:]]*/run/udev",
       "-[[:space:]]+name:[[:space:]]*host-cufile-config",

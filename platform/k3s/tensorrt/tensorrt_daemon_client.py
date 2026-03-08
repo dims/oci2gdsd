@@ -1,4 +1,5 @@
 import gc
+import fcntl
 import hashlib
 import json
 import os
@@ -15,7 +16,10 @@ from daemon_client_common import (
     assert_http_ok,
     assert_no_runtime_artifact_access,
     create_gpu_allocation,
+    emit_phase_timing,
+    ensure_model_ready,
     hydrate_runtime_bundle,
+    monotonic_ms,
     parse_bool_env,
     resolve_device_uuid,
     unix_http_json,
@@ -259,6 +263,84 @@ def _digest_token(raw_digest: str) -> str:
     return _safe_token(digest, "unknown-digest")
 
 
+def _engine_cache_metadata_path(engine_dir: Path) -> Path:
+    return engine_dir / ".oci2gdsd_engine_cache.json"
+
+
+def _engine_cache_lock_path(engine_dir: Path) -> Path:
+    return engine_dir / ".oci2gdsd_engine_cache.lock"
+
+
+def _expected_engine_cache_metadata(
+    model_id: str,
+    manifest_digest: str,
+    content_key: str,
+    dtype: str,
+    max_input_len: int,
+    max_seq_len: int,
+    max_output_len: int,
+    startup_mode: str,
+):
+    return {
+        "schema_version": 1,
+        "model_id": str(model_id),
+        "manifest_digest": str(manifest_digest),
+        "content_key": str(content_key),
+        "dtype": str(dtype),
+        "max_input_len": int(max_input_len),
+        "max_seq_len": int(max_seq_len),
+        "max_output_len": int(max_output_len),
+        "startup_mode": str(startup_mode),
+    }
+
+
+def _load_engine_cache_metadata(engine_dir: Path):
+    path = _engine_cache_metadata_path(engine_dir)
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _engine_cache_metadata_matches(actual: dict, expected: dict) -> bool:
+    if not isinstance(actual, dict):
+        return False
+    for key, value in expected.items():
+        if actual.get(key) != value:
+            return False
+    return True
+
+
+def _write_engine_cache_metadata(engine_dir: Path, metadata: dict):
+    path = _engine_cache_metadata_path(engine_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(metadata, sort_keys=True), encoding="utf-8")
+    tmp.replace(path)
+
+
+class _EngineBuildLock:
+    def __init__(self, lock_path: Path):
+        self._lock_path = lock_path
+        self._fd = None
+
+    def __enter__(self):
+        self._lock_path.parent.mkdir(parents=True, exist_ok=True)
+        self._fd = self._lock_path.open("a+")
+        fcntl.flock(self._fd.fileno(), fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if self._fd is not None:
+            try:
+                fcntl.flock(self._fd.fileno(), fcntl.LOCK_UN)
+            finally:
+                self._fd.close()
+                self._fd = None
+
+
 def resolve_engine_dirs(
     model_root: Path,
     model_id: str,
@@ -319,88 +401,105 @@ def build_engine(
         max_output_len=max_output_len,
     )
     force_rebuild = parse_bool_env("TRT_FORCE_REBUILD", False) or force_rebuild_override
+    expected_cache_meta = _expected_engine_cache_metadata(
+        model_id=model_id,
+        manifest_digest=manifest_digest,
+        content_key=content_key,
+        dtype=dtype,
+        max_input_len=max_input_len,
+        max_seq_len=max_seq_len,
+        max_output_len=max_output_len,
+        startup_mode=startup_mode,
+    )
+    lock_path = _engine_cache_lock_path(engine_dir)
 
-    if force_rebuild:
-        shutil.rmtree(checkpoint_dir, ignore_errors=True)
-        shutil.rmtree(engine_dir, ignore_errors=True)
+    with _EngineBuildLock(lock_path):
+        if force_rebuild:
+            shutil.rmtree(checkpoint_dir, ignore_errors=True)
+            shutil.rmtree(engine_dir, ignore_errors=True)
 
-    if engine_ready(engine_dir):
+        if engine_ready(engine_dir):
+            existing_meta = _load_engine_cache_metadata(engine_dir)
+            if _engine_cache_metadata_matches(existing_meta, expected_cache_meta):
+                print(
+                    "TENSORRT_ENGINE_BUILD_OK "
+                    f"reused=true source={source_mode} startup_mode={startup_mode} "
+                    f"cache_key={cache_key} engine_dir={engine_dir}"
+                )
+                if startup_mode == "fast":
+                    print(
+                        "TENSORRT_ENGINE_FASTPATH_OK "
+                        f"cache_hit=true built=false cache_key={cache_key} engine_dir={engine_dir}"
+                    )
+                return engine_dir
+            shutil.rmtree(checkpoint_dir, ignore_errors=True)
+            shutil.rmtree(engine_dir, ignore_errors=True)
+
+        convert_script = find_qwen_convert_script()
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        engine_dir.mkdir(parents=True, exist_ok=True)
+
+        run_cmd(
+            [
+                "python3",
+                str(convert_script),
+                "--model_dir",
+                str(runtime_dir),
+                "--output_dir",
+                str(checkpoint_dir),
+                "--dtype",
+                dtype,
+                "--tp_size",
+                "1",
+                "--pp_size",
+                "1",
+                "--cp_size",
+                "1",
+            ],
+            timeout_seconds=7200,
+        )
+
+        run_cmd(
+            [
+                "trtllm-build",
+                "--checkpoint_dir",
+                str(checkpoint_dir),
+                "--output_dir",
+                str(engine_dir),
+                "--gemm_plugin",
+                "auto",
+                "--max_batch_size",
+                "1",
+                "--max_input_len",
+                str(max_input_len),
+                "--max_seq_len",
+                str(max_seq_len),
+                "--max_beam_width",
+                "1",
+                "--workers",
+                "1",
+            ],
+            timeout_seconds=7200,
+        )
+
+        if not engine_ready(engine_dir):
+            raise RuntimeError(f"TensorRT engine build did not produce expected outputs in {engine_dir}")
+        _write_engine_cache_metadata(engine_dir, expected_cache_meta)
         print(
             "TENSORRT_ENGINE_BUILD_OK "
-            f"reused=true source={source_mode} startup_mode={startup_mode} "
+            f"reused=false source={source_mode} startup_mode={startup_mode} "
             f"cache_key={cache_key} engine_dir={engine_dir}"
         )
         if startup_mode == "fast":
             print(
                 "TENSORRT_ENGINE_FASTPATH_OK "
-                f"cache_hit=true built=false cache_key={cache_key} engine_dir={engine_dir}"
+                f"cache_hit=false built=true cache_key={cache_key} engine_dir={engine_dir}"
             )
         return engine_dir
 
-    convert_script = find_qwen_convert_script()
-    checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    engine_dir.mkdir(parents=True, exist_ok=True)
-
-    run_cmd(
-        [
-            "python3",
-            str(convert_script),
-            "--model_dir",
-            str(runtime_dir),
-            "--output_dir",
-            str(checkpoint_dir),
-            "--dtype",
-            dtype,
-            "--tp_size",
-            "1",
-            "--pp_size",
-            "1",
-            "--cp_size",
-            "1",
-        ],
-        timeout_seconds=7200,
-    )
-
-    run_cmd(
-        [
-            "trtllm-build",
-            "--checkpoint_dir",
-            str(checkpoint_dir),
-            "--output_dir",
-            str(engine_dir),
-            "--gemm_plugin",
-            "auto",
-            "--max_batch_size",
-            "1",
-            "--max_input_len",
-            str(max_input_len),
-            "--max_seq_len",
-            str(max_seq_len),
-            "--max_beam_width",
-            "1",
-            "--workers",
-            "1",
-        ],
-        timeout_seconds=7200,
-    )
-
-    if not engine_ready(engine_dir):
-        raise RuntimeError(f"TensorRT engine build did not produce expected outputs in {engine_dir}")
-    print(
-        "TENSORRT_ENGINE_BUILD_OK "
-        f"reused=false source={source_mode} startup_mode={startup_mode} "
-        f"cache_key={cache_key} engine_dir={engine_dir}"
-    )
-    if startup_mode == "fast":
-        print(
-            "TENSORRT_ENGINE_FASTPATH_OK "
-            f"cache_hit=false built=true cache_key={cache_key} engine_dir={engine_dir}"
-        )
-    return engine_dir
 
 
-
-def run_tensorrt_infer(engine_dir: Path, runtime_dir: Path, require_direct: bool, device_index: int) -> str:
+def run_tensorrt_infer(engine_dir: Path, runtime_dir: Path, require_direct: bool, device_index: int):
     from tensorrt_llm.runtime import ModelRunnerCpp
 
     tokenizer = AutoTokenizer.from_pretrained(str(runtime_dir), local_files_only=True, trust_remote_code=True)
@@ -437,6 +536,7 @@ def run_tensorrt_infer(engine_dir: Path, runtime_dir: Path, require_direct: bool
         f"engine_dir={engine_dir}"
     )
 
+    infer_start_ms = monotonic_ms()
     outputs = runner.generate(
         batch_input_ids=[torch.tensor(input_ids, dtype=torch.int32)],
         max_new_tokens=max_output_len,
@@ -462,7 +562,7 @@ def run_tensorrt_infer(engine_dir: Path, runtime_dir: Path, require_direct: bool
 
     answer_sha = hashlib.sha256(answer.encode("utf-8")).hexdigest()
     print(f"TENSORRT_QWEN_INFER_OK answer_sha256={answer_sha}")
-    return answer_sha
+    return answer_sha, monotonic_ms() - infer_start_ms
 
 
 def validate_tensor_map_handles(tensors, parity_mode: str):
@@ -554,6 +654,7 @@ class HeartbeatKeeper:
 
 def main():
     runtime_root = Path(os.environ.get("RUNTIME_BUNDLE_ROOT", "/tmp/oci2gdsd-runtime-bundle"))
+    perf_mode = str(os.environ.get("PERF_MODE", "unspecified")).strip().lower() or "unspecified"
     assert_no_runtime_artifact_access()
     model_ref = os.environ["MODEL_REF"]
     model_id = os.environ["MODEL_ID"]
@@ -573,14 +674,28 @@ def main():
         raise RuntimeError("TensorRT daemon-client requires RUNTIME_PARITY_MODE=full; path-backed modes are removed")
     print(f"TENSORRT_STARTUP_MODE_OK mode={startup_mode}")
 
-    allocation = create_gpu_allocation(
+    ensure_phase_start = monotonic_ms()
+    ensure_payload = ensure_model_ready(
         socket_path=socket_path,
         model_ref=model_ref,
         model_id=model_id,
         lease_holder=lease_holder,
+    )
+    emit_phase_timing("ensure", monotonic_ms() - ensure_phase_start, mode=perf_mode)
+    model_id = str(ensure_payload.get("model_id", model_id)).strip() or model_id
+    model_digest = str(ensure_payload.get("manifest_digest", model_digest)).strip() or model_digest
+
+    load_phase_start = monotonic_ms()
+    allocation = create_gpu_allocation(
+        socket_path=socket_path,
+        model_ref="",
+        model_id=model_id,
+        model_digest=model_digest,
+        lease_holder=lease_holder,
         device_uuid=device_uuid,
         strict=strict_load,
     )
+    emit_phase_timing("load", monotonic_ms() - load_phase_start, mode=perf_mode)
     allocation_id = str(allocation.get("allocation_id", "")).strip()
     if not allocation_id:
         raise RuntimeError(f"gpu/allocate returned empty allocation_id: {allocation}")
@@ -590,7 +705,9 @@ def main():
     model_digest = str(allocation.get("manifest_digest", model_digest)).strip()
     if not model_digest:
         raise RuntimeError(f"gpu/allocate returned empty manifest digest: {allocation}")
+    bundle_phase_start = monotonic_ms()
     hydrate_runtime_bundle(socket_path, runtime_root, runtime_bundle_token)
+    emit_phase_timing("bundle", monotonic_ms() - bundle_phase_start, mode=perf_mode)
 
     metadata_path = runtime_root / "metadata" / "model.json"
     if not metadata_path.exists():
@@ -680,6 +797,7 @@ def main():
         heartbeat = HeartbeatKeeper(socket_path, hb_req, interval_seconds=90)
         heartbeat.start()
 
+        tensor_phase_start = monotonic_ms()
         tensor_req = {
             "allocation_id": allocation_id,
             "max_shards": 0,
@@ -693,7 +811,9 @@ def main():
             raise RuntimeError(f"gpu/tensor-map returned no tensors: {tensor_payload}")
         tensor_bytes = sum(int(t.get("byte_length", 0)) for t in tensors)
         print(f"TENSORRT_IPC_TENSOR_MAP_OK tensors={len(tensors)} tensor_bytes={tensor_bytes}")
+        emit_phase_timing("tensor-map", monotonic_ms() - tensor_phase_start, mode=perf_mode)
 
+        bind_phase_start = monotonic_ms()
         map_stats = validate_tensor_map_handles(tensors, parity_mode=parity_mode)
         print(
             "TENSORRT_IPC_BIND_OK "
@@ -734,6 +854,7 @@ def main():
             f"fallback_reads={fallback_reads} "
             f"parity_mode={parity_mode}"
         )
+        emit_phase_timing("bind", monotonic_ms() - bind_phase_start, mode=perf_mode)
 
         if heartbeat is not None:
             heartbeat.assert_healthy()
@@ -761,7 +882,13 @@ def main():
         )
         if heartbeat is not None:
             heartbeat.assert_healthy()
-        answer_sha = run_tensorrt_infer(engine_dir, runtime_dir, require_direct=require_direct, device_index=device_index)
+        answer_sha, first_token_ms = run_tensorrt_infer(
+            engine_dir,
+            runtime_dir,
+            require_direct=require_direct,
+            device_index=device_index,
+        )
+        emit_phase_timing("first-token", first_token_ms, mode=perf_mode)
         if heartbeat is not None:
             heartbeat.stop()
             heartbeat = None

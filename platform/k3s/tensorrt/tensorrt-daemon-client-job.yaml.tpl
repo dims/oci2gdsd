@@ -78,6 +78,8 @@ spec:
           value: "__OCI2GDS_STRICT__"
         - name: RUNTIME_PARITY_MODE
           value: "__RUNTIME_PARITY_MODE__"
+        - name: PERF_MODE
+          value: "__PERF_MODE__"
         - name: OCI2GDS_NATIVE_CPP_PATH
           value: "/scripts/oci2gds_torch_native.cpp"
         - name: DEVICE_UUID

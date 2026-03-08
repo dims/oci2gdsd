@@ -270,3 +270,39 @@ func TestRuntimeBundleTokenRevokedByAllocation(t *testing.T) {
 		t.Fatalf("expected tokenB resolution to fail after revoke")
 	}
 }
+
+func TestRuntimeBundleTokenCacheEvictionAndMetrics(t *testing.T) {
+	svc := newRuntimeBundleTestService(t)
+	svc.bundleTTL = 10 * time.Minute
+	svc.cfg.Runtime.MaxRuntimeBundleTokens = 2
+
+	manifest := "sha256:" + strings.Repeat("e", 64)
+	modelPath := writeReadyModelForRuntimeBundle(t, svc, "demo", manifest)
+	const allocationID = "alloc-runtime-bundle-token-evict"
+	writeAllocationForRuntimeBundle(t, svc, allocationID, "demo", manifest, modelPath)
+
+	tokenA, _ := svc.issueRuntimeBundleToken(allocationID, false)
+	tokenB, _ := svc.issueRuntimeBundleToken(allocationID, false)
+	tokenC, _ := svc.issueRuntimeBundleToken(allocationID, false)
+
+	if _, _, err := svc.resolveRuntimeBundleToken(tokenA); err == nil {
+		t.Fatalf("expected oldest token to be evicted after limit enforcement")
+	}
+	if _, _, err := svc.resolveRuntimeBundleToken(tokenB); err != nil {
+		t.Fatalf("expected tokenB to remain valid: %v", err)
+	}
+	if _, _, err := svc.resolveRuntimeBundleToken(tokenC); err != nil {
+		t.Fatalf("expected tokenC to remain valid: %v", err)
+	}
+
+	metrics := svc.CacheMetricsSnapshot()
+	if metrics.RuntimeBundleEvictions == 0 {
+		t.Fatalf("expected runtime bundle eviction metric > 0, got %+v", metrics)
+	}
+	if metrics.RuntimeBundleHits < 2 {
+		t.Fatalf("expected at least two runtime bundle hits, got %+v", metrics)
+	}
+	if metrics.RuntimeBundleMisses == 0 {
+		t.Fatalf("expected at least one runtime bundle miss, got %+v", metrics)
+	}
+}

@@ -20,6 +20,7 @@ runtime_render_job_template() {
     "REQUIRE_DIRECT_GDS=${REQUIRE_DIRECT_GDS}" \
     "OCI2GDS_STRICT=${OCI2GDS_STRICT}" \
     "RUNTIME_PARITY_MODE=${RUNTIME_PARITY_MODE}" \
+    "PERF_MODE=${PERF_MODE}" \
     "$@"
 }
 

@@ -70,6 +70,7 @@ func Serve(ctx context.Context, svc *app.Service, cfg ServerConfig) error {
 	mux.HandleFunc("/v2/gpu/unload", h.handleGPUUnload)
 	mux.HandleFunc("/v2/gpu/status", h.handleGPUStatus)
 	mux.HandleFunc("/v2/gpu/devices", h.handleGPUDevices)
+	mux.HandleFunc("/v2/gpu/cache-metrics", h.handleGPUCacheMetrics)
 	mux.HandleFunc("/v2/gpu/export", h.handleGPUExport)
 	mux.HandleFunc("/v2/gpu/tensor-map", h.handleGPUTensorMap)
 	mux.HandleFunc("/v2/gpu/attach", h.handleGPUAttach)
@@ -402,6 +403,17 @@ func (h *handler) handleGPUDevices(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":  "READY",
 		"devices": devices,
+	})
+}
+
+func (h *handler) handleGPUCacheMetrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":  "READY",
+		"metrics": h.svc.CacheMetricsSnapshot(),
 	})
 }
 

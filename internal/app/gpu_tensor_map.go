@@ -155,9 +155,11 @@ func (s *Service) getOrBuildTensorMapSnapshot(key, modelID, manifestDigest, mode
 		cp := *snap
 		cp.Tensors = cloneTensorDescriptors(snap.Tensors)
 		s.tensorMapMu.RUnlock()
+		s.addTensorMapHit()
 		return &cp, nil
 	}
 	s.tensorMapMu.RUnlock()
+	s.addTensorMapMiss()
 
 	buildStart := time.Now()
 	shards, err := gpuWeightShards(md.Profile)
@@ -195,14 +197,56 @@ func (s *Service) getOrBuildTensorMapSnapshot(key, modelID, manifestDigest, mode
 		cp := *existing
 		cp.Tensors = cloneTensorDescriptors(existing.Tensors)
 		s.tensorMapMu.Unlock()
+		s.addTensorMapHit()
 		return &cp, nil
 	}
+	evicted := s.evictTensorMapCacheLocked(1)
 	s.tensorMapCache[key] = snap
 	s.tensorMapMu.Unlock()
+	s.addTensorMapEvictions(evicted)
 
 	cp := *snap
 	cp.Tensors = cloneTensorDescriptors(snap.Tensors)
 	return &cp, nil
+}
+
+func (s *Service) evictTensorMapCacheLocked(extraEntries int) int {
+	limit := s.tensorMapCacheLimit()
+	if limit <= 0 {
+		return 0
+	}
+	current := len(s.tensorMapCache)
+	if current+extraEntries <= limit {
+		return 0
+	}
+	type candidate struct {
+		key     string
+		builtAt time.Time
+	}
+	candidates := make([]candidate, 0, len(s.tensorMapCache))
+	for key, snap := range s.tensorMapCache {
+		if snap == nil {
+			candidates = append(candidates, candidate{key: key})
+			continue
+		}
+		candidates = append(candidates, candidate{
+			key:     key,
+			builtAt: snap.BuiltAt,
+		})
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].builtAt.Equal(candidates[j].builtAt) {
+			return candidates[i].key < candidates[j].key
+		}
+		return candidates[i].builtAt.Before(candidates[j].builtAt)
+	})
+	toEvict := current + extraEntries - limit
+	evicted := 0
+	for i := 0; i < len(candidates) && evicted < toEvict; i++ {
+		delete(s.tensorMapCache, candidates[i].key)
+		evicted++
+	}
+	return evicted
 }
 
 func parseSafeTensorsShard(shardPath string, shard ModelShard) ([]GPUTensorDescriptor, error) {

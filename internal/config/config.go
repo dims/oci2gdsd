@@ -29,6 +29,7 @@ type Config struct {
 	Integrity     IntegrityConfig     `yaml:"integrity" json:"integrity"`
 	Publish       PublishConfig       `yaml:"publish" json:"publish"`
 	Retention     RetentionConfig     `yaml:"retention" json:"retention"`
+	Runtime       RuntimeConfig       `yaml:"runtime" json:"runtime"`
 	Observability ObservabilityConfig `yaml:"observability" json:"observability"`
 	Security      SecurityConfig      `yaml:"security" json:"security"`
 }
@@ -98,6 +99,13 @@ type RetentionConfig struct {
 	MaxModels             int    `yaml:"max_models" json:"max_models"`
 	TTLHours              int    `yaml:"ttl_hours" json:"ttl_hours"`
 	EmergencyLowSpaceMode bool   `yaml:"emergency_low_space_mode" json:"emergency_low_space_mode"`
+}
+
+type RuntimeConfig struct {
+	MaxConcurrentPersistentLoadsPerDevice int `yaml:"max_concurrent_persistent_loads_per_device" json:"max_concurrent_persistent_loads_per_device"`
+	MaxConcurrentAttachmentsPerDevice     int `yaml:"max_concurrent_attachments_per_device" json:"max_concurrent_attachments_per_device"`
+	MaxRuntimeBundleTokens                int `yaml:"max_runtime_bundle_tokens" json:"max_runtime_bundle_tokens"`
+	MaxTensorMapCacheEntries              int `yaml:"max_tensor_map_cache_entries" json:"max_tensor_map_cache_entries"`
 }
 
 type ObservabilityConfig struct {
@@ -172,6 +180,12 @@ func DefaultConfig() Config {
 			MaxModels:             16,
 			TTLHours:              168,
 			EmergencyLowSpaceMode: true,
+		},
+		Runtime: RuntimeConfig{
+			MaxConcurrentPersistentLoadsPerDevice: 1,
+			MaxConcurrentAttachmentsPerDevice:     8,
+			MaxRuntimeBundleTokens:                1024,
+			MaxTensorMapCacheEntries:              128,
 		},
 		Observability: ObservabilityConfig{
 			MetricsEnabled: true,
@@ -287,6 +301,18 @@ func (c Config) Validate() error {
 	}
 	if c.Retention.MinFreeBytes < 0 {
 		return apperr.NewAppError(apperr.ExitValidation, apperr.ReasonValidationFailed, "retention.min_free_bytes must be >= 0", nil)
+	}
+	if c.Runtime.MaxConcurrentPersistentLoadsPerDevice <= 0 {
+		return apperr.NewAppError(apperr.ExitValidation, apperr.ReasonValidationFailed, "runtime.max_concurrent_persistent_loads_per_device must be > 0", nil)
+	}
+	if c.Runtime.MaxConcurrentAttachmentsPerDevice <= 0 {
+		return apperr.NewAppError(apperr.ExitValidation, apperr.ReasonValidationFailed, "runtime.max_concurrent_attachments_per_device must be > 0", nil)
+	}
+	if c.Runtime.MaxRuntimeBundleTokens <= 0 {
+		return apperr.NewAppError(apperr.ExitValidation, apperr.ReasonValidationFailed, "runtime.max_runtime_bundle_tokens must be > 0", nil)
+	}
+	if c.Runtime.MaxTensorMapCacheEntries <= 0 {
+		return apperr.NewAppError(apperr.ExitValidation, apperr.ReasonValidationFailed, "runtime.max_tensor_map_cache_entries must be > 0", nil)
 	}
 	if c.Integrity.StrictSignature && c.Integrity.AllowUnsignedInDev {
 		return apperr.NewAppError(apperr.ExitValidation, apperr.ReasonValidationFailed, "integrity.strict_signature and allow_unsigned_in_dev cannot both be true", nil)

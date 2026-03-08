@@ -877,6 +877,128 @@ func TestGPUTensorMapCacheHitAndMiss(t *testing.T) {
 	}
 }
 
+func TestGPUTensorMapCacheEvictionMetrics(t *testing.T) {
+	svc := newStateOnlyService(t)
+	svc.cfg.Runtime.MaxTensorMapCacheEntries = 1
+	svc.gpuLoader = newFakePersistentLoader()
+
+	putReady := func(modelID, manifest string) {
+		modelPath, shardSize := writeReadySafeTensorsModelForGPUTest(t, svc.cfg.ModelRoot, modelID, manifest)
+		now := time.Now().UTC()
+		rec := &storepkg.ModelRecord{
+			Key:            modelKey(modelID, manifest),
+			ModelID:        modelID,
+			ManifestDigest: manifest,
+			Status:         StateReady,
+			Path:           modelPath,
+			Bytes:          shardSize,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+			LastAccessedAt: now,
+		}
+		if err := svc.store.Put(rec); err != nil {
+			t.Fatalf("put model record: %v", err)
+		}
+	}
+
+	manifestA := "sha256:" + strings.Repeat("a", 64)
+	manifestB := "sha256:" + strings.Repeat("b", 64)
+	putReady("demo-a", manifestA)
+	putReady("demo-b", manifestB)
+
+	allocA, err := svc.GPUAllocate(context.Background(), GPUAllocateRequest{
+		ModelID:     "demo-a",
+		Digest:      manifestA,
+		LeaseHolder: "holder-a",
+		DeviceUUID:  fakeDeviceUUID0,
+		Strict:      true,
+	})
+	if err != nil {
+		t.Fatalf("gpu allocate A: %v", err)
+	}
+	defer func() {
+		_, _ = svc.GPUUnload(context.Background(), GPUUnloadRequest{AllocationID: allocA.AllocationID})
+	}()
+	allocB, err := svc.GPUAllocate(context.Background(), GPUAllocateRequest{
+		ModelID:     "demo-b",
+		Digest:      manifestB,
+		LeaseHolder: "holder-b",
+		DeviceUUID:  fakeDeviceUUID0,
+		Strict:      true,
+	})
+	if err != nil {
+		t.Fatalf("gpu allocate B: %v", err)
+	}
+	defer func() {
+		_, _ = svc.GPUUnload(context.Background(), GPUUnloadRequest{AllocationID: allocB.AllocationID})
+	}()
+
+	if _, err := svc.GPUTensorMap(context.Background(), GPUTensorMapRequest{
+		AllocationID:   allocA.AllocationID,
+		IncludeHandles: false,
+	}); err != nil {
+		t.Fatalf("tensor map A: %v", err)
+	}
+	if _, err := svc.GPUTensorMap(context.Background(), GPUTensorMapRequest{
+		AllocationID:   allocB.AllocationID,
+		IncludeHandles: false,
+	}); err != nil {
+		t.Fatalf("tensor map B: %v", err)
+	}
+
+	svc.tensorMapMu.RLock()
+	cacheEntries := len(svc.tensorMapCache)
+	svc.tensorMapMu.RUnlock()
+	if cacheEntries != 1 {
+		t.Fatalf("expected tensor-map cache limit=1 to evict older entry, got %d", cacheEntries)
+	}
+	metrics := svc.CacheMetricsSnapshot()
+	if metrics.TensorMapMisses < 2 {
+		t.Fatalf("expected tensor-map cache misses >= 2, got %+v", metrics)
+	}
+	if metrics.TensorMapEvictions == 0 {
+		t.Fatalf("expected tensor-map cache eviction metric > 0, got %+v", metrics)
+	}
+}
+
+func TestGPUDeviceConcurrencySlotLimits(t *testing.T) {
+	svc := newStateOnlyService(t)
+	svc.cfg.Runtime.MaxConcurrentPersistentLoadsPerDevice = 1
+	svc.cfg.Runtime.MaxConcurrentAttachmentsPerDevice = 1
+
+	releaseLoad, err := svc.acquireDevicePersistentLoadSlot(context.Background(), fakeDeviceUUID0)
+	if err != nil {
+		t.Fatalf("acquire first load slot: %v", err)
+	}
+	ctxLoad, cancelLoad := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancelLoad()
+	if _, err := svc.acquireDevicePersistentLoadSlot(ctxLoad, fakeDeviceUUID0); err == nil {
+		t.Fatalf("expected second load slot acquisition to time out")
+	}
+	releaseLoad()
+	if releaseLoad2, err := svc.acquireDevicePersistentLoadSlot(context.Background(), fakeDeviceUUID0); err != nil {
+		t.Fatalf("expected load slot acquisition to recover after release: %v", err)
+	} else {
+		releaseLoad2()
+	}
+
+	releaseAttach, err := svc.acquireDeviceAttachSlot(context.Background(), fakeDeviceUUID0)
+	if err != nil {
+		t.Fatalf("acquire first attach slot: %v", err)
+	}
+	ctxAttach, cancelAttach := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancelAttach()
+	if _, err := svc.acquireDeviceAttachSlot(ctxAttach, fakeDeviceUUID0); err == nil {
+		t.Fatalf("expected second attach slot acquisition to time out")
+	}
+	releaseAttach()
+	if releaseAttach2, err := svc.acquireDeviceAttachSlot(context.Background(), fakeDeviceUUID0); err != nil {
+		t.Fatalf("expected attach slot acquisition to recover after release: %v", err)
+	} else {
+		releaseAttach2()
+	}
+}
+
 func TestGPUAllocateFailsOnRegistryTimeoutAndLeavesNoAllocations(t *testing.T) {
 	manifest := "sha256:" + strings.Repeat("6", 64)
 	ref := "registry.example.com/models/demo@" + manifest

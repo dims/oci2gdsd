@@ -82,6 +82,8 @@ spec:
           value: "__OCI2GDS_STRICT__"
         - name: RUNTIME_PARITY_MODE
           value: "__RUNTIME_PARITY_MODE__"
+        - name: PERF_MODE
+          value: "__PERF_MODE__"
         - name: CUFILE_ENV_PATH_JSON
           value: "/etc/cufile.json"
         - name: DEVICE_UUID

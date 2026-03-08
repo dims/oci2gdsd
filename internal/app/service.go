@@ -18,6 +18,7 @@ import (
 	configpkg "github.com/dims/oci2gdsd/internal/config"
 	storepkg "github.com/dims/oci2gdsd/internal/store"
 	digest "github.com/opencontainers/go-digest"
+	"golang.org/x/sync/singleflight"
 	"gopkg.in/yaml.v3"
 )
 
@@ -37,11 +38,26 @@ type Service struct {
 	bundleTTL time.Duration
 	bundleMap map[string]*runtimeBundleAccessToken
 	// allocation_id -> set(token)
-	bundleByAllocation map[string]map[string]struct{}
-	tensorMapMu        sync.RWMutex
-	tensorMapCache     map[string]*tensorMapSnapshot
+	bundleByAllocation  map[string]map[string]struct{}
+	tensorMapMu         sync.RWMutex
+	tensorMapCache      map[string]*tensorMapSnapshot
+	deviceLimitMu       sync.Mutex
+	loadSlotsByDevice   map[string]chan struct{}
+	attachSlotsByDevice map[string]chan struct{}
+	ensureFetchGroup    singleflight.Group
+	cacheMetricsMu      sync.Mutex
+	cacheMetrics        CacheMetrics
 	// Optional allowlist regex for tenant-safe model identifiers.
 	modelIDAllowlist *regexp.Regexp
+}
+
+type CacheMetrics struct {
+	RuntimeBundleHits      uint64 `json:"runtime_bundle_hits"`
+	RuntimeBundleMisses    uint64 `json:"runtime_bundle_misses"`
+	RuntimeBundleEvictions uint64 `json:"runtime_bundle_evictions"`
+	TensorMapHits          uint64 `json:"tensor_map_hits"`
+	TensorMapMisses        uint64 `json:"tensor_map_misses"`
+	TensorMapEvictions     uint64 `json:"tensor_map_evictions"`
 }
 
 type gpuClientAttachment struct {
@@ -187,18 +203,20 @@ func NewService(cfg configpkg.Config, fetcher ModelFetcher, gpuLoader GPULoader)
 		modelIDAllowlist = rx
 	}
 	s := &Service{
-		cfg:                cfg,
-		store:              store,
-		locks:              NewLockManager(cfg.LocksRoot),
-		fetcher:            fetcher,
-		gpuLoader:          gpuLoader,
-		attachTTL:          5 * time.Minute,
-		bundleTTL:          5 * time.Minute,
-		attachMap:          map[string]*gpuClientAttachment{},
-		bundleMap:          map[string]*runtimeBundleAccessToken{},
-		bundleByAllocation: map[string]map[string]struct{}{},
-		tensorMapCache:     map[string]*tensorMapSnapshot{},
-		modelIDAllowlist:   modelIDAllowlist,
+		cfg:                 cfg,
+		store:               store,
+		locks:               NewLockManager(cfg.LocksRoot),
+		fetcher:             fetcher,
+		gpuLoader:           gpuLoader,
+		attachTTL:           5 * time.Minute,
+		bundleTTL:           5 * time.Minute,
+		attachMap:           map[string]*gpuClientAttachment{},
+		bundleMap:           map[string]*runtimeBundleAccessToken{},
+		bundleByAllocation:  map[string]map[string]struct{}{},
+		tensorMapCache:      map[string]*tensorMapSnapshot{},
+		loadSlotsByDevice:   map[string]chan struct{}{},
+		attachSlotsByDevice: map[string]chan struct{}{},
+		modelIDAllowlist:    modelIDAllowlist,
 	}
 	if err := s.Recover(); err != nil {
 		return nil, err
@@ -232,6 +250,10 @@ func (s *Service) Recover() error {
 	s.tensorMapMu.Lock()
 	s.tensorMapCache = map[string]*tensorMapSnapshot{}
 	s.tensorMapMu.Unlock()
+	s.deviceLimitMu.Lock()
+	s.loadSlotsByDevice = map[string]chan struct{}{}
+	s.attachSlotsByDevice = map[string]chan struct{}{}
+	s.deviceLimitMu.Unlock()
 
 	// Remove old stale temp paths from previous crashes. Keep young paths to
 	// avoid interfering with currently running ensure operations.
@@ -455,7 +477,7 @@ func (s *Service) Ensure(ctx context.Context, req EnsureRequest) (EnsureResult, 
 		}, appErr
 	}
 
-	fetched, err := s.fetcher.Fetch(ctx, req.Ref)
+	fetched, err := s.fetchModelByRefDigest(ctx, req.Ref, manifestDigest)
 	if err != nil {
 		appErr := AsAppError(err)
 		return fail(appErr.Reason, "failed to fetch from registry", appErr)

@@ -696,6 +696,12 @@ func (s *Service) gpuPersistentLoad(ctx context.Context, start time.Time, req GP
 	if target == nil || target.Metadata == nil {
 		return GPULoadResult{}, NewAppError(ExitStateCorrupt, ReasonStateDBCorrupt, "gpu persistent target is incomplete", nil)
 	}
+	releaseSlot, err := s.acquireDevicePersistentLoadSlot(ctx, target.DeviceUUID)
+	if err != nil {
+		return GPULoadResult{}, err
+	}
+	defer releaseSlot()
+
 	leaseHolder := strings.TrimSpace(target.LeaseHolder)
 	if leaseHolder == "" {
 		return GPULoadResult{}, NewAppError(ExitStateCorrupt, ReasonStateDBCorrupt, "allocation lease holder is required", nil)
@@ -1055,6 +1061,11 @@ func (s *Service) GPUAttach(ctx context.Context, req GPUAttachRequest) (GPUAttac
 		req.MaxShards = 0
 	}
 	ttl := s.normalizeAttachTTL(req.TTLSeconds)
+	releaseSlot, err := s.acquireDeviceAttachSlot(ctx, target.DeviceUUID)
+	if err != nil {
+		return GPUAttachResult{}, err
+	}
+	defer releaseSlot()
 
 	if err := s.pruneExpiredAttachments(context.Background()); err != nil {
 		return GPUAttachResult{}, err

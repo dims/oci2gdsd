@@ -296,6 +296,44 @@ func TestEnsureConcurrentWaitersReuseSingleDownload(t *testing.T) {
 	}
 }
 
+func TestEnsureSingleflightFetchDedupesByRefDigest(t *testing.T) {
+	manifest := "sha256:" + strings.Repeat("5", 64)
+	ref := "registry.example.com/models/demo@" + manifest
+	blobData := bytes.Repeat([]byte{0x53}, 2048)
+	fetcher := &fakeEnsureFetcher{
+		fetchFn: func(_ string) (*FetchedModel, error) {
+			time.Sleep(75 * time.Millisecond)
+			return buildFetchedModelForEnsure(ref, "demo", manifest, []ensureBlob{
+				{name: "weights-00001.safetensors", data: blobData, ordinal: 1, kind: "weight"},
+			}), nil
+		},
+	}
+	svc := newEnsureTestService(t, fetcher)
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	run := func() {
+		defer wg.Done()
+		_, err := svc.fetchModelByRefDigest(context.Background(), ref, manifest)
+		if err != nil {
+			errs <- err
+		}
+	}
+
+	wg.Add(2)
+	go run()
+	go run()
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		t.Fatalf("unexpected fetch error: %v", err)
+	}
+	if fetcher.CallCount() != 1 {
+		t.Fatalf("expected one fetch call from ref+digest singleflight dedupe, got %d", fetcher.CallCount())
+	}
+}
+
 func TestProfileFromFileParsesYAML(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "model-config.yaml")

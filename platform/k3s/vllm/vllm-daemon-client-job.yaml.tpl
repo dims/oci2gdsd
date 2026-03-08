@@ -76,6 +76,8 @@ spec:
           value: "/etc/cufile.json"
         - name: RUNTIME_PARITY_MODE
           value: "__RUNTIME_PARITY_MODE__"
+        - name: PERF_MODE
+          value: "__PERF_MODE__"
         - name: REQUIRE_FULL_IPC_BIND
           value: "__REQUIRE_FULL_IPC_BIND__"
         - name: OCI2GDS_TORCH_ENABLE_NATIVE

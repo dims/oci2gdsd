@@ -13,8 +13,11 @@ from daemon_client_common import (
     assert_http_ok,
     assert_no_runtime_artifact_access,
     create_gpu_allocation,
+    emit_phase_timing,
+    ensure_model_ready,
     dtype_size_bytes,
     hydrate_runtime_bundle,
+    monotonic_ms,
     parse_bool_env,
     resolve_device_uuid,
     torch_dtype_from_safetensors,
@@ -207,6 +210,7 @@ def bind_parameters_from_ipc(model, native_module, tensor_index, device_index: i
 
 def main():
     runtime_root = Path(os.environ.get("RUNTIME_BUNDLE_ROOT", "/tmp/oci2gdsd-runtime-bundle"))
+    perf_mode = str(os.environ.get("PERF_MODE", "unspecified")).strip().lower() or "unspecified"
     assert_no_runtime_artifact_access()
     model_ref = os.environ["MODEL_REF"]
     model_id = os.environ["MODEL_ID"]
@@ -221,14 +225,28 @@ def main():
     if parity_mode != "full":
         raise RuntimeError("PyTorch daemon-client requires RUNTIME_PARITY_MODE=full; path-backed modes are removed")
 
-    allocation = create_gpu_allocation(
+    ensure_phase_start = monotonic_ms()
+    ensure_payload = ensure_model_ready(
         socket_path=socket_path,
         model_ref=model_ref,
         model_id=model_id,
         lease_holder=lease_holder,
+    )
+    emit_phase_timing("ensure", monotonic_ms() - ensure_phase_start, mode=perf_mode)
+    model_id = str(ensure_payload.get("model_id", model_id)).strip() or model_id
+    model_digest = str(ensure_payload.get("manifest_digest", model_digest)).strip() or model_digest
+
+    load_phase_start = monotonic_ms()
+    allocation = create_gpu_allocation(
+        socket_path=socket_path,
+        model_ref="",
+        model_id=model_id,
+        model_digest=model_digest,
+        lease_holder=lease_holder,
         device_uuid=device_uuid,
         strict=strict_load,
     )
+    emit_phase_timing("load", monotonic_ms() - load_phase_start, mode=perf_mode)
     allocation_id = str(allocation.get("allocation_id", "")).strip()
     if not allocation_id:
         raise RuntimeError(f"gpu/allocate returned empty allocation_id: {allocation}")
@@ -238,7 +256,10 @@ def main():
     model_digest = str(allocation.get("manifest_digest", model_digest)).strip()
     if not model_digest:
         raise RuntimeError(f"gpu/allocate returned empty manifest digest: {allocation}")
+
+    bundle_phase_start = monotonic_ms()
     hydrate_runtime_bundle(socket_path, runtime_root, runtime_bundle_token)
+    emit_phase_timing("bundle", monotonic_ms() - bundle_phase_start, mode=perf_mode)
 
     metadata_path = runtime_root / "metadata" / "model.json"
     if not metadata_path.exists():
@@ -299,6 +320,7 @@ def main():
             raise RuntimeError(f"gpu/status returned no files after load: {status_payload}")
         print(f"DAEMON_GPU_STATUS_OK files={len(status_files)}")
 
+        tensor_phase_start = monotonic_ms()
         tensor_req = {
             "allocation_id": allocation_id,
             "max_shards": 0,
@@ -312,7 +334,9 @@ def main():
             raise RuntimeError(f"gpu/tensor-map returned no tensors: {tensor_payload}")
         tensor_count = len(tensors)
         print(f"DAEMON_GPU_TENSOR_MAP_OK tensors={len(tensors)}")
+        emit_phase_timing("tensor-map", monotonic_ms() - tensor_phase_start, mode=perf_mode)
 
+        bind_phase_start = monotonic_ms()
         tensor_index, shard_count = build_tensor_binding_index(tensors)
         runtime_dir = build_runtime_dir(runtime_root)
         dtypes = {spec["dtype"] for spec in tensor_index.values()}
@@ -343,6 +367,7 @@ def main():
             tensor_index=tensor_index,
             device_index=device_index,
         )
+        emit_phase_timing("bind", monotonic_ms() - bind_phase_start, mode=perf_mode)
         first_param_name = next(iter(imported_tensors.keys()))
         first_param_ptr = int(imported_tensors[first_param_name].data_ptr())
         print(
@@ -367,6 +392,7 @@ def main():
         )
         inputs = tokenizer(prompt, return_tensors="pt")
         inputs = {k: v.to(target_device) for k, v in inputs.items()}
+        first_token_phase_start = monotonic_ms()
         with torch.no_grad():
             generated = model.generate(
                 **inputs,
@@ -374,6 +400,7 @@ def main():
                 do_sample=False,
                 pad_token_id=tokenizer.eos_token_id,
             )
+        emit_phase_timing("first-token", monotonic_ms() - first_token_phase_start, mode=perf_mode)
         answer = tokenizer.decode(generated[0], skip_special_tokens=True)
         if not answer.strip():
             raise RuntimeError("model inference returned empty answer")

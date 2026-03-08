@@ -410,6 +410,28 @@ func TestRuntimeBundleTokenStreamsTarball(t *testing.T) {
 	}
 }
 
+func TestGPUCacheMetricsEndpoint(t *testing.T) {
+	svc, _, _ := newDaemonIntegrationService(t)
+	h := &handler{svc: svc}
+	req := httptest.NewRequest(http.MethodGet, "/v2/gpu/cache-metrics", nil)
+	rr := httptest.NewRecorder()
+
+	h.handleGPUCacheMetrics(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var payload struct {
+		Status  string              `json:"status"`
+		Metrics apppkg.CacheMetrics `json:"metrics"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Status != "READY" {
+		t.Fatalf("expected READY status, got %+v", payload)
+	}
+}
+
 func mapKeys(in map[string][]byte) []string {
 	out := make([]string, 0, len(in))
 	for k := range in {

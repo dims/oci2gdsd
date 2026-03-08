@@ -6,6 +6,7 @@ import shutil
 import socket
 import subprocess
 import tarfile
+import time
 import urllib.parse
 from pathlib import Path
 
@@ -20,6 +21,29 @@ def parse_bool_env(name: str, default: bool) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def monotonic_ms() -> int:
+    return int(time.monotonic() * 1000)
+
+
+def emit_phase_timing(phase: str, duration_ms: int, **extra_fields):
+    phase_name = str(phase).strip().lower()
+    if not phase_name:
+        raise RuntimeError("phase name must not be empty")
+    parts = [
+        "DAEMON_PHASE_TIMING",
+        f"phase={phase_name}",
+        f"duration_ms={int(duration_ms)}",
+    ]
+    for key, value in extra_fields.items():
+        if value is None:
+            continue
+        key_text = str(key).strip()
+        if not key_text:
+            continue
+        parts.append(f"{key_text}={value}")
+    print(" ".join(parts))
 
 
 def assert_no_runtime_artifact_access():
@@ -227,27 +251,34 @@ def ensure_model_ready(socket_path: str, model_ref: str, model_id: str, lease_ho
     if str(payload.get("status", "")).upper() != "READY":
         raise RuntimeError(f"model/ensure did not return READY: {payload}")
     print(f"DAEMON_MODEL_ENSURE_READY model_id={payload.get('model_id', model_id)} digest={payload.get('manifest_digest', '')}")
+    return payload
 
 
 def create_gpu_allocation(
     socket_path: str,
     model_ref: str,
     model_id: str,
+    model_digest: str,
     lease_holder: str,
     device_uuid: str,
     strict: bool,
     runtime_bundle_include_weights: bool = False,
 ):
-    req = {
-        "ref": model_ref,
-        "model_id": model_id,
-        "lease_holder": lease_holder,
-        "device_uuid": device_uuid,
-        "chunk_bytes": 4 * 1024 * 1024,
-        "max_shards": 0,
-        "strict": bool(strict),
-        "runtime_bundle_include_weights": bool(runtime_bundle_include_weights),
-    }
+    ref = str(model_ref or "").strip()
+    digest = str(model_digest or "").strip()
+    req = {}
+    if ref:
+        req["ref"] = ref
+    if str(model_id).strip():
+        req["model_id"] = model_id
+    if digest:
+        req["digest"] = digest
+    req["lease_holder"] = lease_holder
+    req["device_uuid"] = device_uuid
+    req["chunk_bytes"] = 4 * 1024 * 1024
+    req["max_shards"] = 0
+    req["strict"] = bool(strict)
+    req["runtime_bundle_include_weights"] = bool(runtime_bundle_include_weights)
     code, payload = unix_http_json(socket_path, "POST", "/v2/gpu/allocate", req, timeout_seconds=1800)
     assert_http_ok(code, payload, "gpu/allocate")
     if str(payload.get("status", "")).upper() != "READY":
@@ -257,7 +288,6 @@ def create_gpu_allocation(
         raise RuntimeError(f"gpu/allocate returned empty allocation_id: {payload}")
     model_id_out = str(payload.get("model_id", model_id)).strip()
     digest_out = str(payload.get("manifest_digest", "")).strip()
-    print(f"DAEMON_MODEL_ENSURE_READY model_id={model_id_out} digest={digest_out}")
     print(
         "DAEMON_GPU_ALLOCATE_READY "
         f"allocation_id={allocation_id} model_id={model_id_out} digest={digest_out} "
