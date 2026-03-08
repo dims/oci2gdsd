@@ -389,6 +389,7 @@ POST /v2/model/ensure
 POST /v2/model/verify
 GET  /v2/runtime-bundles/{token}
 GET  /v2/gpu/devices
+GET  /v2/gpu/cache-metrics
 POST /v2/gpu/allocate
 POST /v2/gpu/load
 POST /v2/gpu/export
@@ -411,6 +412,11 @@ return `VALIDATION_FAILED` for malformed payloads.
 `POST /v2/gpu/tensor-map` returns a safetensors-derived tensor index for each shard
 with byte ranges and optional exported CUDA IPC handle metadata. This endpoint is used by
 the k3s daemon-client runtime parity checks.
+
+`GET /v2/gpu/cache-metrics` returns in-memory runtime cache counters for:
+
+- runtime-bundle token cache (`hits`, `misses`, `evictions`)
+- tensor-map snapshot cache (`hits`, `misses`, `evictions`)
 
 ---
 

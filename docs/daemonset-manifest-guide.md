@@ -76,6 +76,8 @@ For runtime-specific overrides and full operational examples, use:
 - `WORKLOAD_RUNTIME` (`pytorch`, `tensorrt`, or `vllm`; default `pytorch`)
 - `RUNTIME_PARITY_MODE` (`full`; required)
 - `REQUIRE_FULL_IPC_BIND` (default `true`)
+- `K3S_PERF_MODES` (default `cold,warm`)
+- `PERF_MAX_REGRESSION_PCT` (default `35`; p50/p95 warm-vs-cold gate)
 - `TENSORRT_STARTUP_MODE` (`parity` or `fast`; TensorRT only, default `parity`)
 - `TENSORRT_ENGINE_CACHE_HOST_PATH` (TensorRT host cache path, default `/mnt/nvme/oci2gdsd-tensorrt-cache`)
 
@@ -97,7 +99,6 @@ The daemon-client workload log (`platform/k3s/work/artifacts/results/pytorch-dae
 - `DAEMON_NO_RUNTIME_ARTIFACT_ACCESS_OK`
 - `DAEMON_RUNTIME_BUNDLE_READY`
 - `DAEMON_GPU_LOAD_READY`
-- `DAEMON_NO_RUNTIME_ARTIFACT_ACCESS_OK`
 - `DAEMON_GPU_STATUS_OK`
 - `DAEMON_GPU_ATTACH_OK`
 - `DAEMON_GPU_HEARTBEAT_OK`
@@ -105,6 +106,7 @@ The daemon-client workload log (`platform/k3s/work/artifacts/results/pytorch-dae
 - `DAEMON_QWEN_IPC_BIND_OK`
 - `DAEMON_GPU_DETACH_OK`
 - `DAEMON_GPU_UNLOAD_OK`
+- `DAEMON_PHASE_TIMING phase=... duration_ms=...`
 - `PYTORCH_FULL_PARITY_OK`
 - `PYTORCH_DAEMON_CLIENT_SUCCESS`
 
@@ -143,13 +145,29 @@ When `TENSORRT_STARTUP_MODE=fast`, logs additionally emit:
 
 Per-run perf summary artifact:
 
-- `platform/k3s/work/artifacts/results/workload-perf-summary.json`
-  - includes runtime, parity mode, startup mode, workload duration, and TensorRT fastpath cold/warm classification.
+- `platform/k3s/work/artifacts/results/perf-<runtime>-cold.json`
+- `platform/k3s/work/artifacts/results/perf-<runtime>-warm.json`
+- `platform/k3s/work/artifacts/results/perf-summary.json`
+- compatibility alias: `platform/k3s/work/artifacts/results/workload-perf-summary.json`
+
+Phase timing emission (from daemon-client logs) is required for:
+
+- `ensure`
+- `bundle`
+- `load`
+- `tensor-map`
+- `bind`
+- `first-token`
 
 Two-leg perf model tracked by the harness:
 
 1. artifact leg (`gpu/allocate` + runtime-bundle transfer)
 2. runtime leg (IPC parity bind/import + inference startup)
+
+Perf harness mode/gates:
+
+- `K3S_PERF_MODES` defaults to `cold,warm`
+- `PERF_MAX_REGRESSION_PCT` controls p50/p95 warm-vs-cold regression gate (default `35`)
 
 vLLM daemon-client log (`platform/k3s/work/artifacts/results/vllm-daemon-client.log`) must include:
 

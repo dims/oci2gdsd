@@ -149,7 +149,10 @@ Harness outputs under `platform/k3s/work/artifacts/results`:
 - `release-gc.log`
 - `environment-report.txt`
 - `runtime-contract-report.json`
-- `workload-perf-summary.json`
+- `perf-<runtime>-cold.json`
+- `perf-<runtime>-warm.json`
+- `perf-summary.json`
+- `workload-perf-summary.json` (compatibility alias)
 
 ## Perf Policy
 
@@ -161,7 +164,13 @@ Harness reports a two-leg performance model:
 TensorRT split policy:
 
 - `TENSORRT_STARTUP_MODE=parity` must not emit fastpath markers.
-- `TENSORRT_STARTUP_MODE=fast` must emit `TENSORRT_ENGINE_FASTPATH_OK` and classify run as cold (`cache_hit=false`) or warm (`cache_hit=true`) in `workload-perf-summary.json`.
+- `TENSORRT_STARTUP_MODE=fast` must emit `TENSORRT_ENGINE_FASTPATH_OK` and classify run as cold (`cache_hit=false`) or warm (`cache_hit=true`).
+
+Harness perf behavior:
+
+- `K3S_PERF_MODES` defaults to `cold,warm`.
+- p50/p95 warm-vs-cold regression gate uses `PERF_MAX_REGRESSION_PCT` (default `35`).
+- required per-run phase timings: `ensure`, `bundle`, `load`, `tensor-map`, `bind`, `first-token`.
 
 ## Cleanup
 

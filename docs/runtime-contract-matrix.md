@@ -20,7 +20,9 @@ Report artifact:
 
 Related harness outputs:
 
-- `platform/k3s/work/artifacts/results/workload-perf-summary.json`
+- `platform/k3s/work/artifacts/results/perf-<runtime>-cold.json`
+- `platform/k3s/work/artifacts/results/perf-<runtime>-warm.json`
+- `platform/k3s/work/artifacts/results/perf-summary.json`
 
 ## Baseline Requirements (All daemon-client runtimes)
 
@@ -50,6 +52,7 @@ Related harness outputs:
 | vLLM-specific backend env (`VLLM_ATTENTION_BACKEND`) | NOT-NEEDED | NOT-NEEDED | REQUIRED |
 | Full parity bind gate env (`REQUIRE_FULL_IPC_BIND`) | NOT-NEEDED | OPTIONAL | REQUIRED |
 | Runtime model ref env (`MODEL_REF`) | REQUIRED | REQUIRED | REQUIRED |
+| Harness perf mode env (`PERF_MODE`) | REQUIRED | REQUIRED | REQUIRED |
 | Runtime no-artifact marker (`DAEMON_NO_RUNTIME_ARTIFACT_ACCESS_OK`) | REQUIRED | REQUIRED | REQUIRED |
 
 ## qwen-hello Profile Contract

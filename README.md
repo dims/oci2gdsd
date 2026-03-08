@@ -192,6 +192,7 @@ Current contract in this repo:
 - `gpu load --mode benchmark` (CLI): throughput probe path; GPU buffers are released before command exit.
 - Daemon API persistent mode (`serve` + `/v2/gpu/load`): daemon owns persistent allocations for process lifetime and can export CUDA IPC metadata.
 - Daemon API lifecycle includes attach/heartbeat/detach endpoints and tensor-map metadata used by runtime integration checks.
+- Daemon exposes runtime cache counters at `GET /v2/gpu/cache-metrics` (runtime-bundle/tensor-map hit/miss/eviction).
 
 ## Performance Model
 
@@ -207,7 +208,24 @@ TensorRT policy:
 
 Harness emits per-run summary JSON:
 
-- `platform/k3s/work/artifacts/results/workload-perf-summary.json`
+- `platform/k3s/work/artifacts/results/perf-<runtime>-cold.json`
+- `platform/k3s/work/artifacts/results/perf-<runtime>-warm.json`
+- `platform/k3s/work/artifacts/results/perf-summary.json`
+- compatibility alias: `platform/k3s/work/artifacts/results/workload-perf-summary.json`
+
+Each run records phase timings for:
+
+- `ensure`
+- `bundle`
+- `load`
+- `tensor-map`
+- `bind`
+- `first-token`
+
+Harness mode defaults:
+
+- `K3S_PERF_MODES=cold,warm`
+- p50/p95 warm-vs-cold regression gate: `PERF_MAX_REGRESSION_PCT=35` (overrideable)
 
 ## Packaging Models as OCI Artifacts
 

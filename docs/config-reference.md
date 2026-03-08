@@ -122,6 +122,21 @@ Not currently used:
 - `retention.ttl_hours` (`reserved`)
 - `retention.emergency_low_space_mode` (`reserved`)
 
+## `runtime` section
+
+Actively used:
+
+- `runtime.max_concurrent_persistent_loads_per_device` (`active`): per-device concurrency limiter for persistent `gpu/load` work in daemon allocations.
+- `runtime.max_concurrent_attachments_per_device` (`active`): per-device concurrency limiter for `gpu/attach`.
+- `runtime.max_runtime_bundle_tokens` (`active`): maximum in-memory runtime-bundle token cache size before oldest-token eviction.
+- `runtime.max_tensor_map_cache_entries` (`active`): maximum in-memory tensor-map snapshot cache entries before oldest-entry eviction.
+
+Runtime cache metrics are available from daemon API:
+
+- `GET /v2/gpu/cache-metrics`
+  - `runtime_bundle_hits`, `runtime_bundle_misses`, `runtime_bundle_evictions`
+  - `tensor_map_hits`, `tensor_map_misses`, `tensor_map_evictions`
+
 ## `observability` section
 
 All currently `reserved`:
