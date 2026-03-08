@@ -58,6 +58,21 @@ def profile_shards_from_metadata(metadata: dict):
     return shard_entries
 
 
+def profile_content_key(shard_entries) -> str:
+    normalized = []
+    for shard in sorted(shard_entries, key=lambda s: str(s.get("name", ""))):
+        normalized.append(
+            {
+                "name": str(shard.get("name", "")),
+                "digest": str(shard.get("digest", "")),
+                "size": int(shard.get("size", 0)),
+                "kind": str(shard.get("kind", "")),
+                "ordinal": int(shard.get("ordinal", 0)),
+            }
+        )
+    return hashlib.sha256(json.dumps(normalized, sort_keys=True).encode("utf-8")).hexdigest()
+
+
 def reset_runtime_dir() -> Path:
     runtime_dir = Path(os.environ.get("LOCAL_MODEL_DIR", "/tmp/oci2gdsd-trt-model"))
     if runtime_dir.exists():
@@ -247,6 +262,7 @@ def resolve_engine_dirs(
     model_root: Path,
     model_id: str,
     manifest_digest: str,
+    content_key: str,
     dtype: str,
     max_input_len: int,
     max_seq_len: int,
@@ -265,6 +281,7 @@ def resolve_engine_dirs(
     profile = {
         "model_id": str(model_id),
         "manifest_digest": str(manifest_digest),
+        "content_key": str(content_key),
         "dtype": str(dtype),
         "max_input_len": int(max_input_len),
         "max_seq_len": int(max_seq_len),
@@ -272,7 +289,7 @@ def resolve_engine_dirs(
     }
     cache_key = hashlib.sha256(json.dumps(profile, sort_keys=True).encode("utf-8")).hexdigest()[:24]
     model_token = _safe_token(model_id, "model")
-    digest_token = _digest_token(manifest_digest)
+    digest_token = _safe_token(content_key, _digest_token(manifest_digest))
     base = cache_root / model_token / digest_token / cache_key
     return base / "checkpoint", base / "engine", cache_key
 
@@ -283,6 +300,7 @@ def build_engine(
     source_mode: str,
     model_id: str,
     manifest_digest: str,
+    content_key: str,
     startup_mode: str,
     force_rebuild_override: bool = False,
 ) -> Path:
@@ -294,6 +312,7 @@ def build_engine(
         model_root=model_root,
         model_id=model_id,
         manifest_digest=manifest_digest,
+        content_key=content_key,
         dtype=dtype,
         max_input_len=max_input_len,
         max_seq_len=max_seq_len,
@@ -684,6 +703,7 @@ def main():
         )
 
         shard_entries = profile_shards_from_metadata(metadata)
+        content_key = profile_content_key(shard_entries)
         native_module = load_native_module()
         runtime_dir, import_stats = build_runtime_dir_from_ipc(
             model_root=runtime_root,
@@ -731,6 +751,7 @@ def main():
             source_mode=source_mode,
             model_id=model_id,
             manifest_digest=model_digest,
+            content_key=content_key,
             startup_mode=startup_mode,
             force_rebuild_override=(startup_mode != "fast"),
         )
