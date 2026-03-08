@@ -19,6 +19,7 @@ REQUIRE_NVFS_STATS_DELTA_SET="${REQUIRE_NVFS_STATS_DELTA+x}"
 REQUIRE_NVFS_STATS_DELTA="${REQUIRE_NVFS_STATS_DELTA:-}"
 REQUIRE_NVFS_STATS_DELTA_MODE="${REQUIRE_NVFS_STATS_DELTA_MODE:-auto}"
 INSTALL_MISSING_PREREQS="${INSTALL_MISSING_PREREQS:-true}"
+ENABLE_FULL_GDS_STACK_REMEDIATION="${ENABLE_FULL_GDS_STACK_REMEDIATION:-true}"
 OCI2GDSD_ROOT_PATH="${OCI2GDSD_ROOT_PATH:-/mnt/nvme/oci2gdsd}"
 OCI2GDS_STRICT="${OCI2GDS_STRICT:-true}"
 OCI2GDS_FORCE_NO_COMPAT="${OCI2GDS_FORCE_NO_COMPAT:-true}"
@@ -237,12 +238,53 @@ attempt_full_gds_remediation_bundle() {
   fi
 
   if is_true "${INSTALL_MISSING_PREREQS}"; then
-    {
-      echo "non_destructive_step=skip_driver_kernel_package_mutation"
-    } >> "${log_file}"
+    if is_true "${ENABLE_FULL_GDS_STACK_REMEDIATION}"; then
+      {
+        echo "step=baseline_gds_stack_alignment"
+        echo "action=install nvidia-fs-dkms nvidia-fs nvidia-gds-12-6 gds-tools-12-6 linux-headers-\$(uname -r)"
+      } >> "${log_file}"
+      ensure_apt_available
+      apt_install --allow-change-held-packages \
+        nvidia-fs-dkms \
+        nvidia-fs \
+        nvidia-gds-12-6 \
+        gds-tools-12-6 \
+        "linux-headers-$(uname -r)" >> "${log_file}" 2>&1 || true
+    else
+      {
+        echo "non_destructive_step=skip_driver_kernel_package_mutation"
+      } >> "${log_file}"
+    fi
   fi
 
   maybe_sudo modprobe nvidia_fs >> "${log_file}" 2>&1 || true
+
+  if is_true "${INSTALL_MISSING_PREREQS}" && is_true "${ENABLE_FULL_GDS_STACK_REMEDIATION}" && ! lsmod | grep -q '^nvidia_fs'; then
+    {
+      echo "step=known_good_driver_kernel_bundle"
+      echo "action=install nvidia-driver-570-open + linux-image-nvidia + linux-modules-nvidia-fs-5.15.0-1096-nvidia"
+    } >> "${log_file}"
+    maybe_sudo apt-mark unhold \
+      nvidia-driver-565 \
+      nvidia-driver-565-open \
+      nvidia-dkms-565 \
+      nvidia-dkms-565-open \
+      nvidia-kernel-source-565 \
+      nvidia-kernel-source-565-open \
+      nvidia-prime >> "${log_file}" 2>&1 || true
+    maybe_sudo apt-get purge -y nvidia-prime >> "${log_file}" 2>&1 || true
+    apt_install --allow-change-held-packages \
+      nvidia-driver-570-open \
+      nvidia-fs \
+      nvidia-gds-12-6 \
+      gds-tools-12-6 \
+      linux-image-nvidia \
+      linux-modules-nvidia-fs-5.15.0-1096-nvidia \
+      linux-headers-5.15.0-1096-nvidia >> "${log_file}" 2>&1 || true
+    maybe_sudo dkms autoinstall -k 5.15.0-1096-nvidia >> "${log_file}" 2>&1 || true
+    maybe_sudo update-initramfs -u -k 5.15.0-1096-nvidia >> "${log_file}" 2>&1 || true
+    maybe_sudo modprobe nvidia_fs >> "${log_file}" 2>&1 || true
+  fi
 
   maybe_sudo mkdir -p /mnt/nvme >> "${log_file}" 2>&1 || true
   if ! mountpoint -q /mnt/nvme; then
@@ -264,7 +306,10 @@ attempt_full_gds_remediation_bundle() {
       fi
     fi
     if [[ -n "${part}" ]]; then
-      maybe_sudo mount -o rw,noatime,data=ordered "${part}" /mnt/nvme >> "${log_file}" 2>&1 || true
+      if ! maybe_sudo mount -o rw,noatime,data=ordered "${part}" /mnt/nvme >> "${log_file}" 2>&1; then
+        maybe_sudo mkfs.ext4 -F "${part}" >> "${log_file}" 2>&1 || true
+        maybe_sudo mount -o rw,noatime,data=ordered "${part}" /mnt/nvme >> "${log_file}" 2>&1 || true
+      fi
       echo "mounted_nvme_part=${part}" >> "${log_file}"
     else
       echo "mounted_nvme_part=none" >> "${log_file}"

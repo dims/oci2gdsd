@@ -42,6 +42,13 @@ validate_qwen_hello_example() {
   local template="${QWEN_HELLO_TEMPLATE}"
   local app_dir="${REPO_ROOT}/platform/k3s/pytorch/app"
   local native_dir="${REPO_ROOT}/platform/k3s/pytorch/native"
+  local qwen_hello_oci2gds_strict="${QWEN_HELLO_OCI2GDS_STRICT:-false}"
+  local qwen_hello_oci2gds_probe_strict="${QWEN_HELLO_OCI2GDS_PROBE_STRICT:-false}"
+  local qwen_hello_oci2gds_force_no_compat="${QWEN_HELLO_OCI2GDS_FORCE_NO_COMPAT:-false}"
+  local qwen_hello_require_strict_profile_probe="${QWEN_HELLO_REQUIRE_STRICT_PROFILE_PROBE:-false}"
+  local qwen_hello_require_direct_gds="${QWEN_HELLO_REQUIRE_DIRECT_GDS:-false}"
+  local qwen_hello_require_no_compat_evidence="${QWEN_HELLO_REQUIRE_NO_COMPAT_EVIDENCE:-false}"
+  local qwen_hello_require_daemon_ipc_probe="${QWEN_HELLO_REQUIRE_DAEMON_IPC_PROBE:-false}"
   if [[ ! -f "${template}" ]]; then
     warn "missing example template: ${template}"
     return 1
@@ -69,9 +76,9 @@ validate_qwen_hello_example() {
     "MODEL_ROOT_PATH=${model_root}" \
     "OCI2GDSD_IMAGE=${OCI2GDSD_IMAGE}" \
     "OCI2GDSD_ROOT_PATH=${OCI2GDSD_ROOT_PATH}" \
-    "OCI2GDS_STRICT=${OCI2GDS_STRICT}" \
-    "OCI2GDS_PROBE_STRICT=${OCI2GDS_PROBE_STRICT}" \
-    "OCI2GDS_FORCE_NO_COMPAT=${OCI2GDS_FORCE_NO_COMPAT}" \
+    "OCI2GDS_STRICT=${qwen_hello_oci2gds_strict}" \
+    "OCI2GDS_PROBE_STRICT=${qwen_hello_oci2gds_probe_strict}" \
+    "OCI2GDS_FORCE_NO_COMPAT=${qwen_hello_oci2gds_force_no_compat}" \
     "OCI2GDS_DAEMON_ENABLE=${OCI2GDS_DAEMON_ENABLE}" \
     "OCI2GDS_DAEMON_PROBE_SHARDS=${OCI2GDS_DAEMON_PROBE_SHARDS}" \
     "PYTORCH_RUNTIME_IMAGE=${PYTORCH_RUNTIME_IMAGE}" \
@@ -193,7 +200,7 @@ validate_qwen_hello_example() {
     warn "qwen hello oci2gds profile probe failed: status=${oci2gds_profile_status} backend=${oci2gds_profile_backend} mode_counts=${oci2gds_mode_counts}"
     return 1
   fi
-  if [[ "${REQUIRE_STRICT_PROFILE_PROBE}" == "true" ]]; then
+  if [[ "${qwen_hello_require_strict_profile_probe}" == "true" ]]; then
     if [[ "${oci2gds_profile_backend}" != "native-cufile" ]]; then
       warn "strict profile probe backend check failed: profile_backend=${oci2gds_profile_backend} runtime_backend=${oci2gds_backend}"
       return 1
@@ -203,13 +210,13 @@ validate_qwen_hello_example() {
       return 1
     fi
   fi
-  if [[ "${REQUIRE_DIRECT_GDS}" == "true" ]]; then
+  if [[ "${qwen_hello_require_direct_gds}" == "true" ]]; then
     if [[ -z "${oci2gds_direct_count}" || "${oci2gds_direct_count}" == "0" ]]; then
       warn "qwen hello direct GDS requirement failed: direct_count=${oci2gds_direct_count} mode_counts=${oci2gds_mode_counts}"
       return 1
     fi
   fi
-  if [[ "${REQUIRE_NO_COMPAT_EVIDENCE}" == "true" && "${OCI2GDS_FORCE_NO_COMPAT}" == "true" ]]; then
+  if [[ "${qwen_hello_require_no_compat_evidence}" == "true" && "${qwen_hello_oci2gds_force_no_compat}" == "true" ]]; then
     if [[ "${oci2gds_force_no_compat}" != "true" ]]; then
       warn "force-no-compat evidence missing from health payload: force_no_compat=${oci2gds_force_no_compat}"
       return 1
@@ -223,7 +230,7 @@ validate_qwen_hello_example() {
       return 1
     fi
   fi
-  if [[ "${REQUIRE_DAEMON_IPC_PROBE}" == "true" && "${oci2gds_ipc_status}" != "ok" ]]; then
+  if [[ "${qwen_hello_require_daemon_ipc_probe}" == "true" && "${oci2gds_ipc_status}" != "ok" ]]; then
     warn "qwen hello daemon ipc probe not ok: status=${oci2gds_ipc_status} backend=${oci2gds_ipc_backend}"
     return 1
   fi
