@@ -57,7 +57,7 @@ validate_qwen_hello_example() {
   apply_configmap_from_files "${QWEN_HELLO_NAMESPACE}" "qwen-hello-native" \
     --from-file=oci2gds_torch_native.cpp="${native_dir}/oci2gds_torch_native.cpp"
 
-  if [[ "${QWEN_HELLO_PROFILE}" == "host-direct" && "${CLUSTER_MODE}" == "k3s" ]]; then
+  if [[ "${QWEN_HELLO_PROFILE}" == "host-direct" ]]; then
     maybe_sudo mkdir -p "${OCI2GDSD_ROOT_PATH}" || true
   fi
   mkdir -p "${RENDERED_DIR}" "${RESULTS_DIR}"
@@ -79,7 +79,7 @@ validate_qwen_hello_example() {
     "PYTORCH_RUNTIME_IMAGE=${PYTORCH_RUNTIME_IMAGE}" \
     "LEASE_HOLDER=${LEASE_HOLDER}"
 
-  if [[ "${CLUSTER_MODE}" == "k3s" ]] && ! grep -q 'runtimeClassName: nvidia' "${rendered}"; then
+  if ! grep -q 'runtimeClassName: nvidia' "${rendered}"; then
     gsed -i 's|restartPolicy: Always|restartPolicy: Always\
       runtimeClassName: nvidia|' "${rendered}"
   fi

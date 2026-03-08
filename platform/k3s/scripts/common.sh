@@ -62,6 +62,17 @@ enforce_strict_gds_policy() {
   fi
 }
 
+validate_runtime_contracts() {
+  local runtime="${1:-${WORKLOAD_RUNTIME}}"
+  local report="${2:-${RESULTS_DIR}/runtime-contract-report.json}"
+  local validator="${SCRIPT_DIR}/validate-runtime-contract.sh"
+  [[ -x "${validator}" ]] || die "runtime contract validator is missing or not executable: ${validator}"
+  "${validator}" \
+    --runtime "${runtime}" \
+    --include-qwen \
+    --report "${report}"
+}
+
 k3s_data_dir() {
   local dir="/var/lib/rancher/k3s"
   if [[ -n "${K3S_DATA_DIR}" ]]; then
@@ -136,15 +147,13 @@ maybe_auto_configure_storage() {
     fi
   fi
 
-  if [[ "${CLUSTER_MODE}" == "k3s" ]]; then
-    local k3s_dir k3s_need k3s_avail nvme_avail
-    k3s_dir="$(k3s_data_dir)"
-    k3s_need=$((MIN_FREE_GB_K3S * 1024 * 1024))
-    k3s_avail="$(path_available_kb "${k3s_dir}")"
-    nvme_avail="$(path_available_kb "/mnt/nvme")"
-    if (( k3s_avail < k3s_need )) && [[ "${k3s_dir}" != /mnt/nvme/* ]] && (( nvme_avail >= k3s_need )); then
-      configure_k3s_data_dir "/mnt/nvme/k3s"
-    fi
+  local k3s_dir k3s_need k3s_avail nvme_avail
+  k3s_dir="$(k3s_data_dir)"
+  k3s_need=$((MIN_FREE_GB_K3S * 1024 * 1024))
+  k3s_avail="$(path_available_kb "${k3s_dir}")"
+  nvme_avail="$(path_available_kb "/mnt/nvme")"
+  if (( k3s_avail < k3s_need )) && [[ "${k3s_dir}" != /mnt/nvme/* ]] && (( nvme_avail >= k3s_need )); then
+    configure_k3s_data_dir "/mnt/nvme/k3s"
   fi
 }
 
@@ -205,22 +214,9 @@ check_storage_prereqs() {
   check_path_free_gb "docker data-root" "${docker_root}" "${MIN_FREE_GB_DOCKER}"
   check_path_free_gb "oci2gdsd root path" "${OCI2GDSD_ROOT_PATH}" "${MIN_FREE_GB_OCI2GDS_ROOT}"
 
-  if [[ "${CLUSTER_MODE}" == "k3s" ]]; then
-    local k3s_dir
-    k3s_dir="$(k3s_data_dir)"
-    check_path_free_gb "k3s data root" "${k3s_dir}" "${MIN_FREE_GB_K3S}"
-  fi
-}
-
-resolve_cluster_mode() {
-  case "${CLUSTER_MODE}" in
-    k3s|auto)
-      CLUSTER_MODE="k3s"
-      ;;
-    *)
-      die "unsupported CLUSTER_MODE=${CLUSTER_MODE} (expected k3s|auto)"
-      ;;
-  esac
+  local k3s_dir
+  k3s_dir="$(k3s_data_dir)"
+  check_path_free_gb "k3s data root" "${k3s_dir}" "${MIN_FREE_GB_K3S}"
 }
 
 validate_deploy_mode() {
@@ -306,17 +302,12 @@ cluster_hint() {
   echo "k3s"
 }
 
-resolve_cluster_mode
 validate_deploy_mode
-if [[ "${CLUSTER_MODE}" == "k3s" && "${REGISTRY_NAMESPACE}" == "oci2gdsd-registry" ]]; then
+if [[ "${REGISTRY_NAMESPACE}" == "oci2gdsd-registry" ]]; then
   REGISTRY_NAMESPACE="oci-model-registry"
 fi
 if [[ -z "${QWEN_HELLO_PROFILE}" ]]; then
-  if [[ "${CLUSTER_MODE}" == "k3s" ]]; then
-    QWEN_HELLO_PROFILE="host-direct"
-  else
-    QWEN_HELLO_PROFILE="default"
-  fi
+  QWEN_HELLO_PROFILE="host-direct"
 fi
 if [[ "${QWEN_HELLO_PROFILE}" == "host-direct" ]]; then
   if [[ -z "${OCI2GDSD_ROOT_PATH_SET}" ]]; then
@@ -584,9 +575,6 @@ configure_nvidia_runtime() {
 }
 
 ensure_k3s_nvidia_runtime_prereqs() {
-  if [[ "${CLUSTER_MODE}" != "k3s" ]]; then
-    return
-  fi
   ensure_cmd k3s
   ensure_cmd nvidia-ctk
 
@@ -922,7 +910,7 @@ write_environment_report() {
   local out="${RESULTS_DIR}/environment-report.txt"
   {
     echo "# k3s-e2e environment $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    echo "cluster_mode=${CLUSTER_MODE}"
+    echo "cluster_mode=k3s"
     echo "workload_runtime=${WORKLOAD_RUNTIME}"
     echo "model_id=${MODEL_ID}"
     echo "model_digest=${MODEL_DIGEST:-}"

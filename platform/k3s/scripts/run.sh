@@ -13,15 +13,6 @@ WORKLOAD_JOB_NAME=""
 WORKLOAD_CONTAINER_NAME=""
 WORKLOAD_RESULT_LOG=""
 
-validate_runtime_contracts() {
-  local validator="${SCRIPT_DIR}/validate-runtime-contract.sh"
-  [[ -x "${validator}" ]] || die "runtime contract validator is missing or not executable: ${validator}"
-  "${validator}" \
-    --runtime "${WORKLOAD_RUNTIME}" \
-    --include-qwen \
-    --report "${RESULTS_DIR}/runtime-contract-report.json"
-}
-
 wait_for_job_completion_or_fail() {
   local job_name="$1"
   local timeout_secs="${2:-1800}"

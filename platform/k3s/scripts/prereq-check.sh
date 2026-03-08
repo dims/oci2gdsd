@@ -111,7 +111,7 @@ prereq_stage_k3s_cluster() {
   prereq_stage_begin "k3s-cluster"
   ensure_k3s_nvidia_runtime_prereqs
   if ! kube get nodes >/dev/null 2>&1; then
-    die "cluster ${CLUSTER_MODE} is not reachable ($(cluster_hint))"
+    die "k3s cluster is not reachable ($(cluster_hint))"
   fi
   prereq_stage_end "k3s-cluster"
 }

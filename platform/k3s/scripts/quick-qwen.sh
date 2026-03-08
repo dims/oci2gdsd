@@ -8,15 +8,6 @@ source "${SCRIPT_DIR}/common.sh"
 AUTO_SEED_MODEL_IDENTITY="${AUTO_SEED_MODEL_IDENTITY:-true}"
 AUTO_BUILD_OCI2GDSD_IMAGE="${AUTO_BUILD_OCI2GDSD_IMAGE:-true}"
 
-validate_runtime_contracts() {
-  local validator="${SCRIPT_DIR}/validate-runtime-contract.sh"
-  [[ -x "${validator}" ]] || die "runtime contract validator is missing or not executable: ${validator}"
-  "${validator}" \
-    --runtime "${WORKLOAD_RUNTIME}" \
-    --include-qwen \
-    --report "${RESULTS_DIR}/runtime-contract-report.json"
-}
-
 seed_model_identity_if_needed() {
   if [[ -n "${MODEL_REF_OVERRIDE}" && -n "${MODEL_DIGEST_OVERRIDE}" ]]; then
     return 0
@@ -55,22 +46,16 @@ Example:
 
 log "starting qwen-hello quick iterate run"
 trap 'stop_registry_port_forward' EXIT
-if [[ "${CLUSTER_MODE}" == "k3s" ]]; then
-  ensure_cmd k3s
-else
-  ensure_cmd kubectl
-fi
+ensure_cmd k3s
 ensure_cmd jq
 ensure_cmd curl
 ensure_cmd gsed
 validate_runtime_contracts
 
-if [[ "${CLUSTER_MODE}" == "k3s" ]]; then
-  ensure_k3s_nvidia_runtime_prereqs
-fi
+ensure_k3s_nvidia_runtime_prereqs
 
 if ! kube get nodes >/dev/null 2>&1; then
-  die "cluster ${CLUSTER_MODE} is not reachable ($(cluster_hint)); run setup first"
+  die "k3s cluster is not reachable ($(cluster_hint)); run setup first"
 fi
 
 ensure_gpu_capacity
@@ -85,7 +70,7 @@ write_environment_report
 log "model_ref=${MODEL_REF}"
 log "model_digest=${MODEL_DIGEST}"
 log "pytorch_runtime_image=${PYTORCH_RUNTIME_IMAGE}"
-log "cluster_mode=${CLUSTER_MODE} ($(cluster_hint))"
+log "cluster_mode=k3s ($(cluster_hint))"
 log "qwen_hello_profile=${QWEN_HELLO_PROFILE}"
 log "oci2gdsd_root_path=${OCI2GDSD_ROOT_PATH}"
 log "oci2gds_strict=${OCI2GDS_STRICT} oci2gds_probe_strict=${OCI2GDS_PROBE_STRICT}"
