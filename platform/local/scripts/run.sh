@@ -84,6 +84,19 @@ filesize_bytes() {
   stat -f %z "${path}"
 }
 
+render_local_template() {
+  local src="$1"
+  local dst="$2"
+  shift 2
+  cp "${src}" "${dst}"
+  local kv key value
+  for kv in "$@"; do
+    key="${kv%%=*}"
+    value="${kv#*=}"
+    gsed -i "s|__${key}__|${value}|g" "${dst}"
+  done
+}
+
 write_environment_report() {
   local out="${RESULTS_DIR}/environment-report.txt"
   {
@@ -111,6 +124,7 @@ ensure_cmd docker
 ensure_cmd curl
 ensure_cmd jq
 ensure_cmd oras
+ensure_cmd gsed
 detect_docker_access
 resolve_oci2gdsd_bin
 [[ -x "${OCI2GDSD_BIN}" ]] || die "resolved oci2gdsd binary is not executable: ${OCI2GDSD_BIN}"
@@ -134,54 +148,20 @@ dd if=/dev/urandom of="${SHARD_PATH}" bs=1048576 count=1 >/dev/null 2>&1
 SHARD_DIGEST="sha256:$(sha256_file "${SHARD_PATH}")"
 SHARD_SIZE="$(filesize_bytes "${SHARD_PATH}")"
 
-cat > "${PAYLOAD_DIR}/metadata/model.json" <<EOF
-{
-  "schemaVersion": 1,
-  "modelId": "${MODEL_ID}",
-  "modelRevision": "v1",
-  "framework": "pytorch",
-  "format": "safetensors",
-  "shards": [
-    {
-      "name": "model-00001-of-00001.safetensors",
-      "digest": "${SHARD_DIGEST}",
-      "size": ${SHARD_SIZE},
-      "ordinal": 1,
-      "kind": "weight"
-    }
-  ],
-  "integrity": {
-    "manifestDigest": "resolved-manifest-digest"
-  }
-}
-EOF
+render_local_template "${HARNESS_DIR}/templates/model.json.tpl" "${PAYLOAD_DIR}/metadata/model.json" \
+  "MODEL_ID=${MODEL_ID}" \
+  "SHARD_DIGEST=${SHARD_DIGEST}" \
+  "SHARD_SIZE=${SHARD_SIZE}"
 
 SECOND_SHARD_PATH="${PAYLOAD_DIR}/shards/model-b-00001-of-00001.safetensors"
 log "creating second dummy shard at ${SECOND_SHARD_PATH}"
 dd if=/dev/urandom of="${SECOND_SHARD_PATH}" bs=524288 count=1 >/dev/null 2>&1
 SECOND_SHARD_DIGEST="sha256:$(sha256_file "${SECOND_SHARD_PATH}")"
 SECOND_SHARD_SIZE="$(filesize_bytes "${SECOND_SHARD_PATH}")"
-cat > "${PAYLOAD_DIR}/metadata/model-b.json" <<EOF
-{
-  "schemaVersion": 1,
-  "modelId": "${SECOND_MODEL_ID}",
-  "modelRevision": "v1",
-  "framework": "pytorch",
-  "format": "safetensors",
-  "shards": [
-    {
-      "name": "model-b-00001-of-00001.safetensors",
-      "digest": "${SECOND_SHARD_DIGEST}",
-      "size": ${SECOND_SHARD_SIZE},
-      "ordinal": 1,
-      "kind": "weight"
-    }
-  ],
-  "integrity": {
-    "manifestDigest": "resolved-manifest-digest"
-  }
-}
-EOF
+render_local_template "${HARNESS_DIR}/templates/model-b.json.tpl" "${PAYLOAD_DIR}/metadata/model-b.json" \
+  "SECOND_MODEL_ID=${SECOND_MODEL_ID}" \
+  "SECOND_SHARD_DIGEST=${SECOND_SHARD_DIGEST}" \
+  "SECOND_SHARD_SIZE=${SECOND_SHARD_SIZE}"
 
 OCI_REF="localhost:${REGISTRY_PORT}/${MODEL_REPO}:${MODEL_TAG}"
 log "pushing artifact ${OCI_REF}"
@@ -214,18 +194,8 @@ SECOND_MODEL_REF="localhost:${REGISTRY_PORT}/${SECOND_MODEL_REPO}@${SECOND_MODEL
 SECOND_MODEL_KEY="${SECOND_MODEL_ID}@${SECOND_MODEL_DIGEST}"
 log "resolved second model digest: ${SECOND_MODEL_DIGEST}"
 
-cat > "${CONFIG_PATH}" <<EOF
-root: ${ROOT_DIR}
-model_root: ${ROOT_DIR}/models
-tmp_root: ${ROOT_DIR}/tmp
-locks_root: ${ROOT_DIR}/locks
-journal_dir: ${ROOT_DIR}/journal
-state_db: ${ROOT_DIR}/state.db
-registry:
-  plain_http: true
-retention:
-  min_free_bytes: 0
-EOF
+render_local_template "${HARNESS_DIR}/templates/local-config.yaml.tpl" "${CONFIG_PATH}" \
+  "ROOT_DIR=${ROOT_DIR}"
 
 log "running ensure/status/list/verify/release/gc lifecycle"
 run_cli ensure \

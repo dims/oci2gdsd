@@ -85,6 +85,13 @@ resolve_oci2gdsd_global_args() {
   OCI2GDSD_GLOBAL_ARGS=(--root "${OCI2GDSD_ROOT_PATH}")
 }
 
+ensure_root_path_writable() {
+  maybe_sudo mkdir -p "${OCI2GDSD_ROOT_PATH}" || true
+  # k3s daemonset paths can become root-owned; quick host flows need user write access.
+  maybe_sudo chown -R "$(id -u):$(id -g)" "${OCI2GDSD_ROOT_PATH}" || true
+  [[ -w "${OCI2GDSD_ROOT_PATH}" ]] || die "oci2gdsd root path is not writable: ${OCI2GDSD_ROOT_PATH}"
+}
+
 run_oci2gdsd() {
   if [[ "${OCI2GDSD_BIN_MODE}" == "go-run" ]]; then
     (cd "${REPO_ROOT}" && "${OCI2GDSD_CMD[@]}" "${OCI2GDSD_GLOBAL_ARGS[@]}" "$@")
@@ -116,23 +123,26 @@ manifest_descriptor_path() {
   echo "${WORK_DIR}/packager/output/manifest-descriptor.json"
 }
 
+render_host_template() {
+  local src="$1"
+  local dst="$2"
+  shift 2
+  cp "${src}" "${dst}"
+  local kv key value
+  for kv in "$@"; do
+    key="${kv%%=*}"
+    value="${kv#*=}"
+    gsed -i "s|__${key}__|${value}|g" "${dst}"
+  done
+}
+
 ensure_plain_http_registry_config() {
   if [[ -n "${OCI2GDSD_REGISTRY_CONFIG}" ]]; then
     return 0
   fi
   local cfg="${WORK_DIR}/generated-host-registry-config.yaml"
-  cat > "${cfg}" <<EOF
-root: ${OCI2GDSD_ROOT_PATH}
-model_root: ${OCI2GDSD_ROOT_PATH}/models
-tmp_root: ${OCI2GDSD_ROOT_PATH}/tmp
-locks_root: ${OCI2GDSD_ROOT_PATH}/locks
-journal_dir: ${OCI2GDSD_ROOT_PATH}/journal
-state_db: ${OCI2GDSD_ROOT_PATH}/state.db
-registry:
-  plain_http: true
-retention:
-  min_free_bytes: 0
-EOF
+  render_host_template "${HARNESS_DIR}/templates/generated-host-registry-config.yaml.tpl" "${cfg}" \
+    "OCI2GDSD_ROOT_PATH=${OCI2GDSD_ROOT_PATH}"
   OCI2GDSD_REGISTRY_CONFIG="${cfg}"
   export OCI2GDSD_REGISTRY_CONFIG
 }
@@ -601,6 +611,7 @@ resolve_oci2gdsd_cmd
 seed_model_identity_if_needed
 resolve_model_digest
 resolve_oci2gdsd_global_args
+ensure_root_path_writable
 write_environment_report
 
 log "model_digest=${MODEL_DIGEST}"

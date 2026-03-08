@@ -22,24 +22,27 @@ LOCAL_E2E_ROOT="${LOCAL_E2E_ROOT:-${DEFAULT_LOCAL_E2E_ROOT}}"
 
 mkdir -p "${RESULTS_DIR}"
 
+render_local_template() {
+  local src="$1"
+  local dst="$2"
+  shift 2
+  cp "${src}" "${dst}"
+  local kv key value
+  for kv in "$@"; do
+    key="${kv%%=*}"
+    value="${kv#*=}"
+    gsed -i "s|__${key}__|${value}|g" "${dst}"
+  done
+}
+
 ensure_local_config() {
   if [[ -f "${CONFIG_PATH}" ]]; then
     return 0
   fi
   log "missing local-e2e config; creating minimal standalone config at ${CONFIG_PATH}"
   mkdir -p "${WORK_DIR}" "${LOCAL_E2E_ROOT}"
-  cat > "${CONFIG_PATH}" <<EOF
-root: ${LOCAL_E2E_ROOT}
-model_root: ${LOCAL_E2E_ROOT}/models
-tmp_root: ${LOCAL_E2E_ROOT}/tmp
-locks_root: ${LOCAL_E2E_ROOT}/locks
-journal_dir: ${LOCAL_E2E_ROOT}/journal
-state_db: ${LOCAL_E2E_ROOT}/state.db
-registry:
-  plain_http: true
-retention:
-  min_free_bytes: 0
-EOF
+  render_local_template "${HARNESS_DIR}/templates/local-config.yaml.tpl" "${CONFIG_PATH}" \
+    "ROOT_DIR=${LOCAL_E2E_ROOT}"
 }
 
 extract_error_json() {
@@ -101,27 +104,9 @@ expect_reason_any() {
 
 expect_lint_invalid() {
   local cfg="${WORK_DIR}/malicious-profile.json"
-  cat > "${cfg}" <<EOF
-{
-  "schemaVersion": 1,
-  "modelId": "malicious",
-  "modelRevision": "v1",
-  "framework": "pytorch",
-  "format": "safetensors",
-  "shards": [
-    {
-      "name": "../escape.safetensors",
-      "digest": "sha256:$(printf '0%.0s' {1..64})",
-      "size": 1,
-      "ordinal": 1,
-      "kind": "weight"
-    }
-  ],
-  "integrity": {
-    "manifestDigest": "sha256:$(printf '1%.0s' {1..64})"
-  }
-}
-EOF
+  render_local_template "${HARNESS_DIR}/templates/malicious-profile.json.tpl" "${cfg}" \
+    "DIGEST_0=$(printf '0%.0s' {1..64})" \
+    "DIGEST_1=$(printf '1%.0s' {1..64})"
   local out="${RESULTS_DIR}/negative-profile-lint.stdout"
   local err="${RESULTS_DIR}/negative-profile-lint.stderr"
   set +e
@@ -136,6 +121,7 @@ EOF
 
 log "starting local-e2e negative tests"
 ensure_cmd jq
+ensure_cmd gsed
 ensure_local_config
 resolve_oci2gdsd_bin
 
