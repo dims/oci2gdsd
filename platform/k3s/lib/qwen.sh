@@ -237,7 +237,24 @@ validate_qwen_hello_example() {
 }
 
 cleanup_qwen_hello_example() {
-  kube delete namespace "${QWEN_HELLO_NAMESPACE}" --ignore-not-found >/dev/null || true
+  local local_port="${QWEN_HELLO_LOCAL_PORT:-18080}"
+
+  # Defensive: stop any stale qwen-hello service port-forward processes first.
+  while IFS= read -r pf_pid; do
+    [[ -n "${pf_pid}" ]] || continue
+    kill "${pf_pid}" >/dev/null 2>&1 || true
+  done < <(pgrep -f "[k]3s kubectl -n ${QWEN_HELLO_NAMESPACE} port-forward svc/qwen-hello ${local_port}:8000" || true)
+
+  kube delete namespace "${QWEN_HELLO_NAMESPACE}" --ignore-not-found --wait=false >/dev/null || true
+  if kube get namespace "${QWEN_HELLO_NAMESPACE}" >/dev/null 2>&1; then
+    if ! kube wait --for=delete "namespace/${QWEN_HELLO_NAMESPACE}" --timeout=120s >/dev/null 2>&1; then
+      warn "qwen-hello namespace deletion timed out; forcing cleanup"
+      kube -n "${QWEN_HELLO_NAMESPACE}" delete pod --all --force --grace-period=0 >/dev/null 2>&1 || true
+      maybe_sudo k3s kubectl get namespace "${QWEN_HELLO_NAMESPACE}" -o json 2>/dev/null \
+        | jq '.spec.finalizers=[]' \
+        | maybe_sudo k3s kubectl replace --raw "/api/v1/namespaces/${QWEN_HELLO_NAMESPACE}/finalize" -f - >/dev/null 2>&1 || true
+    fi
+  fi
 }
 
 collect_debug() {
