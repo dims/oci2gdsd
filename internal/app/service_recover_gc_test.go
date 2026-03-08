@@ -345,6 +345,114 @@ func TestGCCollectsFailedRecordWithoutReadyMarker(t *testing.T) {
 	}
 }
 
+func TestRecoverClearsEphemeralRuntimeState(t *testing.T) {
+	svc := newStateOnlyService(t)
+	svc.gpuLoader = newFakePersistentLoader()
+
+	modelID := "demo"
+	manifest := "sha256:" + strings.Repeat("4", 64)
+	modelPath, shardSize := writeReadyModelForGPUTest(t, svc.cfg.ModelRoot, modelID, manifest)
+	now := time.Now().UTC()
+	rec := &storepkg.ModelRecord{
+		Key:            modelKey(modelID, manifest),
+		ModelID:        modelID,
+		ManifestDigest: manifest,
+		Status:         StateReady,
+		Path:           modelPath,
+		Bytes:          shardSize,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		LastAccessedAt: now,
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatalf("put model record: %v", err)
+	}
+
+	const allocationID = "alloc-recover-ephemeral"
+	if err := svc.putAllocation(&gpuAllocation{
+		AllocationID:   allocationID,
+		ModelKey:       rec.Key,
+		ModelID:        modelID,
+		ManifestDigest: manifest,
+		Path:           modelPath,
+		LeaseHolder:    "holder-recover",
+		DeviceUUID:     fakeDeviceUUID0,
+		DeviceIndex:    0,
+		CreatedAt:      now,
+	}); err != nil {
+		t.Fatalf("put allocation: %v", err)
+	}
+	token, _ := svc.issueRuntimeBundleToken(allocationID, false)
+	if strings.TrimSpace(token) == "" {
+		t.Fatalf("expected runtime bundle token")
+	}
+
+	svc.attachMu.Lock()
+	svc.attachMap = map[string]*gpuClientAttachment{
+		gpuAttachKey(rec.Key, fakeDeviceUUID0, "client-recover"): {
+			ModelKey:       rec.Key,
+			ModelID:        modelID,
+			ManifestDigest: manifest,
+			Path:           modelPath,
+			DeviceUUID:     fakeDeviceUUID0,
+			DeviceIndex:    0,
+			ClientID:       "client-recover",
+			ShardPaths:     []string{filepath.Join(modelPath, "shards", "model-00001-of-00001.safetensors")},
+			ExpiresAt:      now.Add(30 * time.Second),
+		},
+	}
+	svc.attachMu.Unlock()
+
+	svc.tensorMapMu.Lock()
+	svc.tensorMapCache = map[string]*tensorMapSnapshot{
+		rec.Key: {
+			Key:    rec.Key,
+			Format: "safetensors",
+			Tensors: []GPUTensorDescriptor{
+				{
+					Name:       "weight",
+					ShardName:  "model-00001-of-00001.safetensors",
+					ByteLength: 8,
+				},
+			},
+			BuiltAt: now,
+			ModelID: modelID,
+			Digest:  manifest,
+		},
+	}
+	svc.tensorMapMu.Unlock()
+
+	if err := svc.Recover(); err != nil {
+		t.Fatalf("recover: %v", err)
+	}
+
+	allocations, err := svc.store.ListAllocations()
+	if err != nil {
+		t.Fatalf("list allocations: %v", err)
+	}
+	if len(allocations) != 0 {
+		t.Fatalf("expected recover to clear allocations, got %+v", allocations)
+	}
+
+	if _, _, err := svc.resolveRuntimeBundleToken(token); err == nil {
+		t.Fatalf("expected token resolution to fail after recover reset")
+	}
+
+	svc.attachMu.Lock()
+	attachCount := len(svc.attachMap)
+	svc.attachMu.Unlock()
+	if attachCount != 0 {
+		t.Fatalf("expected recover to clear attachment state, got %d", attachCount)
+	}
+
+	svc.tensorMapMu.RLock()
+	cacheEntries := len(svc.tensorMapCache)
+	svc.tensorMapMu.RUnlock()
+	if cacheEntries != 0 {
+		t.Fatalf("expected recover to clear tensor-map cache, got %d", cacheEntries)
+	}
+}
+
 func newStateOnlyService(t *testing.T) *Service {
 	t.Helper()
 	root := t.TempDir()

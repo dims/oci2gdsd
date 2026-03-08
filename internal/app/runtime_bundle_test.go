@@ -211,3 +211,62 @@ func TestRuntimeBundleIncludesWeightsWhenRequested(t *testing.T) {
 		t.Fatalf("expected weight shard when include_weights=true")
 	}
 }
+
+func TestRuntimeBundleTokenExpires(t *testing.T) {
+	svc := newRuntimeBundleTestService(t)
+	svc.bundleTTL = 5 * time.Millisecond
+
+	manifest := "sha256:" + strings.Repeat("c", 64)
+	modelPath := writeReadyModelForRuntimeBundle(t, svc, "demo", manifest)
+	const allocationID = "alloc-runtime-bundle-token-expiry"
+	writeAllocationForRuntimeBundle(t, svc, allocationID, "demo", manifest, modelPath)
+
+	token, _ := svc.issueRuntimeBundleToken(allocationID, false)
+	if strings.TrimSpace(token) == "" {
+		t.Fatalf("expected non-empty token")
+	}
+	if _, _, err := svc.resolveRuntimeBundleToken(token); err != nil {
+		t.Fatalf("expected token to resolve before expiry: %v", err)
+	}
+
+	time.Sleep(20 * time.Millisecond)
+	_, _, err := svc.resolveRuntimeBundleToken(token)
+	if err == nil {
+		t.Fatalf("expected token resolution to fail after expiry")
+	}
+	appErr := AsAppError(err)
+	if appErr.Reason != ReasonValidationFailed {
+		t.Fatalf("expected reason %s, got %s", ReasonValidationFailed, appErr.Reason)
+	}
+	if !strings.Contains(strings.ToLower(appErr.Error()), "token") {
+		t.Fatalf("expected token-related error, got %v", appErr)
+	}
+}
+
+func TestRuntimeBundleTokenRevokedByAllocation(t *testing.T) {
+	svc := newRuntimeBundleTestService(t)
+	svc.bundleTTL = 5 * time.Minute
+
+	manifest := "sha256:" + strings.Repeat("d", 64)
+	modelPath := writeReadyModelForRuntimeBundle(t, svc, "demo", manifest)
+	const allocationID = "alloc-runtime-bundle-token-revoke"
+	writeAllocationForRuntimeBundle(t, svc, allocationID, "demo", manifest, modelPath)
+
+	tokenA, _ := svc.issueRuntimeBundleToken(allocationID, false)
+	tokenB, _ := svc.issueRuntimeBundleToken(allocationID, true)
+	if _, _, err := svc.resolveRuntimeBundleToken(tokenA); err != nil {
+		t.Fatalf("expected tokenA to resolve: %v", err)
+	}
+	if _, _, err := svc.resolveRuntimeBundleToken(tokenB); err != nil {
+		t.Fatalf("expected tokenB to resolve: %v", err)
+	}
+
+	svc.revokeRuntimeBundleTokensForAllocation(allocationID)
+
+	if _, _, err := svc.resolveRuntimeBundleToken(tokenA); err == nil {
+		t.Fatalf("expected tokenA resolution to fail after revoke")
+	}
+	if _, _, err := svc.resolveRuntimeBundleToken(tokenB); err == nil {
+		t.Fatalf("expected tokenB resolution to fail after revoke")
+	}
+}

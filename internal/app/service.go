@@ -226,6 +226,9 @@ func (s *Service) Recover() error {
 	s.bundleMap = map[string]*runtimeBundleAccessToken{}
 	s.bundleByAllocation = map[string]map[string]struct{}{}
 	s.bundleMu.Unlock()
+	s.attachMu.Lock()
+	s.attachMap = map[string]*gpuClientAttachment{}
+	s.attachMu.Unlock()
 	s.tensorMapMu.Lock()
 	s.tensorMapCache = map[string]*tensorMapSnapshot{}
 	s.tensorMapMu.Unlock()

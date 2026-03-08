@@ -614,6 +614,304 @@ func TestGPUAttachHeartbeatDetachBlocksUnloadUntilDetached(t *testing.T) {
 	}
 }
 
+func TestGPUUnloadSucceedsAfterAttachmentTTLExpiry(t *testing.T) {
+	svc := newStateOnlyService(t)
+	loader := newFakePersistentLoader()
+	svc.gpuLoader = loader
+	svc.attachTTL = 30 * time.Second
+
+	modelID := "demo"
+	manifest := "sha256:" + strings.Repeat("b", 64)
+	modelPath, shardSize := writeReadyModelForGPUTest(t, svc.cfg.ModelRoot, modelID, manifest)
+
+	now := time.Now().UTC()
+	rec := &storepkg.ModelRecord{
+		Key:            modelKey(modelID, manifest),
+		ModelID:        modelID,
+		ManifestDigest: manifest,
+		Status:         StateReady,
+		Path:           modelPath,
+		Bytes:          shardSize,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		LastAccessedAt: now,
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatalf("put model record: %v", err)
+	}
+
+	alloc, err := svc.GPUAllocate(context.Background(), GPUAllocateRequest{
+		ModelID:     modelID,
+		Digest:      manifest,
+		LeaseHolder: "holder-ttl",
+		DeviceUUID:  fakeDeviceUUID0,
+		ChunkBytes:  4 * 1024,
+		Strict:      true,
+	})
+	if err != nil {
+		t.Fatalf("gpu allocate: %v", err)
+	}
+
+	if _, err := svc.GPUAttach(context.Background(), GPUAttachRequest{
+		AllocationID: alloc.AllocationID,
+		ClientID:     "client-ttl",
+		TTLSeconds:   60,
+	}); err != nil {
+		t.Fatalf("gpu attach: %v", err)
+	}
+
+	svc.attachMu.Lock()
+	for _, session := range svc.attachMap {
+		if session != nil {
+			session.ExpiresAt = time.Now().UTC().Add(-1 * time.Minute)
+		}
+	}
+	svc.attachMu.Unlock()
+
+	unloadRes, err := svc.GPUUnload(context.Background(), GPUUnloadRequest{
+		AllocationID: alloc.AllocationID,
+	})
+	if err != nil {
+		t.Fatalf("gpu unload after TTL expiry: %v", err)
+	}
+	if unloadRes.ReleasedBytes != shardSize {
+		t.Fatalf("expected released bytes=%d, got %d", shardSize, unloadRes.ReleasedBytes)
+	}
+
+	svc.attachMu.Lock()
+	activeAttachments := len(svc.attachMap)
+	svc.attachMu.Unlock()
+	if activeAttachments != 0 {
+		t.Fatalf("expected no active attachments after TTL prune, got %d", activeAttachments)
+	}
+}
+
+func TestGPUAllocationAttachTensorMapAndFreeFlow(t *testing.T) {
+	svc := newStateOnlyService(t)
+	loader := newFakePersistentLoader()
+	svc.gpuLoader = loader
+
+	modelID := "demo"
+	manifest := "sha256:" + strings.Repeat("8", 64)
+	modelPath, shardSize := writeReadySafeTensorsModelForGPUTest(t, svc.cfg.ModelRoot, modelID, manifest)
+	now := time.Now().UTC()
+	rec := &storepkg.ModelRecord{
+		Key:            modelKey(modelID, manifest),
+		ModelID:        modelID,
+		ManifestDigest: manifest,
+		Status:         StateReady,
+		Path:           modelPath,
+		Bytes:          shardSize,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		LastAccessedAt: now,
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatalf("put model record: %v", err)
+	}
+
+	alloc, err := svc.GPUAllocate(context.Background(), GPUAllocateRequest{
+		ModelID:     modelID,
+		Digest:      manifest,
+		LeaseHolder: "holder-flow",
+		DeviceUUID:  fakeDeviceUUID0,
+		Strict:      true,
+	})
+	if err != nil {
+		t.Fatalf("gpu allocate: %v", err)
+	}
+
+	if _, err := svc.GPUAttach(context.Background(), GPUAttachRequest{
+		AllocationID: alloc.AllocationID,
+		ClientID:     "client-flow",
+		TTLSeconds:   120,
+	}); err != nil {
+		t.Fatalf("gpu attach: %v", err)
+	}
+
+	tensorMap, err := svc.GPUTensorMap(context.Background(), GPUTensorMapRequest{
+		AllocationID:   alloc.AllocationID,
+		IncludeHandles: true,
+	})
+	if err != nil {
+		t.Fatalf("gpu tensor-map: %v", err)
+	}
+	if tensorMap.Status != "READY" || tensorMap.TensorCount <= 0 {
+		t.Fatalf("unexpected tensor-map response: %+v", tensorMap)
+	}
+	if strings.TrimSpace(tensorMap.Tensors[0].IPCHandle) == "" {
+		t.Fatalf("expected non-empty ipc_handle in tensor-map response")
+	}
+
+	if _, err := svc.GPUDetach(context.Background(), GPUDetachRequest{
+		AllocationID: alloc.AllocationID,
+		ClientID:     "client-flow",
+	}); err != nil {
+		t.Fatalf("gpu detach: %v", err)
+	}
+
+	unloadRes, err := svc.GPUUnload(context.Background(), GPUUnloadRequest{
+		AllocationID: alloc.AllocationID,
+	})
+	if err != nil {
+		t.Fatalf("gpu unload: %v", err)
+	}
+	if unloadRes.ReleasedBytes != shardSize {
+		t.Fatalf("expected released bytes=%d, got %d", shardSize, unloadRes.ReleasedBytes)
+	}
+}
+
+func TestGPUTensorMapCacheHitAndMiss(t *testing.T) {
+	svc := newStateOnlyService(t)
+	loader := newFakePersistentLoader()
+	svc.gpuLoader = loader
+
+	modelID := "demo"
+	manifest := "sha256:" + strings.Repeat("7", 64)
+	modelPath, shardSize := writeReadySafeTensorsModelForGPUTest(t, svc.cfg.ModelRoot, modelID, manifest)
+	now := time.Now().UTC()
+	rec := &storepkg.ModelRecord{
+		Key:            modelKey(modelID, manifest),
+		ModelID:        modelID,
+		ManifestDigest: manifest,
+		Status:         StateReady,
+		Path:           modelPath,
+		Bytes:          shardSize,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		LastAccessedAt: now,
+	}
+	if err := svc.store.Put(rec); err != nil {
+		t.Fatalf("put model record: %v", err)
+	}
+
+	alloc, err := svc.GPUAllocate(context.Background(), GPUAllocateRequest{
+		ModelID:     modelID,
+		Digest:      manifest,
+		LeaseHolder: "holder-cache",
+		DeviceUUID:  fakeDeviceUUID0,
+		Strict:      true,
+	})
+	if err != nil {
+		t.Fatalf("gpu allocate: %v", err)
+	}
+	defer func() {
+		_, _ = svc.GPUUnload(context.Background(), GPUUnloadRequest{AllocationID: alloc.AllocationID})
+	}()
+
+	first, err := svc.GPUTensorMap(context.Background(), GPUTensorMapRequest{
+		AllocationID:   alloc.AllocationID,
+		IncludeHandles: false,
+	})
+	if err != nil {
+		t.Fatalf("first tensor-map: %v", err)
+	}
+	if first.TensorCount == 0 {
+		t.Fatalf("expected non-empty tensor map")
+	}
+
+	shardPath := filepath.Join(modelPath, "shards", "model-00001-of-00001.safetensors")
+	if err := os.Chmod(shardPath, 0o644); err != nil {
+		t.Fatalf("chmod shard writable: %v", err)
+	}
+	corrupt := []byte("invalid-safetensors-header-bytes")
+	if err := os.WriteFile(shardPath, corrupt, 0o644); err != nil {
+		t.Fatalf("corrupt shard: %v", err)
+	}
+	if err := os.Chmod(shardPath, 0o444); err != nil {
+		t.Fatalf("chmod shard readonly: %v", err)
+	}
+	metadataPath := filepath.Join(modelPath, "metadata", "model.json")
+	metadataBytes, err := os.ReadFile(metadataPath)
+	if err != nil {
+		t.Fatalf("read metadata: %v", err)
+	}
+	var md localMetadata
+	if err := json.Unmarshal(metadataBytes, &md); err != nil {
+		t.Fatalf("unmarshal metadata: %v", err)
+	}
+	if len(md.Profile.Shards) == 0 {
+		t.Fatalf("expected at least one shard in metadata")
+	}
+	md.Profile.Shards[0].Digest = digest.FromBytes(corrupt).String()
+	md.Profile.Shards[0].Size = int64(len(corrupt))
+	updatedMetadata, err := json.Marshal(md)
+	if err != nil {
+		t.Fatalf("marshal updated metadata: %v", err)
+	}
+	if err := os.Chmod(metadataPath, 0o644); err != nil {
+		t.Fatalf("chmod metadata writable: %v", err)
+	}
+	if err := os.WriteFile(metadataPath, updatedMetadata, 0o644); err != nil {
+		t.Fatalf("write updated metadata: %v", err)
+	}
+	if err := os.Chmod(metadataPath, 0o444); err != nil {
+		t.Fatalf("chmod metadata readonly: %v", err)
+	}
+
+	second, err := svc.GPUTensorMap(context.Background(), GPUTensorMapRequest{
+		AllocationID:   alloc.AllocationID,
+		IncludeHandles: false,
+	})
+	if err != nil {
+		t.Fatalf("second tensor-map cache hit expected success: %v", err)
+	}
+	if second.TensorCount != first.TensorCount {
+		t.Fatalf("expected cached tensor count=%d, got %d", first.TensorCount, second.TensorCount)
+	}
+
+	svc.tensorMapMu.Lock()
+	delete(svc.tensorMapCache, modelKey(modelID, manifest))
+	svc.tensorMapMu.Unlock()
+
+	_, err = svc.GPUTensorMap(context.Background(), GPUTensorMapRequest{
+		AllocationID:   alloc.AllocationID,
+		IncludeHandles: false,
+	})
+	if err == nil {
+		t.Fatalf("expected tensor-map cache miss to fail after shard corruption")
+	}
+	appErr := AsAppError(err)
+	if appErr.Reason != ReasonProfileLintFailed {
+		t.Fatalf("expected reason %s, got %s", ReasonProfileLintFailed, appErr.Reason)
+	}
+}
+
+func TestGPUAllocateFailsOnRegistryTimeoutAndLeavesNoAllocations(t *testing.T) {
+	manifest := "sha256:" + strings.Repeat("6", 64)
+	ref := "registry.example.com/models/demo@" + manifest
+	fetcher := &fakeEnsureFetcher{
+		fetchFn: func(_ string) (*FetchedModel, error) {
+			return nil, NewAppError(ExitRegistry, ReasonRegistryTimeout, "injected registry timeout", context.DeadlineExceeded)
+		},
+	}
+	svc := newEnsureTestService(t, fetcher)
+	svc.gpuLoader = newFakePersistentLoader()
+
+	_, err := svc.GPUAllocate(context.Background(), GPUAllocateRequest{
+		Ref:         ref,
+		ModelID:     "demo",
+		LeaseHolder: "holder-timeout",
+		DeviceUUID:  fakeDeviceUUID0,
+		Strict:      true,
+	})
+	if err == nil {
+		t.Fatalf("expected gpu allocate failure")
+	}
+	appErr := AsAppError(err)
+	if appErr.Reason != ReasonRegistryTimeout {
+		t.Fatalf("expected reason %s, got %s", ReasonRegistryTimeout, appErr.Reason)
+	}
+
+	allocs, listErr := svc.store.ListAllocations()
+	if listErr != nil {
+		t.Fatalf("list allocations: %v", listErr)
+	}
+	if len(allocs) != 0 {
+		t.Fatalf("expected no persisted allocations after failed allocate, got %+v", allocs)
+	}
+}
+
 func TestGPUWeightShardsFiltersRuntimeEntries(t *testing.T) {
 	shards := []ModelShard{
 		{Name: "weights-1.safetensors", Ordinal: 1, Kind: "weight"},
@@ -783,4 +1081,66 @@ func writeReadyModelWithShardsForGPUTest(t *testing.T, modelRoot, modelID, manif
 		t.Fatalf("write READY marker: %v", err)
 	}
 	return modelPath, totalBytes
+}
+
+func writeReadySafeTensorsModelForGPUTest(t *testing.T, modelRoot, modelID, manifest string) (string, int64) {
+	t.Helper()
+	modelPath := filepath.Join(modelRoot, modelID, strings.ReplaceAll(manifest, ":", "-"))
+	if err := os.MkdirAll(filepath.Join(modelPath, "metadata"), 0o755); err != nil {
+		t.Fatalf("mkdir metadata: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(modelPath, "shards"), 0o755); err != nil {
+		t.Fatalf("mkdir shards: %v", err)
+	}
+
+	shardName := "model-00001-of-00001.safetensors"
+	shardPath := filepath.Join(modelPath, "shards", shardName)
+	header := map[string]any{
+		"model.layers.0.weight": map[string]any{
+			"dtype":        "F32",
+			"shape":        []int{2},
+			"data_offsets": []int{0, 8},
+		},
+	}
+	writeSafeTensorsTestFile(t, shardPath, header, []byte{1, 2, 3, 4, 5, 6, 7, 8})
+
+	shardBytes, err := os.ReadFile(shardPath)
+	if err != nil {
+		t.Fatalf("read safetensors shard: %v", err)
+	}
+	shardSize := int64(len(shardBytes))
+
+	md := localMetadata{
+		SchemaVersion:  1,
+		ModelID:        modelID,
+		ManifestDigest: manifest,
+		Profile: ModelProfile{
+			SchemaVersion: 1,
+			ModelID:       modelID,
+			ModelRevision: "r1",
+			Framework:     "pytorch",
+			Format:        "safetensors",
+			Shards: []ModelShard{
+				{
+					Name:    shardName,
+					Digest:  digest.FromBytes(shardBytes).String(),
+					Size:    shardSize,
+					Ordinal: 1,
+					Kind:    "weight",
+				},
+			},
+			Integrity: ModelIntegrity{ManifestDigest: manifest},
+		},
+	}
+	mb, err := json.Marshal(md)
+	if err != nil {
+		t.Fatalf("marshal metadata: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(modelPath, "metadata", "model.json"), mb, 0o444); err != nil {
+		t.Fatalf("write model metadata: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(modelPath, "READY"), []byte("ok\n"), 0o444); err != nil {
+		t.Fatalf("write READY marker: %v", err)
+	}
+	return modelPath, shardSize
 }
