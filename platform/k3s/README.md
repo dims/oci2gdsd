@@ -280,10 +280,6 @@ ALLOW_RELAXED_GDS=true REQUIRE_DIRECT_GDS=false OCI2GDS_STRICT=false OCI2GDS_PRO
 # Build a GDS-capable oci2gdsd image for init/daemon containers
 OCI2GDSD_ENABLE_GDS_IMAGE=true REQUIRE_DAEMON_IPC_PROBE=true make verify-k3s-qwen
 
-# Build a dedicated qwen runtime image with oci2gdsd + libcufile and load it into k3s
-# (default false; enable explicitly when needed)
-BUILD_QWEN_GDS_RUNTIME_IMAGE=true make verify-k3s-qwen
-
 # Override the Docker target when using the shared Dockerfile
 OCI2GDSD_DOCKER_TARGET=runtime-gds OCI2GDSD_ENABLE_GDS_IMAGE=true make verify-k3s-qwen
 

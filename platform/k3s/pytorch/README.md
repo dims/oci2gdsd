@@ -8,8 +8,6 @@ Runtime-specific assets for PyTorch paths in k3s daemonset mode.
 - `pytorch_daemon_client.py`: daemon API + CUDA IPC handoff workflow.
 - `qwen-hello.md`: qwen workload walkthrough and behavior notes.
 - `app/`, `native/`, and `qwen-*.yaml.tpl`: qwen deployment/runtime assets.
-- `Dockerfile.vllm-runtime-gds`: optional qwen runtime image used by strict
-  probe experiments.
 
 ## Typical runs
 

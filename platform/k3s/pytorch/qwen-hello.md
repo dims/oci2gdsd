@@ -43,16 +43,12 @@ If CUDA appears unavailable in pods (`torch.cuda.is_available() == False` while 
 
 ## Files
 
-- `oci-model-registry.yaml`: In-cluster Docker registry deployment/service.
 - `qwen-k3s-hello-deployment.yaml.tpl`: Deployment template with:
   - `preload-model` init container (`oci2gdsd ensure`)
   - `pytorch-api` container (runs `oci2gdsd serve` + FastAPI + PyTorch runtime)
 - `app/qwen_server.py`: FastAPI + PyTorch + `torch.ops.oci2gds` startup/runtime logic.
 - `app/deps_bootstrap.py`: runtime dependency bootstrap script used by the pod command.
 - `native/oci2gds_torch_native.cpp`: shared native extension source used by both qwen app and host probe.
-- `Dockerfile.vllm-runtime-gds`: Optional qwen runtime image with `oci2gdsd` + `libcufile` for native probe experiments.
-- `qwen-packager-hello-world.md`: Local packager walkthrough.
-- `qwen-packager-k3s-hello-world.md`: End-to-end k3s walkthrough.
 
 ## Quick Start (Automated)
 
@@ -69,20 +65,6 @@ VALIDATE_QWEN_HELLO=true make verify-k3s-qwen
 ```
 
 Harness docs: [`platform/k3s/README.md`](../README.md)
-
-## Manual Walkthrough
-
-Use:
-
-- [`qwen-packager-k3s-hello-world.md`](./qwen-packager-k3s-hello-world.md)
-
-It covers:
-
-- preparing host-native `k3s`
-- starting in-cluster registry
-- packaging + pushing Qwen artifact
-- rendering and applying the deployment template
-- calling `/healthz` and `/chat`
 
 Dependency bootstrap behavior:
 

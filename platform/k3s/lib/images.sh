@@ -84,19 +84,6 @@ ensure_image_local_or_pull() {
   done
 }
 
-build_and_load_qwen_gds_runtime_image() {
-  if [[ "${BUILD_QWEN_GDS_RUNTIME_IMAGE}" != "true" ]]; then
-    return
-  fi
-  [[ -f "${QWEN_GDS_RUNTIME_DOCKERFILE}" ]] || die "qwen gds runtime dockerfile not found: ${QWEN_GDS_RUNTIME_DOCKERFILE}"
-  log "building qwen gds runtime image ${QWEN_GDS_RUNTIME_IMAGE} using ${QWEN_GDS_RUNTIME_DOCKERFILE}"
-  docker build -f "${QWEN_GDS_RUNTIME_DOCKERFILE}" -t "${QWEN_GDS_RUNTIME_IMAGE}" "${REPO_ROOT}"
-  cluster_load_image "${QWEN_GDS_RUNTIME_IMAGE}"
-  PYTORCH_RUNTIME_IMAGE="${QWEN_GDS_RUNTIME_IMAGE}"
-  export PYTORCH_RUNTIME_IMAGE
-  log "using qwen gds runtime image for qwen-hello: ${PYTORCH_RUNTIME_IMAGE}"
-}
-
 preload_workload_image() {
   if [[ "${PRELOAD_WORKLOAD_IMAGE}" != "true" ]]; then
     log "skipping pre-load for ${WORKLOAD_IMAGE}; cluster will pull image on demand"
