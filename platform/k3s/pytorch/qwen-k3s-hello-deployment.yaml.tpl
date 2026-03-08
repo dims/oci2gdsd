@@ -68,10 +68,8 @@ spec:
         operator: "Exists"
         effect: "NoSchedule"
       volumes:
-      - name: oci2gdsd-root
-        hostPath:
-          path: __OCI2GDSD_ROOT_PATH__
-          type: DirectoryOrCreate
+      - name: oci2gdsd-state
+        emptyDir: {}
       - name: oci2gdsd-config
         configMap:
           name: oci2gdsd-config
@@ -93,33 +91,6 @@ spec:
         hostPath:
           path: /dev
           type: Directory
-      initContainers:
-      - name: preload-model
-        image: __OCI2GDSD_IMAGE__
-        imagePullPolicy: IfNotPresent
-        securityContext:
-          runAsUser: 0
-          runAsGroup: 0
-          privileged: true
-        command: ["/bin/sh", "-ec"]
-        args:
-        - |
-          set -eu
-          oci2gdsd --registry-config /etc/oci2gdsd/config.yaml --json ensure \
-            --ref "__MODEL_REF__" \
-            --model-id "__MODEL_ID__" \
-            --lease-holder "__LEASE_HOLDER__" \
-            --strict-integrity \
-            --wait
-          oci2gdsd --registry-config /etc/oci2gdsd/config.yaml --json status \
-            --model-id "__MODEL_ID__" \
-            --digest "__MODEL_DIGEST__"
-        volumeMounts:
-        - name: oci2gdsd-root
-          mountPath: __OCI2GDSD_ROOT_PATH__
-        - name: oci2gdsd-config
-          mountPath: /etc/oci2gdsd
-          readOnly: true
       containers:
       - name: oci2gdsd-daemon
         image: __OCI2GDSD_IMAGE__
@@ -136,7 +107,7 @@ spec:
             --unix-socket /run/oci2gdsd/daemon.sock \
             --socket-perms 0660
         volumeMounts:
-        - name: oci2gdsd-root
+        - name: oci2gdsd-state
           mountPath: __OCI2GDSD_ROOT_PATH__
           readOnly: false
         - name: oci2gdsd-config

@@ -57,6 +57,8 @@ Report artifact:
 4. host `/run/udev` mount
 5. host `/dev` pass-through mount to `/host-dev`
 6. `MODEL_ROOT_PATH` runtime env is forbidden
+7. `preload-model` init container is forbidden
+8. `oci2gdsd-root` host model-root volume/mount wiring is forbidden
 
 ## Updating the Contract
 

@@ -64,7 +64,6 @@ validate_qwen_hello_example() {
   apply_configmap_from_files "${QWEN_HELLO_NAMESPACE}" "qwen-hello-native" \
     --from-file=oci2gds_torch_native.cpp="${native_dir}/oci2gds_torch_native.cpp"
 
-  maybe_sudo mkdir -p "${OCI2GDSD_ROOT_PATH}" || true
   mkdir -p "${RENDERED_DIR}" "${RESULTS_DIR}"
   local rendered="${RENDERED_DIR}/qwen-hello.yaml"
   render_template "${template}" "${rendered}" \

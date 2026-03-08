@@ -84,7 +84,9 @@
       "mountPath:[[:space:]]*/host-dev"
     ],
     "forbidden_patterns": [
-      "-[[:space:]]+name:[[:space:]]*MODEL_ROOT_PATH"
+      "-[[:space:]]+name:[[:space:]]*MODEL_ROOT_PATH",
+      "-[[:space:]]+name:[[:space:]]*oci2gdsd-root",
+      "-[[:space:]]+name:[[:space:]]*preload-model"
     ]
   }
 }

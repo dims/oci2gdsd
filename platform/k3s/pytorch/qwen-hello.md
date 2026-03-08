@@ -3,7 +3,7 @@
 `qwen-hello` is a Kubernetes example that shows:
 
 1. Packaging `Qwen/Qwen3-0.6B` as an OCI artifact with `OCI-ModelProfile-v1`.
-2. Preloading model identity with `oci2gdsd ensure` in an init container.
+2. Performing model ensure/load through `gpu/allocate` at runtime (no preload init container).
 3. Running `oci2gdsd serve` in a dedicated sidecar container.
 4. Running a FastAPI app that requests `gpu/allocate` + `model/runtime-bundle` and loads from pod-local runtime bundle files (offline mode, no runtime host model-root dependency).
 5. Exercising `torch.ops.oci2gds.read_into_tensor`, `torch.ops.oci2gds.load_profile`, and a daemon IPC handoff probe at startup.
@@ -44,7 +44,7 @@ If CUDA appears unavailable in pods (`torch.cuda.is_available() == False` while 
 ## Files
 
 - `qwen-k3s-hello-deployment.yaml.tpl`: Deployment template with:
-  - `preload-model` init container (`oci2gdsd ensure`)
+  - pod-local daemon state volume (`emptyDir`)
   - `oci2gdsd-daemon` sidecar (runs `oci2gdsd serve`)
   - `pytorch-api` container (FastAPI + PyTorch runtime, daemon-client startup)
 - `app/qwen_server.py`: FastAPI + PyTorch + `torch.ops.oci2gds` startup/runtime logic.
