@@ -120,6 +120,7 @@ spec:
         - name: oci2gdsd-config
           mountPath: /etc/oci2gdsd
           readOnly: true
+      containers:
       - name: oci2gdsd-daemon
         image: __OCI2GDSD_IMAGE__
         imagePullPolicy: IfNotPresent
@@ -144,7 +145,6 @@ spec:
         - name: oci2gdsd-run
           mountPath: /run/oci2gdsd
           readOnly: false
-      containers:
       - name: pytorch-api
         image: __PYTORCH_RUNTIME_IMAGE__
         imagePullPolicy: IfNotPresent
