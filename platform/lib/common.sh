@@ -45,6 +45,29 @@ is_uint() {
   [[ "${1}" =~ ^[0-9]+$ ]]
 }
 
+enforce_boolean_true_policy() {
+  local relax_var="$1"
+  local context="$2"
+  shift 2
+
+  local relax_val="${!relax_var-false}"
+  if is_true "${relax_val}"; then
+    warn "${relax_var}=true: ${context} checks are relaxed for debugging"
+    return 0
+  fi
+
+  local violations=()
+  local var
+  local val
+  for var in "$@"; do
+    val="${!var-}"
+    [[ "${val}" == "true" ]] || violations+=("${var}=${val}")
+  done
+  if ((${#violations[@]} > 0)); then
+    die "${context} violation: ${violations[*]} (set ${relax_var}=true only for temporary debugging)"
+  fi
+}
+
 nearest_existing_path() {
   local p="$1"
   while [[ ! -e "${p}" ]]; do

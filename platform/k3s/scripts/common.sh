@@ -45,21 +45,15 @@ EOF
 }
 
 enforce_strict_gds_policy() {
-  if is_true "${ALLOW_RELAXED_GDS}"; then
-    warn "ALLOW_RELAXED_GDS=true: strict direct-GDS policy checks are relaxed for debugging"
-    return 0
-  fi
-
-  local violations=()
-  [[ "${REQUIRE_DIRECT_GDS}" == "true" ]] || violations+=("REQUIRE_DIRECT_GDS=${REQUIRE_DIRECT_GDS}")
-  [[ "${OCI2GDS_STRICT}" == "true" ]] || violations+=("OCI2GDS_STRICT=${OCI2GDS_STRICT}")
-  [[ "${OCI2GDS_PROBE_STRICT}" == "true" ]] || violations+=("OCI2GDS_PROBE_STRICT=${OCI2GDS_PROBE_STRICT}")
-  [[ "${OCI2GDS_FORCE_NO_COMPAT}" == "true" ]] || violations+=("OCI2GDS_FORCE_NO_COMPAT=${OCI2GDS_FORCE_NO_COMPAT}")
-  [[ "${REQUIRE_STRICT_PROFILE_PROBE}" == "true" ]] || violations+=("REQUIRE_STRICT_PROFILE_PROBE=${REQUIRE_STRICT_PROFILE_PROBE}")
-  [[ "${REQUIRE_NO_COMPAT_EVIDENCE}" == "true" ]] || violations+=("REQUIRE_NO_COMPAT_EVIDENCE=${REQUIRE_NO_COMPAT_EVIDENCE}")
-  if ((${#violations[@]} > 0)); then
-    die "strict GDS policy violation: ${violations[*]} (set ALLOW_RELAXED_GDS=true only for temporary debugging)"
-  fi
+  enforce_boolean_true_policy \
+    "ALLOW_RELAXED_GDS" \
+    "strict GDS policy" \
+    REQUIRE_DIRECT_GDS \
+    OCI2GDS_STRICT \
+    OCI2GDS_PROBE_STRICT \
+    OCI2GDS_FORCE_NO_COMPAT \
+    REQUIRE_STRICT_PROFILE_PROBE \
+    REQUIRE_NO_COMPAT_EVIDENCE
 }
 
 validate_runtime_contracts() {
