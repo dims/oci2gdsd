@@ -13,8 +13,8 @@ For runtime mount/env contract details, see [`docs/runtime-contract-matrix.md`](
 - Local OCI registry in-cluster for repeatable artifact tests.
 - `oci2gdsd ensure/status/verify` in an init container.
 - PyTorch container reading preloaded model files and running CUDA compute.
-- Optional raw-manifest DaemonSet mode (`E2E_DEPLOY_MODE=daemonset-manifest`) where
-  `oci2gdsd serve` is node-level and workloads call daemon GPU APIs directly.
+- DaemonSet manifest mode where `oci2gdsd serve` is node-level and workloads call
+  daemon GPU APIs directly.
 - Validation of the PyTorch qwen workload under `platform/k3s/pytorch`
   by issuing a real `/chat` request and verifying `/healthz` `oci2gds_profile`
   status fields.
@@ -39,7 +39,7 @@ From repo root:
 ```bash
 make prereq
 make verify-smoke
-make verify-k3s
+make verify-k3s-qwen
 ```
 
 Beginner GPU host walkthrough: [`docs/quickstart-a100.md`](../../docs/quickstart-a100.md)
@@ -57,9 +57,11 @@ Prereq hierarchy:
 Raw-manifest DaemonSet path (no Helm):
 
 ```bash
-make verify-k3s-daemonset
-make verify-k3s-daemonset-all
-make verify-k3s-daemonset-parity-all
+make verify-k3s-qwen
+make verify-k3s-tensor
+make verify-k3s-vllm
+# run all runtime suites
+make verify-k3s-qwen verify-k3s-tensor verify-k3s-vllm
 ```
 
 `make prereq-k3s` validates cluster/runtime/image prerequisites and auto-installs host packages by default (`INSTALL_MISSING_PREREQS=true`) after running stages 0 and 1.
@@ -80,8 +82,8 @@ If any gate fails, prereq aborts with remediation steps (attach/mount larger dis
 Fresh A100 minimum path (intern-friendly):
 
 ```bash
-make verify-k3s-qwen-smoke
-make verify-host-qwen-smoke
+make verify-k3s-qwen
+./platform/host/scripts/quick-qwen.sh
 ```
 
 After any host reboot, verify NVMe mount persistence before running quick targets:
@@ -98,13 +100,13 @@ Base dev toolchain expected on the host for full repo workflows:
 - `make`
 - `c++`/build headers (native extension/probe compilation path)
 
-`make verify-k3s-qwen-smoke` now auto-handles the common first-run setup:
+`make verify-k3s-qwen` now auto-handles the common first-run setup:
 
 - checks/installs prerequisites
 - installs host k3s automatically when `k3s` is missing
 - installs GDS user-space tools (`gdscheck`/`gdsio`) when `REQUIRE_DIRECT_GDS=true` and missing
 - auto-configures storage to `/mnt/nvme` when root disk is too small (unless `AUTO_CONFIGURE_STORAGE=false`)
-- builds and loads `oci2gdsd` image into cluster (unless `AUTO_BUILD_OCI2GDSD_IMAGE=false`)
+- builds and loads `oci2gdsd` image into cluster (unless `SKIP_OCI2GDSD_IMAGE_BUILD=true` and/or `SKIP_OCI2GDSD_IMAGE_LOAD=true`)
 - installs GPU Operator if `nvidia.com/gpu` is not allocatable (unless `AUTO_INSTALL_GPU_OPERATOR=false`)
   - pinned chart version defaults to `GPU_OPERATOR_CHART_VERSION=v25.10.1`
 - auto-seeds model identity + in-cluster registry packaging if missing (unless `AUTO_SEED_MODEL_IDENTITY=false`)
@@ -123,7 +125,7 @@ sudo systemctl restart docker
 sudo systemctl restart k3s
 ```
 
-After that, `make verify-host-qwen-smoke` validates host direct-GDS with the model now present under `OCI2GDSD_ROOT_PATH`.
+After that, `./platform/host/scripts/quick-qwen.sh` validates host direct-GDS with the model now present under `OCI2GDSD_ROOT_PATH`.
 
 By default this harness is strict (`REQUIRE_DIRECT_GDS=true`). If `gdscheck -p` reports
 `NVMe : compat/Unsupported`, the target requires strict functional proof from
@@ -135,7 +137,7 @@ If you prefer explicit staged runs:
 
 ```bash
 make prereq-k3s
-make verify-k3s-qwen-smoke
+make verify-k3s-qwen
 ```
 
 This script only:
@@ -152,16 +154,16 @@ For host-native k3s quick iteration:
 REGISTRY_NAMESPACE=oci-model-registry \
 MODEL_REF_OVERRIDE=oci-model-registry.oci-model-registry.svc.cluster.local:5000/models/qwen3-0.6b@sha256:... \
 MODEL_DIGEST_OVERRIDE=sha256:... \
-make verify-k3s-qwen-smoke
+make verify-k3s-qwen
 ```
 
 ## Model Identity For Quick Runs
 
-`make verify-k3s-qwen-smoke` needs a model digest and in-cluster OCI ref.
+`make verify-k3s-qwen` needs a model digest and in-cluster OCI ref.
 By default, missing identity is auto-seeded (`AUTO_SEED_MODEL_IDENTITY=true`).
 There are three supported ways to provide this:
 
-1. Run `make verify-k3s` once on the same host.
+1. Run `make verify-k3s-qwen` once on the same host.
 This generates `platform/k3s/work/packager/output/manifest-descriptor.json`,
 which quick mode can reuse automatically.
 
@@ -170,7 +172,7 @@ which quick mode can reuse automatically.
 ```bash
 MODEL_DIGEST_OVERRIDE=sha256:<digest> \
 MODEL_REF_OVERRIDE=oci-model-registry.oci-model-registry.svc.cluster.local:5000/models/qwen3-0.6b@sha256:<digest> \
-make verify-k3s-qwen-smoke
+make verify-k3s-qwen
 ```
 
 3. Derive digest from preloaded host model cache and export overrides:
@@ -180,7 +182,7 @@ digest_dir="$(ls -1dt /mnt/nvme/oci2gdsd/models/qwen3-0.6b/sha256-* | head -n1)"
 digest="sha256:${digest_dir##*/sha256-}"
 export MODEL_DIGEST_OVERRIDE="${digest}"
 export MODEL_REF_OVERRIDE="oci-model-registry.oci-model-registry.svc.cluster.local:5000/models/qwen3-0.6b@${digest}"
-make verify-k3s-qwen-smoke
+make verify-k3s-qwen
 ```
 
 If you use a non-default registry service/namespace, replace
@@ -202,65 +204,56 @@ If you want to override the model identity explicitly:
 ```bash
 MODEL_REF_OVERRIDE=oci-model-registry.oci-model-registry.svc.cluster.local:5000/models/qwen3-0.6b@sha256:... \
 MODEL_DIGEST_OVERRIDE=sha256:... \
-make verify-k3s-qwen-smoke
+make verify-k3s-qwen
 ```
 
 ## Common overrides
 
 ```bash
 # Use a different model source
-HF_REPO=Qwen/Qwen3-0.6B HF_REVISION=main make verify-k3s
+HF_REPO=Qwen/Qwen3-0.6B HF_REVISION=main make verify-k3s-qwen
 
 # Override workload image (default pinned digest of nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1)
-PYTORCH_IMAGE=pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime make verify-k3s
+PYTORCH_IMAGE=pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime make verify-k3s-qwen
 
 # Reuse an already pushed model artifact and skip package/push
 MODEL_REF_OVERRIDE=oci-model-registry.oci-model-registry.svc.cluster.local:5000/models/qwen3-0.6b@sha256:... \
 MODEL_DIGEST_OVERRIDE=sha256:... \
-make verify-k3s
+make verify-k3s-qwen
 
 # Run full e2e in raw-manifest daemonset mode
-make verify-k3s-daemonset
+make verify-k3s-qwen
 
 # Run full e2e in raw-manifest daemonset mode with TensorRT-LLM workload
-make verify-k3s-tensor-e2e-daemonset
+make verify-k3s-tensor
 
 # Run full e2e in raw-manifest daemonset mode with vLLM plugin workload
-make verify-k3s-vllm-e2e-daemonset
+make verify-k3s-vllm
 
-# Run parity-focused daemonset checks (runtime-specific strict IPC tensor-map gates)
-make verify-k3s-tensor-e2e-daemonset-parity
-make verify-k3s-vllm-e2e-daemonset-parity
-make verify-k3s-daemonset-parity-all
-
-# Equivalent via explicit mode toggle
-E2E_DEPLOY_MODE=daemonset-manifest make verify-k3s
+# Run all runtime suites (each includes full-parity checks)
+make verify-k3s-qwen verify-k3s-tensor verify-k3s-vllm
 
 # Skip qwen-hello example validation (enabled by default)
-VALIDATE_QWEN_HELLO=false make verify-k3s
+VALIDATE_QWEN_HELLO=false make verify-k3s-qwen
 
 # Skip local host GDS preflight (`gpu probe` + `gpu load --mode benchmark`)
-VALIDATE_LOCAL_GDS=false make verify-k3s
+VALIDATE_LOCAL_GDS=false make verify-k3s-qwen
 
 # Optional: pre-load workload image(s) into k3s containerd (default true)
-PRELOAD_WORKLOAD_IMAGE=true make verify-k3s
+PRELOAD_WORKLOAD_IMAGE=true make verify-k3s-qwen
 
 # Optional: pre-load the qwen-hello PyTorch runtime image into k3s containerd (default true)
-PRELOAD_PYTORCH_RUNTIME_IMAGE=true make verify-k3s
+PRELOAD_PYTORCH_RUNTIME_IMAGE=true make verify-k3s-qwen
 
 # Optional: pre-load TensorRT-LLM runtime image (default true for TensorRT runtime)
-PRELOAD_TENSORRTLLM_RUNTIME_IMAGE=true make verify-k3s-tensor-e2e-daemonset
+PRELOAD_TENSORRTLLM_RUNTIME_IMAGE=true make verify-k3s-tensor
 
 # Optional: pre-load vLLM runtime image (default true for vLLM runtime)
-PRELOAD_VLLM_RUNTIME_IMAGE=true make verify-k3s-vllm-e2e-daemonset
+PRELOAD_VLLM_RUNTIME_IMAGE=true make verify-k3s-vllm
 
 # Optional: require daemon IPC probe to report status=ok
 # (default: true when OCI2GDSD_ENABLE_GDS_IMAGE=true, otherwise false)
-REQUIRE_DAEMON_IPC_PROBE=true make verify-k3s
-
-# Runtime parity strictness for TensorRT/vLLM daemon-client modes
-RUNTIME_PARITY_MODE=probe make verify-k3s-vllm-e2e-daemonset
-RUNTIME_PARITY_MODE=full REQUIRE_FULL_IPC_BIND=true make verify-k3s-vllm-e2e-daemonset
+REQUIRE_DAEMON_IPC_PROBE=true make verify-k3s-qwen
 
 # Default behavior is fail-fast GDS mode:
 # - REQUIRE_DIRECT_GDS=true
@@ -273,43 +266,37 @@ RUNTIME_PARITY_MODE=full REQUIRE_FULL_IPC_BIND=true make verify-k3s-vllm-e2e-dae
 # - ALLOW_RELAXED_GDS=false
 # - privileged container securityContext for GPU/GDS workload containers
 # You can still set them explicitly:
-REQUIRE_DIRECT_GDS=true OCI2GDS_STRICT=true OCI2GDS_PROBE_STRICT=true OCI2GDS_FORCE_NO_COMPAT=true make verify-k3s-qwen-smoke
+REQUIRE_DIRECT_GDS=true OCI2GDS_STRICT=true OCI2GDS_PROBE_STRICT=true OCI2GDS_FORCE_NO_COMPAT=true make verify-k3s-qwen
 
 # Optional profile probe perf gates
-MIN_PROFILE_PROBE_MIB_S=3000 PROFILE_PROBE_MAX_REGRESSION_PCT=20 make verify-k3s-qwen-smoke
-
-# qwen-hello profile selection:
-# - `default`: generic settings
-# - `host-direct`: hostPath-backed root (NVMe-friendly) + strict probes
-# For k3s, default profile is `host-direct`.
-QWEN_HELLO_PROFILE=host-direct make verify-k3s-qwen-smoke
+MIN_PROFILE_PROBE_MIB_S=3000 PROFILE_PROBE_MAX_REGRESSION_PCT=20 make verify-k3s-qwen
 
 # Override root path used by init/app pod hostPath (defaults to /mnt/nvme/oci2gdsd in host-direct).
-OCI2GDSD_ROOT_PATH=/mnt/nvme/oci2gdsd make verify-k3s-qwen-smoke
+OCI2GDSD_ROOT_PATH=/mnt/nvme/oci2gdsd make verify-k3s-qwen
 
 # Explicit opt-out (debug only): relax strict/direct enforcement.
-ALLOW_RELAXED_GDS=true REQUIRE_DIRECT_GDS=false OCI2GDS_STRICT=false OCI2GDS_PROBE_STRICT=false OCI2GDS_FORCE_NO_COMPAT=false make verify-k3s-qwen-smoke
+ALLOW_RELAXED_GDS=true REQUIRE_DIRECT_GDS=false OCI2GDS_STRICT=false OCI2GDS_PROBE_STRICT=false OCI2GDS_FORCE_NO_COMPAT=false make verify-k3s-qwen
 
 # Build a GDS-capable oci2gdsd image for init/daemon containers
-OCI2GDSD_ENABLE_GDS_IMAGE=true REQUIRE_DAEMON_IPC_PROBE=true make verify-k3s
+OCI2GDSD_ENABLE_GDS_IMAGE=true REQUIRE_DAEMON_IPC_PROBE=true make verify-k3s-qwen
 
 # Build a dedicated qwen runtime image with oci2gdsd + libcufile and load it into k3s
 # (default false; enable explicitly when needed)
-BUILD_QWEN_GDS_RUNTIME_IMAGE=true make verify-k3s
+BUILD_QWEN_GDS_RUNTIME_IMAGE=true make verify-k3s-qwen
 
 # Override the Docker target when using the shared Dockerfile
-OCI2GDSD_DOCKER_TARGET=runtime-gds OCI2GDSD_ENABLE_GDS_IMAGE=true make verify-k3s
+OCI2GDSD_DOCKER_TARGET=runtime-gds OCI2GDSD_ENABLE_GDS_IMAGE=true make verify-k3s-qwen
 
 # Use a prebuilt oci2gdsd image and skip local build/load into k3s
 # (useful for large CUDA/GDS images pushed to a registry)
 SKIP_OCI2GDSD_IMAGE_BUILD=true SKIP_OCI2GDSD_IMAGE_LOAD=true \
-OCI2GDSD_IMAGE=<registry>/<repo>:<tag> make verify-k3s
+OCI2GDSD_IMAGE=<registry>/<repo>:<tag> make verify-k3s-qwen
 
 # Force namespace name
-E2E_NAMESPACE=oci2gdsd-e2e make verify-k3s
+E2E_NAMESPACE=oci2gdsd-e2e make verify-k3s-qwen
 
 # Override CUDA toolkit locations used for local GDS preflight builds
-CUDA_INCLUDE_DIR=/usr/local/cuda/include CUDA_LIB_DIR=/usr/local/cuda/lib64 make verify-k3s
+CUDA_INCLUDE_DIR=/usr/local/cuda/include CUDA_LIB_DIR=/usr/local/cuda/lib64 make verify-k3s-qwen
 
 # Override storage gates (GiB) if needed
 MIN_FREE_GB_DOCKER=150 MIN_FREE_GB_K3S=80 MIN_FREE_GB_OCI2GDS_ROOT=40 make prereq-k3s
@@ -318,10 +305,10 @@ MIN_FREE_GB_DOCKER=150 MIN_FREE_GB_K3S=80 MIN_FREE_GB_OCI2GDS_ROOT=40 make prere
 K3S_DATA_DIR=/mnt/nvme/k3s make prereq-k3s
 
 # Disable automatic storage/runtime/model bootstrap helpers (debug only)
-AUTO_CONFIGURE_STORAGE=false AUTO_INSTALL_GPU_OPERATOR=false AUTO_SEED_MODEL_IDENTITY=false make verify-k3s-qwen-smoke
+AUTO_CONFIGURE_STORAGE=false AUTO_INSTALL_GPU_OPERATOR=false AUTO_SEED_MODEL_IDENTITY=false make verify-k3s-qwen
 
 # Override pinned GPU Operator chart version when required
-GPU_OPERATOR_CHART_VERSION=v25.10.1 make verify-k3s-qwen-smoke
+GPU_OPERATOR_CHART_VERSION=v25.10.1 make verify-k3s-qwen
 ```
 
 ## Cleanup
@@ -334,12 +321,10 @@ make clean-k3s
 
 Logs are written under:
 
-- `platform/k3s/work/artifacts/results/preload.log`
-- `platform/k3s/work/artifacts/results/pytorch.log`
-- `platform/k3s/work/artifacts/results/pytorch-daemon-client.log` (daemonset-manifest mode)
-- `platform/k3s/work/artifacts/results/tensorrt-daemon-client.log` (daemonset-manifest mode with `WORKLOAD_RUNTIME=tensorrt`)
-- `platform/k3s/work/artifacts/results/vllm-daemon-client.log` (daemonset-manifest mode with `WORKLOAD_RUNTIME=vllm`)
-- `platform/k3s/work/artifacts/results/daemonset.log` (daemonset-manifest mode)
+- `platform/k3s/work/artifacts/results/pytorch-daemon-client.log`
+- `platform/k3s/work/artifacts/results/tensorrt-daemon-client.log`
+- `platform/k3s/work/artifacts/results/vllm-daemon-client.log`
+- `platform/k3s/work/artifacts/results/daemonset.log`
 - `platform/k3s/work/artifacts/results/qwen-hello.log`
 - `platform/k3s/work/artifacts/results/release-gc.log`
 - `platform/k3s/work/artifacts/results/environment-report.txt`

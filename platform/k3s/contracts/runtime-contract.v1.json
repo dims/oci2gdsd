@@ -27,6 +27,7 @@
       "template": "platform/k3s/pytorch/pytorch-daemon-client-job.yaml.tpl",
       "required_patterns": [
         "-[[:space:]]+name:[[:space:]]*MODEL_REF",
+        "-[[:space:]]+name:[[:space:]]*RUNTIME_PARITY_MODE",
         "-[[:space:]]+name:[[:space:]]*OCI2GDS_TORCH_ENABLE_NATIVE",
         "python[[:space:]]+/scripts/pytorch_daemon_client\\.py"
       ],

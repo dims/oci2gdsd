@@ -10,12 +10,12 @@ Runtime-specific assets for TensorRT-LLM paths in k3s daemonset mode.
 
 ## Typical run
 
-- `make verify-k3s-tensor-e2e-daemonset`
+- `make verify-k3s-tensor`
 
 ## Parity mode
 
-- `RUNTIME_PARITY_MODE=probe|partial|full`
-- `make verify-k3s-tensor-e2e-daemonset-parity` runs with `RUNTIME_PARITY_MODE=full`.
+- `RUNTIME_PARITY_MODE=full` is required (path-backed modes removed).
+- `make verify-k3s-tensor` always runs with `RUNTIME_PARITY_MODE=full`.
 - TensorRT flow validates daemon `/v1/gpu/tensor-map` coverage before inference and emits:
   - `TENSORRT_IPC_TENSOR_MAP_OK`
   - `TENSORRT_IPC_BIND_OK`

@@ -80,6 +80,8 @@ spec:
           value: "__REQUIRE_DIRECT_GDS__"
         - name: OCI2GDS_STRICT
           value: "__OCI2GDS_STRICT__"
+        - name: RUNTIME_PARITY_MODE
+          value: "__RUNTIME_PARITY_MODE__"
         - name: CUFILE_ENV_PATH_JSON
           value: "/etc/cufile.json"
         - name: DEVICE_UUID

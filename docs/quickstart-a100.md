@@ -37,33 +37,21 @@ This executes:
 
 - `verify-unit`
 - `verify-local`
-- `verify-host-qwen-smoke`
-- `verify-k3s-qwen-smoke` (includes runtime-contract checks for qwen/pytorch path)
+- `./platform/host/scripts/quick-qwen.sh`
+- `verify-k3s-qwen` (includes runtime-contract checks for qwen/pytorch path)
 
 ## 5) Run full k3s e2e
 
-Inline qwen path:
+qwen daemonset full parity:
 
 ```bash
-make verify-k3s
+make verify-k3s-qwen
 ```
 
-Daemonset qwen path:
+All runtime suites (qwen + TensorRT-LLM + vLLM):
 
 ```bash
-make verify-k3s-daemonset
-```
-
-All daemonset runtimes (qwen + TensorRT-LLM + vLLM):
-
-```bash
-make verify-k3s-daemonset-all
-```
-
-Parity-focused daemonset runtime checks:
-
-```bash
-make verify-k3s-daemonset-parity-all
+make verify-k3s-qwen verify-k3s-tensor verify-k3s-vllm
 ```
 
 ## Artifacts

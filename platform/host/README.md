@@ -11,14 +11,14 @@ For the shortest end-to-end GPU host flow, start with [`docs/quickstart-a100.md`
 
 ```bash
 make prereq-host-gds
-make verify-host-qwen-smoke
+./platform/host/scripts/quick-qwen.sh
 ```
 
 Prereq hierarchy:
 - Stage 0 (`prereq-local`) runs first via Make dependency.
 - Stage 1 (`prereq-host-gds`) adds strict host direct-GDS checks.
 
-`verify-host-qwen-smoke` now auto-seeds identity when needed:
+`./platform/host/scripts/quick-qwen.sh` now auto-seeds identity when needed:
 - starts/creates a local OCI registry container (`oci2gdsd-host-registry`)
 - builds/runs the Qwen packager
 - pushes `localhost:${HOST_LOCAL_REGISTRY_PORT}/models/qwen3-0.6b:v1`
@@ -31,7 +31,7 @@ Prereq hierarchy:
 MODEL_ID=qwen3-0.6b \
 MODEL_DIGEST=sha256:... \
 MODEL_REF_OVERRIDE=registry.example.com/models/qwen3-0.6b@sha256:... \
-make verify-host-qwen-smoke
+./platform/host/scripts/quick-qwen.sh
 ```
 
 **Reuse existing on-disk model:**
@@ -57,7 +57,7 @@ fix ownership of model root and rerun:
 ```bash
 sudo chown -R "$(id -u):$(id -g)" "${OCI2GDSD_ROOT_PATH:-/mnt/nvme/oci2gdsd}"
 ```
-By default, `verify-host-qwen-smoke` also validates CLI quick-example operations
+By default, `./platform/host/scripts/quick-qwen.sh` also validates CLI quick-example operations
 (`status`, `verify`, and optionally `ensure`/`release`).
 
 ## Run
@@ -66,7 +66,7 @@ From repo root:
 
 ```bash
 make prereq-host-gds
-make verify-host-qwen-smoke
+./platform/host/scripts/quick-qwen.sh
 ```
 
 Base dev toolchain expected on the host for full repo workflows:
@@ -94,7 +94,7 @@ Defaults:
 - `PACKAGER_IMAGE=oci2gdsd-qwen3-packager:local`
 - `HF_REPO=Qwen/Qwen3-0.6B`, `HF_REVISION=main`, `MODEL_REPO=models/qwen3-0.6b`, `MODEL_TAG=v1`
 - `VALIDATE_QUICK_EXAMPLE=true` (run CLI lifecycle assertions before probe)
-- `QUICK_EXAMPLE_LEASE_HOLDER=verify-host-qwen-smoke`
+- `QUICK_EXAMPLE_LEASE_HOLDER=host-qwen-smoke`
 - `PYTORCH_RUNTIME_IMAGE=nvcr.io/nvidia/ai-dynamo/vllm-runtime@sha256:de8ac9afb52711b08169e0f58388528c091efae6fb367a6fcfa119edef4bb233`
 - `OCI2GDS_STRICT=true`
 - `REQUIRE_DIRECT_GDS=true`
@@ -124,34 +124,34 @@ Runtime dependency behavior:
 
 ```bash
 # Probe a specific model digest
-MODEL_ID=qwen3-0.6b MODEL_DIGEST=sha256:... make verify-host-qwen-smoke
+MODEL_ID=qwen3-0.6b MODEL_DIGEST=sha256:... ./platform/host/scripts/quick-qwen.sh
 
 # Validate full quick-example lifecycle (ensure/status/verify/release)
 MODEL_ID=qwen3-0.6b \
 MODEL_DIGEST=sha256:... \
 MODEL_REF_OVERRIDE=registry.example.com/models/qwen3-0.6b@sha256:... \
-make verify-host-qwen-smoke
+./platform/host/scripts/quick-qwen.sh
 
 # Use a different model root
-OCI2GDSD_ROOT_PATH=/var/lib/oci2gdsd make verify-host-qwen-smoke
+OCI2GDSD_ROOT_PATH=/var/lib/oci2gdsd ./platform/host/scripts/quick-qwen.sh
 
 # Allow fallback mode (debug-only; strict policy guard must be explicitly relaxed)
-ALLOW_RELAXED_GDS=true OCI2GDS_STRICT=false REQUIRE_DIRECT_GDS=false OCI2GDS_FORCE_NO_COMPAT=false make verify-host-qwen-smoke
+ALLOW_RELAXED_GDS=true OCI2GDS_STRICT=false REQUIRE_DIRECT_GDS=false OCI2GDS_FORCE_NO_COMPAT=false ./platform/host/scripts/quick-qwen.sh
 
 # Optional: disable immediate process exit after summary (debug-only)
-OCI2GDS_FORCE_EXIT_AFTER_SUMMARY=false make verify-host-qwen-smoke
+OCI2GDS_FORCE_EXIT_AFTER_SUMMARY=false ./platform/host/scripts/quick-qwen.sh
 
 # nvfs counter gate modes:
 # - auto (default): require deltas only when stats are enabled
 # - required: always require deltas
 # - off: never require deltas
-REQUIRE_NVFS_STATS_DELTA_MODE=required make verify-host-qwen-smoke
+REQUIRE_NVFS_STATS_DELTA_MODE=required ./platform/host/scripts/quick-qwen.sh
 
 # Optional perf gates
-HOST_PROBE_MIN_THROUGHPUT_MIB_S=5000 HOST_PROBE_MAX_REGRESSION_PCT=20 make verify-host-qwen-smoke
+HOST_PROBE_MIN_THROUGHPUT_MIB_S=5000 HOST_PROBE_MAX_REGRESSION_PCT=20 ./platform/host/scripts/quick-qwen.sh
 
 # Skip CLI quick-example lifecycle validation
-VALIDATE_QUICK_EXAMPLE=false make verify-host-qwen-smoke
+VALIDATE_QUICK_EXAMPLE=false ./platform/host/scripts/quick-qwen.sh
 
 # Override storage gates (GiB) if your model/image footprint differs
 MIN_FREE_GB_DOCKER=120 MIN_FREE_GB_MODEL_ROOT=40 make prereq-host-gds
@@ -188,7 +188,7 @@ cat /sys/module/nvidia_fs/parameters/rw_stats_enabled
 Then run with a hard gate:
 
 ```bash
-REQUIRE_NVFS_STATS_DELTA_MODE=required make verify-host-qwen-smoke
+REQUIRE_NVFS_STATS_DELTA_MODE=required ./platform/host/scripts/quick-qwen.sh
 ```
 
 If strict no-compat init fails (for example `cuFileDriverOpen failed` under `OCI2GDS_FORCE_NO_COMPAT=true`), the harness now fails fast with an explicit error.

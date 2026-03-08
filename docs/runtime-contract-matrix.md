@@ -12,7 +12,7 @@ The goal is to keep strict direct-GDS preconditions consistent across daemon-cli
 Contract checks run in:
 
 1. `make prereq-k3s` via `platform/k3s/scripts/prereq-check.sh`
-2. `make verify-k3s*` run path via `platform/k3s/scripts/run.sh`
+2. `make verify-k3s-{qwen,tensor,vllm}` run paths via `platform/k3s/scripts/run.sh`
 
 Report artifact:
 
@@ -40,7 +40,7 @@ Report artifact:
 | Requirement | PyTorch | TensorRT-LLM | vLLM |
 |---|---|---|---|
 | Native torch extension enabled (`OCI2GDS_TORCH_ENABLE_NATIVE`) | REQUIRED | REQUIRED | REQUIRED |
-| Runtime parity mode env (`RUNTIME_PARITY_MODE`) | OPTIONAL | REQUIRED | REQUIRED |
+| Runtime parity mode env (`RUNTIME_PARITY_MODE`) | REQUIRED | REQUIRED | REQUIRED |
 | TensorRT runner/build env (`TRT_MAX_*`) | NOT-NEEDED | REQUIRED | NOT-NEEDED |
 | vLLM-specific backend env (`VLLM_ATTENTION_BACKEND`) | NOT-NEEDED | NOT-NEEDED | REQUIRED |
 | Full parity bind gate env (`REQUIRE_FULL_IPC_BIND`) | NOT-NEEDED | OPTIONAL | REQUIRED |
@@ -62,8 +62,9 @@ When adding/changing runtime manifests:
 1. Update `runtime-contract.v1.json` first.
 2. Update templates.
 3. Run `make prereq-k3s` (includes runtime-contract checks).
-4. Run daemonset runtime e2e targets to confirm behavior:
-   - `make verify-k3s-daemonset-all`
-   - `make verify-k3s-daemonset-parity-all`
+4. Run runtime suites to confirm behavior:
+   - `make verify-k3s-qwen`
+   - `make verify-k3s-tensor`
+   - `make verify-k3s-vllm`
 
 If a contract rule is no longer needed, remove it from the contract and document why in this file.

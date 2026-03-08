@@ -9,13 +9,13 @@ Runtime-specific assets for vLLM paths in k3s daemonset mode.
 
 ## Typical run
 
-- `make verify-k3s-vllm-e2e-daemonset`
+- `make verify-k3s-vllm`
 
 ## Parity mode
 
-- `RUNTIME_PARITY_MODE=probe|partial|full`
+- `RUNTIME_PARITY_MODE=full` is required (path-backed modes removed).
 - `REQUIRE_FULL_IPC_BIND=true` enforces full parameter rebinding coverage checks.
-- `make verify-k3s-vllm-e2e-daemonset-parity` runs with `RUNTIME_PARITY_MODE=full` and `REQUIRE_FULL_IPC_BIND=true`.
+- `make verify-k3s-vllm` runs with `RUNTIME_PARITY_MODE=full` and `REQUIRE_FULL_IPC_BIND=true`.
 - vLLM flow calls daemon `/v1/gpu/tensor-map` and emits:
   - `VLLM_IPC_TENSOR_MAP_OK`
   - `VLLM_IPC_BIND_OK`

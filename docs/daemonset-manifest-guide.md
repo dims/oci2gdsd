@@ -35,8 +35,8 @@ Runtime contract matrix: [runtime-contract-matrix.md](runtime-contract-matrix.md
 
 For TensorRT-LLM daemon-client mode, the workload:
 
-- In `probe`/`partial` mode, builds a TensorRT engine from ensured local model files.
-- In `full` parity mode, materializes runtime shard files from daemon-exported CUDA IPC handles before conversion/build (`source=ipc_materialized`).
+- Runs in `full` parity mode only (`RUNTIME_PARITY_MODE=full`; path-backed modes removed).
+- Materializes runtime shard files from daemon-exported CUDA IPC handles before conversion/build (`source=ipc_materialized`).
 - Runs `ModelRunnerCpp.from_dir(..., use_gpu_direct_storage=True)`.
 - Verifies daemon `gpu/tensor-map` IPC handle coverage for safetensors shards.
 - Verifies native IPC import coverage and zero fallback in `full` mode.
@@ -49,38 +49,30 @@ For vLLM daemon-client mode, the workload:
 - Registers out-of-tree `load_format=oci2gds`.
 - Uses daemon `gpu/tensor-map` output to drive IPC-sourced weight loading checks.
 - In `full` parity mode, imports tensor-map entries via CUDA IPC and copies them into vLLM-owned parameter storage (including fused `qkv_proj` and `gate_up_proj` coverage).
-- Supports parity modes (`RUNTIME_PARITY_MODE=off|probe|partial|full`) to gate how strict runtime coupling must be.
+- Runs in `full` parity mode only (`RUNTIME_PARITY_MODE=full`; path-backed modes removed).
 
 ## Harness entrypoint (recommended)
 
 ```bash
-make verify-k3s-daemonset
+make verify-k3s-qwen
 ```
 
 TensorRT-LLM daemon-client run:
 
 ```bash
-make verify-k3s-tensor-e2e-daemonset
+make verify-k3s-tensor
 ```
 
 vLLM daemon-client run (out-of-tree loader plugin):
 
 ```bash
-make verify-k3s-vllm-e2e-daemonset
+make verify-k3s-vllm
 ```
 
-Parity-focused runtime checks:
+Run all runtime suites:
 
 ```bash
-make verify-k3s-tensor-e2e-daemonset-parity
-make verify-k3s-vllm-e2e-daemonset-parity
-make verify-k3s-daemonset-parity-all
-```
-
-Equivalent explicit mode toggle:
-
-```bash
-E2E_DEPLOY_MODE=daemonset-manifest make verify-k3s
+make verify-k3s-qwen verify-k3s-tensor verify-k3s-vllm
 ```
 
 ## Key environment variables
@@ -90,8 +82,8 @@ E2E_DEPLOY_MODE=daemonset-manifest make verify-k3s
 - `OCI2GDSD_ROOT_PATH` (default `/mnt/nvme/oci2gdsd` in host-direct profile)
 - `REQUIRE_DIRECT_GDS` (default `true`)
 - `WORKLOAD_RUNTIME` (`pytorch`, `tensorrt`, or `vllm`; default `pytorch`)
-- `RUNTIME_PARITY_MODE` (`off`, `probe`, `partial`, `full`; default `probe`)
-- `REQUIRE_FULL_IPC_BIND` (default `false`, currently used by vLLM parity flow)
+- `RUNTIME_PARITY_MODE` (`full`; required)
+- `REQUIRE_FULL_IPC_BIND` (default `true`)
 
 ## Contract enforcement
 
@@ -107,15 +99,23 @@ Failures emit `platform/k3s/work/artifacts/results/runtime-contract-report.json`
 
 The daemon-client workload log (`platform/k3s/work/artifacts/results/pytorch-daemon-client.log`) must include:
 
+- `DAEMON_MODEL_ENSURE_READY`
+- `DAEMON_RUNTIME_BUNDLE_READY`
 - `DAEMON_GPU_LOAD_READY`
-- `DAEMON_GPU_EXPORT_OK`
+- `DAEMON_GPU_STATUS_OK`
 - `DAEMON_GPU_ATTACH_OK`
 - `DAEMON_GPU_HEARTBEAT_OK`
-- `DAEMON_GPU_STATUS_OK`
+- `DAEMON_GPU_TENSOR_MAP_OK`
 - `DAEMON_QWEN_IPC_BIND_OK`
 - `DAEMON_GPU_DETACH_OK`
 - `DAEMON_GPU_UNLOAD_OK`
+- `PYTORCH_FULL_PARITY_OK`
 - `PYTORCH_DAEMON_CLIENT_SUCCESS`
+
+For `RUNTIME_PARITY_MODE=full` (required), harness also validates:
+
+- `DAEMON_QWEN_IPC_BIND_OK ... rebound_params>0`
+- `PYTORCH_FULL_PARITY_OK status=ok parity_mode=full`
 
 TensorRT daemon-client log (`platform/k3s/work/artifacts/results/tensorrt-daemon-client.log`) must include:
 

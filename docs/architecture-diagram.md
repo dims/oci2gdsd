@@ -78,9 +78,9 @@ sequenceDiagram
 
 - Local CLI mode (`make verify-local`):
   - no GPU, no Kubernetes; validates lifecycle guarantees only.
-- Host strict probe mode (`make verify-host-qwen-smoke`):
+- Host strict probe mode (`./platform/host/scripts/quick-qwen.sh`):
   - host-only direct-GDS qualification/probe.
-- k3s daemonset mode (`make verify-k3s-daemonset*`):
+- k3s daemonset mode (`make verify-k3s-{qwen,tensor,vllm}`):
   - node daemon + runtime workloads (PyTorch, TensorRT-LLM, vLLM).
 
 ## 5) Runtime Tracks

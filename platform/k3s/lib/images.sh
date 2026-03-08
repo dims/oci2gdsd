@@ -44,9 +44,6 @@ build_and_load_oci2gdsd_image() {
 }
 
 build_and_load_cli_image_if_needed() {
-  if [[ "${E2E_DEPLOY_MODE}" != "daemonset-manifest" ]]; then
-    return 0
-  fi
   if [[ "${OCI2GDSD_CLI_IMAGE}" == "${OCI2GDSD_IMAGE}" ]]; then
     return 0
   fi

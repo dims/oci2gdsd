@@ -515,6 +515,9 @@ def main():
     device_uuid = resolve_device_uuid(device_index)
     require_direct = parse_bool_env("REQUIRE_DIRECT_GDS", True)
     strict_load = parse_bool_env("OCI2GDS_STRICT", True)
+    parity_mode = str(os.environ.get("RUNTIME_PARITY_MODE", "full")).strip().lower()
+    if parity_mode != "full":
+        raise RuntimeError("PyTorch daemon-client requires RUNTIME_PARITY_MODE=full; path-backed modes are removed")
 
     ensure_model_ready(socket_path, model_ref, model_id, lease_holder)
     hydrate_model_root(socket_path, model_root, model_id, model_digest)
@@ -648,6 +651,13 @@ def main():
             f"shards={shard_count} "
             f"first_param={first_param_name} "
             f"first_param_ptr={first_param_ptr}"
+        )
+        print(
+            "PYTORCH_FULL_PARITY_OK "
+            f"status=ok "
+            f"rebound_params={rebound_params} "
+            f"rebound_bytes={rebound_bytes} "
+            f"parity_mode={parity_mode}"
         )
 
         prompt = os.environ.get(

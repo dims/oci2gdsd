@@ -49,14 +49,17 @@ Guide: [docs/quickstart-a100.md](docs/quickstart-a100.md)
 ### 3) Kubernetes DaemonSet end-to-end
 
 ```bash
-# PyTorch/qwen daemonset path
-make verify-k3s-daemonset
+# qwen daemonset full parity
+make verify-k3s-qwen
 
-# Daemonset matrix (qwen + TensorRT-LLM + vLLM)
-make verify-k3s-daemonset-all
+# TensorRT-LLM suite (daemonset + parity)
+make verify-k3s-tensor
 
-# Runtime parity-focused daemonset checks (TensorRT-LLM + vLLM)
-make verify-k3s-daemonset-parity-all
+# vLLM suite (daemonset + parity)
+make verify-k3s-vllm
+
+# Run all runtime suites
+make verify-k3s-qwen verify-k3s-tensor verify-k3s-vllm
 ```
 
 Daemon deployment docs:
@@ -65,18 +68,17 @@ Daemon deployment docs:
 - Helm chart: [docs/helm-daemon-chart.md](docs/helm-daemon-chart.md)
 - Harness/runtime knobs: [platform/k3s/README.md](platform/k3s/README.md)
 
-## Runtime Support (Kubernetes DaemonSet Path)
+## Runtime Support (Kubernetes Path)
 
 The k3s daemonset integration currently supports all three runtime tracks:
 
-- PyTorch (`WORKLOAD_RUNTIME=pytorch`, default): `make verify-k3s-daemonset`
-- TensorRT-LLM (`WORKLOAD_RUNTIME=tensorrt`): `make verify-k3s-tensor-e2e-daemonset`
-- vLLM (`WORKLOAD_RUNTIME=vllm`): `make verify-k3s-vllm-e2e-daemonset`
+- PyTorch (`WORKLOAD_RUNTIME=pytorch`, default): `make verify-k3s-qwen`
+- TensorRT-LLM (`WORKLOAD_RUNTIME=tensorrt`): `make verify-k3s-tensor`
+- vLLM (`WORKLOAD_RUNTIME=vllm`): `make verify-k3s-vllm`
 
-Convenience aggregate targets:
+Run all runtime suites with:
 
-- `make verify-k3s-daemonset-all` (PyTorch + TensorRT-LLM + vLLM)
-- `make verify-k3s-daemonset-parity-all` (TensorRT-LLM + vLLM parity-focused checks)
+- `make verify-k3s-qwen verify-k3s-tensor verify-k3s-vllm`
 
 ## System Model
 
@@ -170,12 +172,8 @@ oci2gdsd gc --policy lru_no_lease --min-free-bytes 200G --json
 
 ## Kubernetes Modes
 
-There are two test/deployment modes in the k3s harness.
-
-1. Inline workload mode (`verify-k3s`): preload and workload flow is driven in the e2e job path.
-2. DaemonSet manifest mode (`verify-k3s-daemonset*`): node-local `oci2gdsd serve` DaemonSet + daemon-client workloads.
-
-The DaemonSet mode is the primary integration path for node-local preload lifecycle.
+The public verify targets run DaemonSet manifest mode (`verify-k3s-{qwen,tensor,vllm}`):
+node-local `oci2gdsd serve` DaemonSet + daemon-client workloads with full parity checks.
 
 ## Strict GDS Guidance
 
@@ -241,18 +239,18 @@ Primary targets:
 - `make prereq`
 - `make verify-core`
 - `make verify-smoke`
-- `make verify-k3s`
-- `make verify-k3s-daemonset`
-- `make verify-k3s-daemonset-all`
-- `make verify-k3s-daemonset-parity-all`
+- `make verify-k3s-qwen`
+- `make verify-k3s-tensor`
+- `make verify-k3s-vllm`
+- `make verify-k3s-qwen verify-k3s-tensor verify-k3s-vllm`
 
 Useful lower-level targets:
 
 - `make prereq-local`
 - `make prereq-host-gds`
 - `make prereq-k3s`
-- `make verify-host-qwen-smoke`
-- `make verify-k3s-qwen-smoke`
+- `./platform/host/scripts/quick-qwen.sh`
+- `make verify-k3s-qwen`
 - `make clean-k3s`
 - `make clean`
 

@@ -13,8 +13,8 @@ Runtime-specific assets for PyTorch paths in k3s daemonset mode.
 
 ## Typical runs
 
-- Daemonset mode e2e: `make verify-k3s-daemonset`
-- qwen-hello quick loop: `make verify-k3s-qwen-smoke`
+- Daemonset mode e2e: `make verify-k3s-qwen`
+- qwen-hello quick loop: `make verify-smoke` (or `REQUIRE_DIRECT_GDS=true OCI2GDS_STRICT=true OCI2GDS_PROBE_STRICT=true OCI2GDS_FORCE_NO_COMPAT=true ./platform/k3s/scripts/quick-qwen.sh`)
 
 ## Related docs
 

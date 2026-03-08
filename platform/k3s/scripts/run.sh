@@ -48,31 +48,6 @@ wait_for_job_completion_or_fail() {
   done
 }
 
-deploy_inline_workload_job() {
-  SMOKE_SCRIPT="${HARNESS_DIR}/scripts/pytorch_smoke.py"
-  [[ -f "${SMOKE_SCRIPT}" ]] || die "missing pytorch smoke script: ${SMOKE_SCRIPT}"
-
-  render_template "${HARNESS_DIR}/manifests/workload-job.yaml.tpl" "${RENDERED_DIR}/workload-job.yaml" \
-    "E2E_NAMESPACE=${E2E_NAMESPACE}" \
-    "OCI2GDSD_IMAGE=${OCI2GDSD_IMAGE}" \
-    "PYTORCH_IMAGE=${PYTORCH_IMAGE}" \
-    "MODEL_REF=${MODEL_REF}" \
-    "MODEL_ID=${MODEL_ID}" \
-    "MODEL_DIGEST=${MODEL_DIGEST}" \
-    "MODEL_ROOT_PATH=${MODEL_ROOT_PATH}" \
-    "LEASE_HOLDER=${LEASE_HOLDER}" \
-    "OCI2GDSD_ROOT_PATH=${OCI2GDSD_ROOT_PATH}"
-
-  apply_configmap_from_files "${E2E_NAMESPACE}" "pytorch-smoke-script" \
-    --from-file=pytorch_smoke.py="${SMOKE_SCRIPT}"
-  kube -n "${E2E_NAMESPACE}" delete job/oci2gdsd-pytorch-smoke --ignore-not-found >/dev/null
-  kube apply -f "${RENDERED_DIR}/workload-job.yaml"
-
-  WORKLOAD_JOB_NAME="oci2gdsd-pytorch-smoke"
-  WORKLOAD_CONTAINER_NAME="pytorch-smoke"
-  WORKLOAD_RESULT_LOG="${RESULTS_DIR}/pytorch.log"
-}
-
 deploy_daemonset_workload_job() {
   apply_daemonset_stack
   runtime_daemon_apply_configmaps
@@ -91,13 +66,8 @@ wait_for_workload_and_collect() {
   wait_for_job_completion_or_fail "${WORKLOAD_JOB_NAME}" 1800 || rc=$?
   if [[ "${rc}" -ne 0 ]]; then
     collect_debug
-    if [[ "${E2E_DEPLOY_MODE}" == "inline-daemon" ]]; then
-      kube -n "${E2E_NAMESPACE}" logs "job/${WORKLOAD_JOB_NAME}" -c preload-model || true
-    fi
     kube -n "${E2E_NAMESPACE}" logs "job/${WORKLOAD_JOB_NAME}" -c "${WORKLOAD_CONTAINER_NAME}" || true
-    if [[ "${E2E_DEPLOY_MODE}" == "daemonset-manifest" ]]; then
-      capture_daemonset_logs "${RESULTS_DIR}/daemonset.log" || true
-    fi
+    capture_daemonset_logs "${RESULTS_DIR}/daemonset.log" || true
     if [[ "${rc}" -eq 2 ]]; then
       die "workload job timed out (${WORKLOAD_JOB_NAME})"
     fi
@@ -106,17 +76,6 @@ wait_for_workload_and_collect() {
   runtime_drift_checkpoint "post-workload-job"
 
   kube -n "${E2E_NAMESPACE}" logs "job/${WORKLOAD_JOB_NAME}" -c "${WORKLOAD_CONTAINER_NAME}" > "${WORKLOAD_RESULT_LOG}"
-
-  if [[ "${E2E_DEPLOY_MODE}" == "inline-daemon" ]]; then
-    kube -n "${E2E_NAMESPACE}" logs "job/${WORKLOAD_JOB_NAME}" -c preload-model > "${RESULTS_DIR}/preload.log"
-    if ! grep -q '"status": "READY"' "${RESULTS_DIR}/preload.log"; then
-      die "preload init container did not report READY"
-    fi
-    if ! grep -q 'PYTORCH_SMOKE_SUCCESS' "${WORKLOAD_RESULT_LOG}"; then
-      die "pytorch smoke container did not report success marker"
-    fi
-    return 0
-  fi
 
   local marker
   while IFS= read -r marker; do
@@ -132,6 +91,9 @@ wait_for_workload_and_collect() {
 }
 
 log "starting k3s e2e harness"
+[[ "${E2E_DEPLOY_MODE}" == "daemonset-manifest" ]] || die "k3s harness requires E2E_DEPLOY_MODE=daemonset-manifest"
+[[ "${RUNTIME_PARITY_MODE}" == "full" ]] || die "k3s harness requires RUNTIME_PARITY_MODE=full"
+[[ "${REQUIRE_FULL_IPC_BIND}" == "true" ]] || die "k3s harness requires REQUIRE_FULL_IPC_BIND=true"
 validate_runtime_contracts
 bootstrap_tools
 configure_nvidia_runtime
@@ -147,11 +109,9 @@ if is_true "${CLEAN_STALE_WORKLOADS_BEFORE_RUN}"; then
   kube delete namespace "${QWEN_HELLO_NAMESPACE}" --ignore-not-found >/dev/null || true
   kube wait --for=delete namespace/"${E2E_NAMESPACE}" --timeout=180s >/dev/null 2>&1 || true
   kube wait --for=delete namespace/"${QWEN_HELLO_NAMESPACE}" --timeout=180s >/dev/null 2>&1 || true
-  if [[ "${E2E_DEPLOY_MODE}" == "daemonset-manifest" ]]; then
-    log "cleaning stale daemon namespace (${OCI2GDSD_DAEMON_NAMESPACE}) before run"
-    kube delete namespace "${OCI2GDSD_DAEMON_NAMESPACE}" --ignore-not-found >/dev/null || true
-    kube wait --for=delete namespace/"${OCI2GDSD_DAEMON_NAMESPACE}" --timeout=180s >/dev/null 2>&1 || true
-  fi
+  log "cleaning stale daemon namespace (${OCI2GDSD_DAEMON_NAMESPACE}) before run"
+  kube delete namespace "${OCI2GDSD_DAEMON_NAMESPACE}" --ignore-not-found >/dev/null || true
+  kube wait --for=delete namespace/"${OCI2GDSD_DAEMON_NAMESPACE}" --timeout=180s >/dev/null 2>&1 || true
 fi
 
 verify_gpu_pod
@@ -184,17 +144,7 @@ render_template "${HARNESS_DIR}/manifests/oci2gdsd-configmap.yaml.tpl" "${RENDER
 
 kube apply -f "${RENDERED_DIR}/namespace.yaml"
 kube apply -f "${RENDERED_DIR}/oci2gdsd-configmap.yaml"
-case "${E2E_DEPLOY_MODE}" in
-  inline-daemon)
-    deploy_inline_workload_job
-    ;;
-  daemonset-manifest)
-    deploy_daemonset_workload_job
-    ;;
-  *)
-    die "unsupported E2E_DEPLOY_MODE=${E2E_DEPLOY_MODE}"
-    ;;
-esac
+deploy_daemonset_workload_job
 wait_for_workload_and_collect
 
 if [[ "${VALIDATE_QWEN_HELLO}" == "true" ]]; then
@@ -217,10 +167,7 @@ if [[ -z "${NODE_NAME}" ]]; then
 fi
 log "workload pod ran on node: ${NODE_NAME}"
 
-RELEASE_IMAGE="${OCI2GDSD_IMAGE}"
-if [[ "${E2E_DEPLOY_MODE}" == "daemonset-manifest" ]]; then
-  RELEASE_IMAGE="${OCI2GDSD_CLI_IMAGE}"
-fi
+RELEASE_IMAGE="${OCI2GDSD_CLI_IMAGE}"
 
 render_template "${HARNESS_DIR}/manifests/release-job.yaml.tpl" "${RENDERED_DIR}/release-job.yaml" \
   "E2E_NAMESPACE=${E2E_NAMESPACE}" \
@@ -247,9 +194,6 @@ fi
 
 log "k3s e2e harness completed successfully"
 log "artifacts:"
-if [[ -f "${RESULTS_DIR}/preload.log" ]]; then
-  log "  ${RESULTS_DIR}/preload.log"
-fi
 log "  ${WORKLOAD_RESULT_LOG}"
 if [[ -f "${RESULTS_DIR}/qwen-hello.log" ]]; then
   log "  ${RESULTS_DIR}/qwen-hello.log"

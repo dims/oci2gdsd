@@ -7,8 +7,8 @@
 
 This guide is for failures we repeatedly observed while running:
 
-- `make verify-k3s-qwen-smoke`
-- `make verify-host-qwen-smoke`
+- `make verify-k3s-qwen`
+- `./platform/host/scripts/quick-qwen.sh`
 
 Use it together with:
 
@@ -26,7 +26,7 @@ Use it together with:
 | Runtime image precheck fails with `missing: c++` | Selected runtime image cannot build native extension path | Use `PYTORCH_RUNTIME_IMAGE=nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1` |
 | Space errors during pull/build/apply | Docker/k3s/model root on small boot disk | Move Docker data-root and k3s/model paths to `/mnt/nvme` |
 | Direct probe says ok but NVFS counters stay zero | `nvidia-fs` IO stats disabled | Enable `rw_stats_enabled=1` or keep counter gate disabled |
-| qwen quick fails with missing model digest/ref | Quick mode does not have model identity yet | Run full `make verify-k3s` once or pass explicit `MODEL_*_OVERRIDE` |
+| qwen quick fails with missing model digest/ref | Quick mode does not have model identity yet | Run full `make verify-k3s-qwen` once or pass explicit `MODEL_*_OVERRIDE` |
 | No `nvidia.com/gpu` allocatable | GPU operator/device plugin not ready | Install/repair GPU operator, then re-check node allocatable |
 | `error: failed to initialize state lock: open ... state.db.lock: permission denied` | Model root path contains root-owned files from init-container flow | `sudo chown -R $USER:$USER /mnt/nvme/oci2gdsd` (or your `OCI2GDSD_ROOT_PATH`) |
 | Docker free-space gates fail unexpectedly after reboot | `/mnt/nvme` was not remounted, so Docker data-root path resolves on `/` | Remount NVMe first, then confirm `docker info --format '{{.DockerRootDir}}'` |
@@ -223,8 +223,8 @@ sudo /usr/libexec/gds/tools/gdsio -D /mnt/nvme -d 0 -w 1 -s 1G -i 1M -x 0 -I 1
 ```bash
 make prereq-host-gds
 make prereq-k3s
-make verify-host-qwen-smoke
-make verify-k3s-qwen-smoke
+./platform/host/scripts/quick-qwen.sh
+make verify-k3s-qwen
 ```
 
 #### 4.3 Exit criteria
@@ -363,17 +363,17 @@ Repo default now uses `REQUIRE_NVFS_STATS_DELTA_MODE=auto` to avoid false negati
 
 ## 11) Quick Target Fails Due To Model Identity
 
-`make verify-k3s-qwen-smoke` needs model digest and registry ref.
+`make verify-k3s-qwen` needs model digest and registry ref.
 
 Ways to satisfy:
 
-1. Run `make verify-k3s` once to seed identity artifacts.
+1. Run `make verify-k3s-qwen` once to seed identity artifacts.
 2. Set explicit overrides:
 
 ```bash
 MODEL_DIGEST_OVERRIDE=sha256:... \
 MODEL_REF_OVERRIDE=oci-model-registry.oci-model-registry.svc.cluster.local:5000/models/qwen3-0.6b@sha256:... \
-make verify-k3s-qwen-smoke
+make verify-k3s-qwen
 ```
 
 ## 12) Recommended Recovery Sequence (Fresh A100)
@@ -388,8 +388,8 @@ make prereq-k3s
 3. Re-run:
 
 ```bash
-make verify-k3s-qwen-smoke
-make verify-host-qwen-smoke
+make verify-k3s-qwen
+./platform/host/scripts/quick-qwen.sh
 ```
 
 4. If direct gate still fails:

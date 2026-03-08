@@ -59,13 +59,13 @@ If CUDA appears unavailable in pods (`torch.cuda.is_available() == False` while 
 From repo root, run the k3s harness:
 
 ```bash
-make verify-k3s
+make verify-k3s-qwen
 ```
 
 To run qwen-hello validation specifically (enabled by default):
 
 ```bash
-VALIDATE_QWEN_HELLO=true make verify-k3s
+VALIDATE_QWEN_HELLO=true make verify-k3s-qwen
 ```
 
 Harness docs: [`platform/k3s/README.md`](../README.md)

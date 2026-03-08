@@ -224,19 +224,11 @@ resolve_cluster_mode() {
 }
 
 validate_deploy_mode() {
-  case "${E2E_DEPLOY_MODE}" in
-    inline-daemon|daemonset-manifest)
-      ;;
-    *)
-      die "unsupported E2E_DEPLOY_MODE=${E2E_DEPLOY_MODE} (expected inline-daemon|daemonset-manifest)"
-      ;;
-  esac
+  [[ "${E2E_DEPLOY_MODE}" == "daemonset-manifest" ]] || \
+    die "unsupported E2E_DEPLOY_MODE=${E2E_DEPLOY_MODE} (expected daemonset-manifest)"
 }
 
 validate_deploy_assets() {
-  if [[ "${E2E_DEPLOY_MODE}" != "daemonset-manifest" ]]; then
-    return 0
-  fi
   [[ -f "${OCI2GDSD_DAEMON_TEMPLATE}" ]] || die "missing daemonset template: ${OCI2GDSD_DAEMON_TEMPLATE}"
   [[ -f "${WORKLOAD_DAEMON_TEMPLATE}" ]] || die "missing daemonset workload template: ${WORKLOAD_DAEMON_TEMPLATE}"
   [[ -f "${WORKLOAD_DAEMON_SCRIPT}" ]] || die "missing daemon client script: ${WORKLOAD_DAEMON_SCRIPT}"
@@ -340,14 +332,14 @@ if [[ "${QWEN_HELLO_PROFILE}" == "host-direct" ]]; then
     OCI2GDS_FORCE_NO_COMPAT="true"
   fi
 fi
-if [[ "${E2E_DEPLOY_MODE}" == "daemonset-manifest" && "${REQUIRE_DIRECT_GDS}" == "true" && "${OCI2GDSD_ENABLE_GDS_IMAGE}" != "true" ]]; then
+if [[ "${REQUIRE_DIRECT_GDS}" == "true" && "${OCI2GDSD_ENABLE_GDS_IMAGE}" != "true" ]]; then
   if [[ -n "${OCI2GDSD_ENABLE_GDS_IMAGE_SET}" ]]; then
-    die "E2E_DEPLOY_MODE=daemonset-manifest with REQUIRE_DIRECT_GDS=true requires OCI2GDSD_ENABLE_GDS_IMAGE=true"
+    die "REQUIRE_DIRECT_GDS=true requires OCI2GDSD_ENABLE_GDS_IMAGE=true in k3s daemonset harness"
   fi
-  log "forcing OCI2GDSD_ENABLE_GDS_IMAGE=true for daemonset-manifest direct-GDS mode"
+  log "forcing OCI2GDSD_ENABLE_GDS_IMAGE=true for direct-GDS mode"
   OCI2GDSD_ENABLE_GDS_IMAGE="true"
 fi
-if [[ "${E2E_DEPLOY_MODE}" == "daemonset-manifest" && "${OCI2GDSD_ENABLE_GDS_IMAGE}" == "true" && -z "${REQUIRE_DAEMON_IPC_PROBE_SET}" ]]; then
+if [[ "${OCI2GDSD_ENABLE_GDS_IMAGE}" == "true" && -z "${REQUIRE_DAEMON_IPC_PROBE_SET}" ]]; then
   REQUIRE_DAEMON_IPC_PROBE="true"
 fi
 if [[ "${OCI2GDSD_ENABLE_GDS_IMAGE}" == "true" && -z "${OCI2GDSD_IMAGE_SET}" ]]; then

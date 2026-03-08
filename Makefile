@@ -10,18 +10,15 @@ help:
 	@echo "  prereq                 Full prereq chain (local -> host -> k3s)"
 	@echo "  verify-core            verify-unit + verify-local"
 	@echo "  verify-smoke           verify-core + host/k3s qwen smoke"
-	@echo "  verify-k3s             Full k3s qwen e2e (inline mode)"
-	@echo "  verify-k3s-daemonset   Full k3s qwen e2e (daemonset mode)"
-	@echo "  verify-k3s-daemonset-all Daemonset mode for qwen + tensorrt + vllm"
-	@echo "  verify-k3s-daemonset-parity-all Full parity-focused daemonset mode for tensorrt + vllm"
+	@echo "  verify-k3s-qwen        qwen daemonset full parity"
+	@echo "  verify-k3s-tensor      TensorRT-LLM daemonset full parity"
+	@echo "  verify-k3s-vllm        vLLM daemonset full parity"
 	@echo "  clean-k3s              Delete k3s e2e local harness artifacts"
 	@echo "  demo-local-registry    Self-contained local demo (no GPU, no k8s)"
 	@echo ""
 	@echo "Advanced targets: prereq-local prereq-host-gds prereq-k3s prereq-all"
-	@echo "                  verify-unit verify-local verify-host-qwen-smoke verify-k3s-qwen-smoke"
-	@echo "                  verify-k3s-qwen-e2e-inline verify-k3s-qwen-e2e-daemonset"
-	@echo "                  verify-k3s-tensor-e2e-daemonset verify-k3s-vllm-e2e-daemonset"
-	@echo "                  verify-k3s-tensor-e2e-daemonset-parity verify-k3s-vllm-e2e-daemonset-parity"
+	@echo "                  verify-unit verify-local"
+	@echo "                  verify-k3s-qwen verify-k3s-tensor verify-k3s-vllm"
 
 .PHONY: build
 build:
@@ -84,55 +81,27 @@ prereq-all: prereq-local prereq-host-gds prereq-k3s
 .PHONY: prereq
 prereq: prereq-all
 
-.PHONY: verify-host-qwen-smoke
-verify-host-qwen-smoke: prereq-host-gds
-	./platform/host/scripts/quick-qwen.sh
+K3S_STRICT_GDS_ENV := REQUIRE_DIRECT_GDS=true OCI2GDS_STRICT=true OCI2GDS_PROBE_STRICT=true OCI2GDS_FORCE_NO_COMPAT=true
 
-.PHONY: verify-k3s-qwen-smoke
-verify-k3s-qwen-smoke: prereq-k3s
-	./platform/k3s/scripts/quick-qwen.sh
+.PHONY: verify-k3s-qwen
+verify-k3s-qwen: prereq-k3s
+	$(K3S_STRICT_GDS_ENV) WORKLOAD_RUNTIME=pytorch ./platform/k3s/scripts/run.sh
 
-.PHONY: verify-k3s-qwen-e2e-inline
-verify-k3s-qwen-e2e-inline: prereq-k3s
-	./platform/k3s/scripts/run.sh
+.PHONY: verify-k3s-tensor
+verify-k3s-tensor: prereq-k3s
+	$(K3S_STRICT_GDS_ENV) WORKLOAD_RUNTIME=tensorrt ./platform/k3s/scripts/run.sh
 
-.PHONY: verify-k3s-qwen-e2e-daemonset
-verify-k3s-qwen-e2e-daemonset: prereq-k3s
-	E2E_DEPLOY_MODE=daemonset-manifest ./platform/k3s/scripts/run.sh
-
-.PHONY: verify-k3s-tensor-e2e-daemonset
-verify-k3s-tensor-e2e-daemonset: prereq-k3s
-	E2E_DEPLOY_MODE=daemonset-manifest WORKLOAD_RUNTIME=tensorrt ./platform/k3s/scripts/run.sh
-
-.PHONY: verify-k3s-vllm-e2e-daemonset
-verify-k3s-vllm-e2e-daemonset: prereq-k3s
-	E2E_DEPLOY_MODE=daemonset-manifest WORKLOAD_RUNTIME=vllm ./platform/k3s/scripts/run.sh
-
-.PHONY: verify-k3s-tensor-e2e-daemonset-parity
-verify-k3s-tensor-e2e-daemonset-parity: prereq-k3s
-	E2E_DEPLOY_MODE=daemonset-manifest WORKLOAD_RUNTIME=tensorrt RUNTIME_PARITY_MODE=full ./platform/k3s/scripts/run.sh
-
-.PHONY: verify-k3s-vllm-e2e-daemonset-parity
-verify-k3s-vllm-e2e-daemonset-parity: prereq-k3s
-	E2E_DEPLOY_MODE=daemonset-manifest WORKLOAD_RUNTIME=vllm RUNTIME_PARITY_MODE=full REQUIRE_FULL_IPC_BIND=true ./platform/k3s/scripts/run.sh
+.PHONY: verify-k3s-vllm
+verify-k3s-vllm: prereq-k3s
+	$(K3S_STRICT_GDS_ENV) WORKLOAD_RUNTIME=vllm ./platform/k3s/scripts/run.sh
 
 .PHONY: verify-core
 verify-core: verify-unit verify-local
 
 .PHONY: verify-smoke
-verify-smoke: verify-core verify-host-qwen-smoke verify-k3s-qwen-smoke
-
-.PHONY: verify-k3s
-verify-k3s: verify-k3s-qwen-e2e-inline
-
-.PHONY: verify-k3s-daemonset
-verify-k3s-daemonset: verify-k3s-qwen-e2e-daemonset
-
-.PHONY: verify-k3s-daemonset-all
-verify-k3s-daemonset-all: verify-k3s-qwen-e2e-daemonset verify-k3s-tensor-e2e-daemonset verify-k3s-vllm-e2e-daemonset
-
-.PHONY: verify-k3s-daemonset-parity-all
-verify-k3s-daemonset-parity-all: verify-k3s-tensor-e2e-daemonset-parity verify-k3s-vllm-e2e-daemonset-parity
+verify-smoke: verify-core prereq-k3s
+	./platform/host/scripts/quick-qwen.sh
+	$(K3S_STRICT_GDS_ENV) ./platform/k3s/scripts/quick-qwen.sh
 
 .PHONY: clean-k3s
 clean-k3s:
