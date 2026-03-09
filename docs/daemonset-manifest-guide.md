@@ -57,10 +57,10 @@ For vLLM daemon-client mode, the workload:
 
 ## Harness entrypoint (recommended)
 
-Use the three canonical verify targets:
+Use the canonical verify targets:
 
 ```bash
-make verify-k3s-qwen verify-k3s-tensor verify-k3s-vllm
+make verify-k3s-qwen verify-k3s-tensor verify-k3s-vllm verify-k3s-sglang
 ```
 
 For runtime-specific overrides and full operational examples, use:
@@ -73,7 +73,7 @@ For runtime-specific overrides and full operational examples, use:
 - `OCI2GDSD_SOCKET_HOST_PATH` (default `/var/run/oci2gdsd`)
 - `OCI2GDSD_ROOT_PATH` (default `/mnt/nvme/oci2gdsd` in host-direct profile)
 - `REQUIRE_DIRECT_GDS` (default `true`)
-- `WORKLOAD_RUNTIME` (`pytorch`, `tensorrt`, or `vllm`; default `pytorch`)
+- `WORKLOAD_RUNTIME` (`pytorch`, `tensorrt`, `vllm`, or `sglang`; default `pytorch`)
 - `RUNTIME_PARITY_MODE` (`full`; required)
 - `REQUIRE_FULL_IPC_BIND` (default `true`)
 - `K3S_PERF_MODES` (default `cold,warm`)

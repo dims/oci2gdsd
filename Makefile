@@ -13,12 +13,13 @@ help:
 	@echo "  verify-k3s-qwen        qwen daemonset full parity"
 	@echo "  verify-k3s-tensor      TensorRT-LLM daemonset full parity"
 	@echo "  verify-k3s-vllm        vLLM daemonset full parity"
+	@echo "  verify-k3s-sglang      SGLang daemonset full parity"
 	@echo "  clean-k3s              Delete k3s e2e local harness artifacts"
 	@echo "  demo-local-registry    Self-contained local demo (no GPU, no k8s)"
 	@echo ""
 	@echo "Advanced targets: prereq-local prereq-host-gds prereq-k3s prereq-all"
 	@echo "                  verify-unit verify-local"
-	@echo "                  verify-k3s-qwen verify-k3s-tensor verify-k3s-vllm"
+	@echo "                  verify-k3s-qwen verify-k3s-tensor verify-k3s-vllm verify-k3s-sglang"
 
 .PHONY: build
 build:
@@ -94,6 +95,10 @@ verify-k3s-tensor: prereq-k3s
 .PHONY: verify-k3s-vllm
 verify-k3s-vllm: prereq-k3s
 	$(K3S_STRICT_GDS_ENV) WORKLOAD_RUNTIME=vllm ./platform/k3s/scripts/run.sh
+
+.PHONY: verify-k3s-sglang
+verify-k3s-sglang: prereq-k3s
+	$(K3S_STRICT_GDS_ENV) WORKLOAD_RUNTIME=sglang ./platform/k3s/scripts/run.sh
 
 .PHONY: verify-core
 verify-core: verify-unit verify-local

@@ -117,6 +117,14 @@ preload_workload_image() {
         log "skipping pre-load for ${VLLM_RUNTIME_IMAGE}; cluster will pull image on demand"
       fi
       ;;
+    sglang)
+      if [[ "${PRELOAD_SGLANG_RUNTIME_IMAGE}" == "true" ]]; then
+        ensure_image_local_or_pull "${SGLANG_RUNTIME_IMAGE}" "${max_tries}"
+        cluster_load_image "${SGLANG_RUNTIME_IMAGE}"
+      else
+        log "skipping pre-load for ${SGLANG_RUNTIME_IMAGE}; cluster will pull image on demand"
+      fi
+      ;;
   esac
 }
 

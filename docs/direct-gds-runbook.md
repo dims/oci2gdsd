@@ -200,7 +200,8 @@ Recommended e2e overrides for fresh nodes when import piping is unstable:
 PRELOAD_WORKLOAD_IMAGE=false \
 PRELOAD_PYTORCH_RUNTIME_IMAGE=false \
 PRELOAD_TENSORRTLLM_RUNTIME_IMAGE=false \
-PRELOAD_VLLM_RUNTIME_IMAGE=false
+PRELOAD_VLLM_RUNTIME_IMAGE=false \
+PRELOAD_SGLANG_RUNTIME_IMAGE=false
 ```
 
 ---
@@ -215,7 +216,8 @@ Run in order:
 4. `make verify-k3s-qwen`
 5. `make verify-k3s-tensor`
 6. `make verify-k3s-vllm`
-7. `make verify-k3s-qwen verify-k3s-tensor verify-k3s-vllm`
+7. `make verify-k3s-sglang`
+8. `make verify-k3s-qwen verify-k3s-tensor verify-k3s-vllm verify-k3s-sglang`
 
 If strict host qualification fails, do not report strict direct-GDS pass for downstream e2e.
 

@@ -219,6 +219,13 @@ runtime_workload_slo_max_ms() {
         echo "${PERF_SLO_VLLM_WARM_MAX_MS:-120000}"
       fi
       ;;
+    sglang)
+      if [[ "${mode}" == "cold" ]]; then
+        echo "${PERF_SLO_SGLANG_COLD_MAX_MS:-240000}"
+      else
+        echo "${PERF_SLO_SGLANG_WARM_MAX_MS:-150000}"
+      fi
+      ;;
     *)
       die "unsupported runtime for workload SLO: ${runtime}"
       ;;

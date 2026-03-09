@@ -16,7 +16,7 @@ usage() {
 Usage: validate-runtime-contract.sh [--runtime <name>] [--all-runtimes] [--include-qwen] [--contract <path>] [--report <path>]
 
 Options:
-  --runtime <name>     Validate one runtime contract (pytorch|tensorrt|vllm).
+  --runtime <name>     Validate one runtime contract (pytorch|tensorrt|vllm|sglang).
   --all-runtimes       Validate all runtime contracts in contract file.
   --include-qwen       Also validate qwen-hello deployment template contract.
   --contract <path>    Override contract JSON path.

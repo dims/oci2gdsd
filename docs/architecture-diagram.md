@@ -82,8 +82,8 @@ sequenceDiagram
   - no GPU, no Kubernetes; validates lifecycle guarantees only.
 - Host strict probe mode (`./platform/host/scripts/quick-qwen.sh`):
   - host-only direct-GDS qualification/probe.
-- k3s daemonset mode (`make verify-k3s-{qwen,tensor,vllm}`):
-  - node daemon + runtime workloads (PyTorch, TensorRT-LLM, vLLM).
+- k3s daemonset mode (`make verify-k3s-{qwen,tensor,vllm,sglang}`):
+  - node daemon + runtime workloads (PyTorch, TensorRT-LLM, vLLM, SGLang).
 
 ## 5) Runtime Tracks
 
@@ -93,6 +93,8 @@ sequenceDiagram
   - daemon-client parity checks and runtime integration gate.
 - vLLM:
   - daemon-client parity checks and loader/inference integration gate.
+- SGLang:
+  - daemon-client parity checks and private-loader IPC integration gate.
 
 ## 6) Related Docs
 

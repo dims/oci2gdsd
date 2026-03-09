@@ -222,17 +222,20 @@ validate_deploy_assets() {
   [[ -f "${OCI2GDSD_DAEMON_TEMPLATE}" ]] || die "missing daemonset template: ${OCI2GDSD_DAEMON_TEMPLATE}"
   [[ -f "${WORKLOAD_DAEMON_TEMPLATE}" ]] || die "missing daemonset workload template: ${WORKLOAD_DAEMON_TEMPLATE}"
   [[ -f "${WORKLOAD_DAEMON_SCRIPT}" ]] || die "missing daemon client script: ${WORKLOAD_DAEMON_SCRIPT}"
-  if [[ "${WORKLOAD_RUNTIME}" == "pytorch" || "${WORKLOAD_RUNTIME}" == "vllm" || "${WORKLOAD_RUNTIME}" == "tensorrt" ]]; then
+  if [[ "${WORKLOAD_RUNTIME}" == "pytorch" || "${WORKLOAD_RUNTIME}" == "vllm" || "${WORKLOAD_RUNTIME}" == "tensorrt" || "${WORKLOAD_RUNTIME}" == "sglang" ]]; then
     [[ -f "${PYTORCH_DAEMON_NATIVE_CPP}" ]] || die "missing daemon native source: ${PYTORCH_DAEMON_NATIVE_CPP}"
+  fi
+  if [[ "${WORKLOAD_RUNTIME}" == "sglang" ]]; then
+    [[ -f "${SGLANG_PRIVATE_LOADER_SCRIPT}" ]] || die "missing SGLang private loader script: ${SGLANG_PRIVATE_LOADER_SCRIPT}"
   fi
 }
 
 validate_workload_runtime() {
   case "${WORKLOAD_RUNTIME}" in
-    pytorch|tensorrt|vllm)
+    pytorch|tensorrt|vllm|sglang)
       ;;
     *)
-      die "unsupported WORKLOAD_RUNTIME=${WORKLOAD_RUNTIME} (expected pytorch|tensorrt|vllm)"
+      die "unsupported WORKLOAD_RUNTIME=${WORKLOAD_RUNTIME} (expected pytorch|tensorrt|vllm|sglang)"
       ;;
   esac
 }
@@ -276,6 +279,16 @@ configure_workload_runtime() {
       WORKLOAD_DAEMON_CONFIGMAP="vllm-daemon-client-script"
       WORKLOAD_DAEMON_JOB_NAME="oci2gdsd-vllm-daemon-client"
       WORKLOAD_DAEMON_CONTAINER_NAME="vllm-daemon-client"
+      ;;
+    sglang)
+      WORKLOAD_IMAGE="${SGLANG_IMAGE}"
+      WORKLOAD_RUNTIME_IMAGE="${SGLANG_RUNTIME_IMAGE}"
+      WORKLOAD_DAEMON_TEMPLATE="${SGLANG_DAEMON_CLIENT_TEMPLATE}"
+      WORKLOAD_DAEMON_SCRIPT="${SGLANG_DAEMON_CLIENT_SCRIPT}"
+      WORKLOAD_ADAPTER_SCRIPT="${REPO_ROOT}/platform/k3s/runtimes/sglang.sh"
+      WORKLOAD_DAEMON_CONFIGMAP="sglang-daemon-client-script"
+      WORKLOAD_DAEMON_JOB_NAME="oci2gdsd-sglang-daemon-client"
+      WORKLOAD_DAEMON_CONTAINER_NAME="sglang-daemon-client"
       ;;
   esac
   [[ -f "${WORKLOAD_ADAPTER_SCRIPT}" ]] || die "missing runtime adapter: ${WORKLOAD_ADAPTER_SCRIPT}"
@@ -346,6 +359,10 @@ TENSORRT_DAEMON_CLIENT_TEMPLATE="${TENSORRT_DAEMON_CLIENT_TEMPLATE:-${REPO_ROOT}
 TENSORRT_DAEMON_CLIENT_SCRIPT="${TENSORRT_DAEMON_CLIENT_SCRIPT:-${REPO_ROOT}/platform/k3s/tensorrt/tensorrt_daemon_client.py}"
 VLLM_DAEMON_CLIENT_TEMPLATE="${VLLM_DAEMON_CLIENT_TEMPLATE:-${REPO_ROOT}/platform/k3s/vllm/vllm-daemon-client-job.yaml.tpl}"
 VLLM_DAEMON_CLIENT_SCRIPT="${VLLM_DAEMON_CLIENT_SCRIPT:-${REPO_ROOT}/platform/k3s/vllm/vllm_daemon_client.py}"
+SGLANG_DAEMON_CLIENT_TEMPLATE="${SGLANG_DAEMON_CLIENT_TEMPLATE:-${REPO_ROOT}/platform/k3s/sglang/sglang-daemon-client-job.yaml.tpl}"
+SGLANG_DAEMON_CLIENT_SCRIPT="${SGLANG_DAEMON_CLIENT_SCRIPT:-${REPO_ROOT}/platform/k3s/sglang/sglang_daemon_client.py}"
+SGLANG_PRIVATE_LOADER_SCRIPT="${SGLANG_PRIVATE_LOADER_SCRIPT:-${REPO_ROOT}/platform/k3s/sglang/sglang_private_model_loader.py}"
+SGLANG_PRIVATE_LOADER_SCRIPT_PATH="${SGLANG_PRIVATE_LOADER_SCRIPT_PATH:-/scripts/sglang_private_model_loader.py}"
 PYTORCH_DAEMON_NATIVE_CPP="${PYTORCH_DAEMON_NATIVE_CPP:-${REPO_ROOT}/platform/k3s/pytorch/native/oci2gds_torch_native.cpp}"
 validate_workload_runtime
 configure_workload_runtime

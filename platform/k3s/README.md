@@ -1,4 +1,4 @@
-# k3s Harness (Strict GDS + 3 Runtimes)
+# k3s Harness (Strict GDS + 4 Runtimes)
 
 This harness runs host-native `k3s` on a GPU host (Brev-friendly), deploys
 `oci2gdsd` as a daemonset, and validates full parity daemon-client flows for:
@@ -6,6 +6,7 @@ This harness runs host-native `k3s` on a GPU host (Brev-friendly), deploys
 - qwen/PyTorch
 - TensorRT-LLM
 - vLLM
+- SGLang
 
 It enforces strict direct-GDS behavior by default and fails fast on contract
 or environment drift.
@@ -25,12 +26,13 @@ From repo root:
 make verify-k3s-qwen
 make verify-k3s-tensor
 make verify-k3s-vllm
+make verify-k3s-sglang
 ```
 
 Run all suites:
 
 ```bash
-make verify-k3s-qwen verify-k3s-tensor verify-k3s-vllm
+make verify-k3s-qwen verify-k3s-tensor verify-k3s-vllm verify-k3s-sglang
 ```
 
 Each target runs `prereq-k3s` first.
@@ -40,8 +42,9 @@ Each target runs `prereq-k3s` first.
 - `verify-k3s-qwen` -> `WORKLOAD_RUNTIME=pytorch`
 - `verify-k3s-tensor` -> `WORKLOAD_RUNTIME=tensorrt`
 - `verify-k3s-vllm` -> `WORKLOAD_RUNTIME=vllm`
+- `verify-k3s-sglang` -> `WORKLOAD_RUNTIME=sglang`
 
-All 3 run in daemonset-manifest mode with parity checks enabled. TensorRT also
+All 4 run in daemonset-manifest mode with parity checks enabled. TensorRT also
 supports `TENSORRT_STARTUP_MODE=fast` for cached engine reuse while keeping
 `RUNTIME_PARITY_MODE=full`.
 
@@ -144,6 +147,7 @@ Harness outputs under `platform/k3s/work/artifacts/results`:
 - `pytorch-daemon-client.log`
 - `tensorrt-daemon-client.log`
 - `vllm-daemon-client.log`
+- `sglang-daemon-client.log`
 - `qwen-hello.log`
 - `daemonset.log`
 - `release-gc.log`

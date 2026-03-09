@@ -5,14 +5,14 @@ This document is the human-readable companion to:
 - `platform/k3s/contracts/runtime-contract.v1.json`
 - `platform/k3s/scripts/validate-runtime-contract.sh`
 
-The goal is to keep strict direct-GDS preconditions consistent across daemon-client runtimes (`pytorch`, `tensorrt`, `vllm`) and fail fast on manifest drift.
+The goal is to keep strict direct-GDS preconditions consistent across daemon-client runtimes (`pytorch`, `tensorrt`, `vllm`, `sglang`) and fail fast on manifest drift.
 
 ## Enforcement
 
 Contract checks run in:
 
 1. `make prereq-k3s` via `platform/k3s/scripts/prereq-check.sh`
-2. `make verify-k3s-{qwen,tensor,vllm}` run paths via `platform/k3s/scripts/run.sh`
+2. `make verify-k3s-{qwen,tensor,vllm,sglang}` run paths via `platform/k3s/scripts/run.sh`
 
 Report artifact:
 
@@ -43,18 +43,19 @@ Related harness outputs:
 
 ## Runtime-Specific Requirements
 
-| Requirement | PyTorch | TensorRT-LLM | vLLM |
-|---|---|---|---|
-| Native torch extension enabled (`OCI2GDS_TORCH_ENABLE_NATIVE`) | REQUIRED | REQUIRED | REQUIRED |
-| Runtime parity mode env (`RUNTIME_PARITY_MODE`) | REQUIRED | REQUIRED | REQUIRED |
-| TensorRT runner/build env (`TRT_MAX_*`) | NOT-NEEDED | REQUIRED | NOT-NEEDED |
-| TensorRT startup/cache wiring (`TENSORRT_STARTUP_MODE`, `host-tensorrt-cache`) | NOT-NEEDED | REQUIRED | NOT-NEEDED |
-| vLLM-specific backend env (`VLLM_ATTENTION_BACKEND`) | NOT-NEEDED | NOT-NEEDED | REQUIRED |
-| Full parity bind gate env (`REQUIRE_FULL_IPC_BIND`) | NOT-NEEDED | OPTIONAL | REQUIRED |
-| Runtime model ref env (`MODEL_REF`) | REQUIRED | REQUIRED | REQUIRED |
-| Harness perf mode env (`PERF_MODE`) | REQUIRED | REQUIRED | REQUIRED |
-| Runtime no-artifact marker (`DAEMON_NO_RUNTIME_ARTIFACT_ACCESS_OK`) | REQUIRED | REQUIRED | REQUIRED |
-| Runtime-bundle timing marker (`DAEMON_RUNTIME_BUNDLE_TIMING`) | REQUIRED | REQUIRED | REQUIRED |
+| Requirement | PyTorch | TensorRT-LLM | vLLM | SGLang |
+|---|---|---|---|---|
+| Native torch extension enabled (`OCI2GDS_TORCH_ENABLE_NATIVE`) | REQUIRED | REQUIRED | REQUIRED | REQUIRED |
+| Runtime parity mode env (`RUNTIME_PARITY_MODE`) | REQUIRED | REQUIRED | REQUIRED | REQUIRED |
+| TensorRT runner/build env (`TRT_MAX_*`) | NOT-NEEDED | REQUIRED | NOT-NEEDED | NOT-NEEDED |
+| TensorRT startup/cache wiring (`TENSORRT_STARTUP_MODE`, `host-tensorrt-cache`) | NOT-NEEDED | REQUIRED | NOT-NEEDED | NOT-NEEDED |
+| vLLM-specific backend env (`VLLM_ATTENTION_BACKEND`) | NOT-NEEDED | NOT-NEEDED | REQUIRED | NOT-NEEDED |
+| SGLang private-loader wiring (`SGLANG_PRIVATE_LOADER_SCRIPT_PATH`, `PYTHONPATH`) | NOT-NEEDED | NOT-NEEDED | NOT-NEEDED | REQUIRED |
+| Full parity bind gate env (`REQUIRE_FULL_IPC_BIND`) | NOT-NEEDED | OPTIONAL | REQUIRED | NOT-NEEDED |
+| Runtime model ref env (`MODEL_REF`) | REQUIRED | REQUIRED | REQUIRED | REQUIRED |
+| Harness perf mode env (`PERF_MODE`) | REQUIRED | REQUIRED | REQUIRED | REQUIRED |
+| Runtime no-artifact marker (`DAEMON_NO_RUNTIME_ARTIFACT_ACCESS_OK`) | REQUIRED | REQUIRED | REQUIRED | REQUIRED |
+| Runtime-bundle timing marker (`DAEMON_RUNTIME_BUNDLE_TIMING`) | REQUIRED | REQUIRED | REQUIRED | REQUIRED |
 
 ## qwen-hello Profile Contract
 
@@ -80,6 +81,7 @@ When adding/changing runtime manifests:
    - `make verify-k3s-qwen`
    - `make verify-k3s-tensor`
    - `make verify-k3s-vllm`
+   - `make verify-k3s-sglang`
 5. Confirm runtime logs still emit `DAEMON_NO_RUNTIME_ARTIFACT_ACCESS_OK`.
 6. For TensorRT, confirm startup split policy still holds:
    - parity mode: no fastpath marker

@@ -62,6 +62,29 @@ echo "runtime-image-probe:ok"'
     fi
     return 0
   fi
+  if [[ "${WORKLOAD_RUNTIME}" == "sglang" ]]; then
+    local probe='set -eu
+command -v python3 >/dev/null || { echo "missing: python3"; exit 61; }
+command -v c++ >/dev/null 2>&1 || { echo "missing: c++"; exit 62; }
+python3 -c "import sglang; from sglang.srt.entrypoints.engine import Engine" >/dev/null 2>&1 || { echo "missing: sglang python package"; exit 63; }
+python3 -c "import torch; from torch.utils.cpp_extension import load_inline" >/dev/null 2>&1 || { echo "missing: torch cpp extension"; exit 64; }
+if [ ! -e /usr/local/cuda/lib64/libcufile.so ] && [ ! -e /usr/local/cuda/lib64/libcufile.so.0 ] && [ ! -e /usr/lib/x86_64-linux-gnu/libcufile.so ]; then
+  echo "missing: libcufile"
+  exit 65
+fi
+echo "runtime-image-probe:ok"'
+    if [[ "${PREPULL_RUNTIME_IMAGE}" == "true" ]]; then
+      log "pre-pulling runtime image ${image}"
+      maybe_sudo docker pull "${image}" >/dev/null
+    fi
+    log "checking SGLang runtime image toolchain: ${image}"
+    if ! maybe_sudo docker run --rm --privileged --gpus all --user 0:0 \
+      "${image}" /bin/sh -lc "${probe}" >"${probe_log}" 2>&1; then
+      cat "${probe_log}" >&2 || true
+      die "SGLang runtime image prerequisite check failed; see ${probe_log}"
+    fi
+    return 0
+  fi
 
   prereq_check_runtime_image_toolchain \
     "${image}" \

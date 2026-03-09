@@ -69,6 +69,21 @@
         "-[[:space:]]+name:[[:space:]]*oci2gdsd-root",
         "-[[:space:]]+name:[[:space:]]*preload-model"
       ]
+    },
+    "sglang": {
+      "template": "platform/k3s/sglang/sglang-daemon-client-job.yaml.tpl",
+      "required_patterns": [
+        "-[[:space:]]+name:[[:space:]]*MODEL_REF",
+        "-[[:space:]]+name:[[:space:]]*RUNTIME_PARITY_MODE",
+        "-[[:space:]]+name:[[:space:]]*SGLANG_PRIVATE_LOADER_SCRIPT_PATH",
+        "-[[:space:]]+name:[[:space:]]*PYTHONPATH",
+        "python3[[:space:]]+/scripts/sglang_daemon_client\\.py"
+      ],
+      "forbidden_patterns": [
+        "-[[:space:]]+name:[[:space:]]*MODEL_ROOT_PATH",
+        "-[[:space:]]+name:[[:space:]]*oci2gdsd-root",
+        "-[[:space:]]+name:[[:space:]]*preload-model"
+      ]
     }
   },
   "qwen_hello": {
