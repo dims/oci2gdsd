@@ -169,7 +169,7 @@ TensorRT split policy:
 Harness perf behavior:
 
 - `K3S_PERF_MODES` defaults to `cold,warm`.
-- p50/p95 warm-vs-cold regression gate uses `PERF_MAX_REGRESSION_PCT` (default `35`).
+- p50/p95 warm-vs-cold regression gate uses `PERF_MAX_REGRESSION_PCT` (default `35`), with `PERF_MAX_REGRESSION_FIRST_TOKEN_PCT` (default `50`) for the `first-token` phase.
 - absolute SLO gate is enabled by default via `PERF_ENFORCE_ABSOLUTE_SLO=true`.
 - runtime-level absolute budgets are controlled by `PERF_SLO_*_MAX_MS` vars.
 - phase-level absolute budgets are controlled by `PERF_SLO_PHASE_*_MAX_MS` vars.

@@ -78,6 +78,7 @@ For runtime-specific overrides and full operational examples, use:
 - `REQUIRE_FULL_IPC_BIND` (default `true`)
 - `K3S_PERF_MODES` (default `cold,warm`)
 - `PERF_MAX_REGRESSION_PCT` (default `35`; p50/p95 warm-vs-cold gate)
+- `PERF_MAX_REGRESSION_FIRST_TOKEN_PCT` (default `50`; p50/p95 warm-vs-cold gate for `first-token`)
 - `PERF_ENFORCE_ABSOLUTE_SLO` (default `true`; runtime+phase absolute gate)
 - `PERF_SLO_*_MAX_MS` (runtime absolute budgets)
 - `PERF_SLO_PHASE_*_MAX_MS` (phase absolute budgets)
@@ -172,6 +173,7 @@ Perf harness mode/gates:
 
 - `K3S_PERF_MODES` defaults to `cold,warm`
 - `PERF_MAX_REGRESSION_PCT` controls p50/p95 warm-vs-cold regression gate (default `35`)
+- `PERF_MAX_REGRESSION_FIRST_TOKEN_PCT` controls warm-vs-cold regression gate for `first-token` (default `50`)
 - `PERF_ENFORCE_ABSOLUTE_SLO=true` enforces absolute runtime and phase budgets for each run
 - runtime perf JSON includes `api_observed.runtime_bundle_prepare_ms`
 

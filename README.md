@@ -226,7 +226,7 @@ Each run records phase timings for:
 Harness mode defaults:
 
 - `K3S_PERF_MODES=cold,warm`
-- p50/p95 warm-vs-cold regression gate: `PERF_MAX_REGRESSION_PCT=35` (overrideable)
+- p50/p95 warm-vs-cold regression gate: `PERF_MAX_REGRESSION_PCT=35` (overrideable), with `PERF_MAX_REGRESSION_FIRST_TOKEN_PCT=50` for `first-token`
 - absolute SLO gate enabled: `PERF_ENFORCE_ABSOLUTE_SLO=true`
 - runtime-level absolute budgets via `PERF_SLO_<RUNTIME>_<MODE>_MAX_MS`
 - phase-level absolute budgets via `PERF_SLO_PHASE_*`

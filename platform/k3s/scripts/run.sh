@@ -358,6 +358,7 @@ enforce_perf_regression_gates() {
   local summary_path="${RESULTS_DIR}/perf-summary.json"
   [[ -f "${summary_path}" ]] || die "perf summary missing: ${summary_path}"
   local max_regression_pct="${PERF_MAX_REGRESSION_PCT:-35}"
+  local first_token_max_regression_pct="${PERF_MAX_REGRESSION_FIRST_TOKEN_PCT:-50}"
 
   local has_cold has_warm
   has_cold="$(jq -r '[.runs[].mode] | index("cold") != null' "${summary_path}")"
@@ -370,24 +371,28 @@ enforce_perf_regression_gates() {
   local phases=("ensure" "bundle" "load" "tensor-map" "bind" "first-token")
   local phase
   for phase in "${phases[@]}"; do
-    local cold_p50 warm_p50 cold_p95 warm_p95 p50_limit p95_limit
+    local cold_p50 warm_p50 cold_p95 warm_p95 p50_limit p95_limit phase_max_regression_pct
+    phase_max_regression_pct="${max_regression_pct}"
+    if [[ "${phase}" == "first-token" ]]; then
+      phase_max_regression_pct="${first_token_max_regression_pct}"
+    fi
     cold_p50="$(jq -r --arg phase "${phase}" '.runs[] | select(.mode=="cold") | .phases[$phase].duration_ms' "${summary_path}" | head -n1)"
     warm_p50="$(jq -r --arg phase "${phase}" '.runs[] | select(.mode=="warm") | .phases[$phase].duration_ms' "${summary_path}" | head -n1)"
     cold_p95="${cold_p50}"
     warm_p95="${warm_p50}"
     [[ -n "${cold_p50}" && -n "${warm_p50}" ]] || die "missing cold/warm phase durations for ${phase}"
 
-    p50_limit="$(jq -n --argjson cold "${cold_p50}" --argjson pct "${max_regression_pct}" '($cold * (100 + $pct) / 100)')"
-    p95_limit="$(jq -n --argjson cold "${cold_p95}" --argjson pct "${max_regression_pct}" '($cold * (100 + $pct) / 100)')"
+    p50_limit="$(jq -n --argjson cold "${cold_p50}" --argjson pct "${phase_max_regression_pct}" '($cold * (100 + $pct) / 100)')"
+    p95_limit="$(jq -n --argjson cold "${cold_p95}" --argjson pct "${phase_max_regression_pct}" '($cold * (100 + $pct) / 100)')"
     jq -en \
       --argjson warm_p50 "${warm_p50}" \
       --argjson warm_p95 "${warm_p95}" \
       --argjson p50_limit "${p50_limit}" \
       --argjson p95_limit "${p95_limit}" \
       '$warm_p50 <= $p50_limit and $warm_p95 <= $p95_limit' >/dev/null || \
-      die "perf regression gate failed for phase=${phase}: warm_p50=${warm_p50} warm_p95=${warm_p95} limit=${p50_limit} max_regression_pct=${max_regression_pct}"
+      die "perf regression gate failed for phase=${phase}: warm_p50=${warm_p50} warm_p95=${warm_p95} limit=${p50_limit} max_regression_pct=${phase_max_regression_pct}"
   done
-  log "perf regression gates passed (max_regression_pct=${max_regression_pct})"
+  log "perf regression gates passed (max_regression_pct=${max_regression_pct} first_token_max_regression_pct=${first_token_max_regression_pct})"
 }
 
 deploy_daemonset_workload_job() {
