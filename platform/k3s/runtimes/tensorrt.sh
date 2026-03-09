@@ -37,6 +37,7 @@ runtime_required_markers() {
     TENSORRT_IPC_TENSOR_MAP_OK \
     TENSORRT_IPC_BIND_OK \
     TENSORRT_IPC_IMPORT_OK \
+    TENSORRT_MANAGED_WEIGHTS_ALIAS_OK \
     TENSORRT_ENGINE_BUILD_OK \
     TENSORRT_GDS_RUNNER_READY \
     TENSORRT_QWEN_INFER_OK \
@@ -77,6 +78,9 @@ runtime_validate_results() {
     'TENSORRT_IPC_IMPORT_OK .*unresolved_shards=0' \
     "full parity requires unresolved_shards=0"
   runtime_assert_log_pattern "${log_path}" \
-    'TENSORRT_FULL_SOURCE_OK .*source=ipc_materialized .*fallback_reads=0' \
-    "full parity requires source=ipc_materialized and fallback_reads=0"
+    'TENSORRT_MANAGED_WEIGHTS_ALIAS_OK .*status=ok .*alias_enabled=true' \
+    "full parity requires managed-weights alias mode with status=ok"
+  runtime_assert_log_pattern "${log_path}" \
+    'TENSORRT_FULL_SOURCE_OK .*source=ipc_materialized .*managed_weights_source=tensor_map .*fallback_reads=0' \
+    "full parity requires source=ipc_materialized, managed_weights_source=tensor_map, and fallback_reads=0"
 }

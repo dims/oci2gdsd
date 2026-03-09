@@ -123,9 +123,13 @@ preload_workload_image() {
 cluster_load_image() {
   local image="$1"
   local force="${2:-false}"
+  local image_local="false"
   if [[ "${force}" != "true" ]] && cluster_image_present "${image}"; then
     log "image already present in k3s containerd: ${image}"
     return 0
+  fi
+  if docker image inspect "${image}" >/dev/null 2>&1; then
+    image_local="true"
   fi
   local tries=0
   local max_tries=30
@@ -141,24 +145,28 @@ cluster_load_image() {
     image_has_registry="true"
   fi
   if [[ "${force}" != "true" ]] && [[ "${image_has_registry}" == "true" ]]; then
-    log "pulling image directly into k3s containerd: ${image}"
-    local pull_attempt
-    for pull_attempt in 1 2 3; do
-      if maybe_sudo k3s ctr -n k8s.io images pull "${image}" >/dev/null 2>&1; then
-        if cluster_image_present "${image}"; then
-          return 0
+    if [[ "${image_local}" == "true" ]]; then
+      log "local image found; skipping direct pull and importing into k3s containerd: ${image}"
+    else
+      log "pulling image directly into k3s containerd: ${image}"
+      local pull_attempt
+      for pull_attempt in 1 2 3; do
+        if maybe_sudo k3s ctr -n k8s.io images pull "${image}" >/dev/null 2>&1; then
+          if cluster_image_present "${image}"; then
+            return 0
+          fi
+          break
         fi
-        break
+        if [[ "${pull_attempt}" -lt 3 ]]; then
+          warn "k3s direct pull attempt ${pull_attempt}/3 failed for ${image}; retrying"
+          sleep 3
+        fi
+      done
+      if [[ "${ALLOW_DOCKER_SAVE_FALLBACK:-false}" != "true" ]]; then
+        die "k3s direct pull failed for ${image}; set ALLOW_DOCKER_SAVE_FALLBACK=true to force docker save/import fallback"
       fi
-      if [[ "${pull_attempt}" -lt 3 ]]; then
-        warn "k3s direct pull attempt ${pull_attempt}/3 failed for ${image}; retrying"
-        sleep 3
-      fi
-    done
-    if [[ "${ALLOW_DOCKER_SAVE_FALLBACK:-false}" != "true" ]]; then
-      die "k3s direct pull failed for ${image}; set ALLOW_DOCKER_SAVE_FALLBACK=true to force docker save/import fallback"
+      warn "k3s direct pull failed for ${image}; falling back to docker save/import"
     fi
-    warn "k3s direct pull failed for ${image}; falling back to docker save/import"
   fi
   if [[ "${force}" == "true" ]]; then
     log "forcing image import into k3s containerd: ${image}"

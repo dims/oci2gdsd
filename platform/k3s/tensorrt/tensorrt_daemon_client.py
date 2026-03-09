@@ -1,4 +1,5 @@
 import gc
+import datetime
 import fcntl
 import hashlib
 import json
@@ -31,7 +32,7 @@ def load_native_module():
     return _load_native_module_common(
         build_dir_default="/tmp/oci2gds_tensorrt_build",
         module_name_prefix="oci2gds_tensorrt_native",
-        required_symbol="import_ipc_copy_to_tensor",
+        required_symbol="import_ipc_tensor_view",
     )
 
 
@@ -53,6 +54,13 @@ def run_cmd(cmd, cwd=None, timeout_seconds=7200):
             f"stderr_tail:\n{tail_err}"
         )
     return proc.stdout
+
+
+def _shape_numel(shape):
+    total = 1
+    for dim in shape:
+        total *= int(dim)
+    return total
 
 
 def profile_shards_from_metadata(metadata: dict):
@@ -499,8 +507,92 @@ def build_engine(
 
 
 
-def run_tensorrt_infer(engine_dir: Path, runtime_dir: Path, require_direct: bool, device_index: int):
-    from tensorrt_llm.runtime import ModelRunnerCpp
+def build_managed_weights_from_tensor_map(tensor_map, native_module, device_index: int):
+    if native_module is None:
+        raise RuntimeError("native module required for TensorRT managed-weights aliasing")
+
+    managed_weights = {}
+    mapped = 0
+    mapped_bytes = 0
+    for entry in tensor_map:
+        name = str(entry.get("name", "")).strip()
+        if not name:
+            raise RuntimeError("tensor-map entry missing tensor name")
+        if name in managed_weights:
+            raise RuntimeError(f"duplicate tensor-map tensor name encountered: {name}")
+
+        handle = str(entry.get("ipc_handle", "")).strip()
+        if not handle:
+            raise RuntimeError(f"tensor-map entry is missing ipc_handle for tensor={name}")
+
+        dtype_code = str(entry.get("dtype", "")).strip().upper()
+        if not dtype_code:
+            raise RuntimeError(f"tensor-map entry is missing dtype for tensor={name}")
+
+        shape_raw = entry.get("shape", [])
+        if not isinstance(shape_raw, list) or not shape_raw:
+            raise RuntimeError(f"tensor-map entry has invalid shape for tensor={name}")
+        shape = [int(dim) for dim in shape_raw]
+        if any(dim < 0 for dim in shape):
+            raise RuntimeError(f"tensor-map entry has negative shape dimension for tensor={name}")
+
+        byte_offset = int(entry.get("byte_offset", 0))
+        byte_length = int(entry.get("byte_length", 0))
+        if byte_offset < 0 or byte_length <= 0:
+            raise RuntimeError(
+                f"tensor-map entry has invalid byte range for tensor={name}: "
+                f"byte_offset={byte_offset} byte_length={byte_length}"
+            )
+
+        tensor = native_module.import_ipc_tensor_view(handle, byte_offset, shape, dtype_code, int(device_index))
+        if not isinstance(tensor, torch.Tensor):
+            raise RuntimeError(f"native tensor view import returned non-tensor for tensor={name}")
+        if not tensor.is_cuda:
+            raise RuntimeError(f"native tensor view import returned non-cuda tensor for tensor={name}")
+
+        want_numel = _shape_numel(shape)
+        got_numel = int(tensor.numel())
+        if got_numel != want_numel:
+            raise RuntimeError(f"tensor-map view numel mismatch for tensor={name}: got={got_numel} want={want_numel}")
+        want_bytes = int(want_numel * tensor.element_size())
+        if want_bytes != byte_length:
+            raise RuntimeError(
+                f"tensor-map view byte-length mismatch for tensor={name}: "
+                f"got={want_bytes} want={byte_length}"
+            )
+
+        managed_weights[name] = tensor
+        mapped += 1
+        mapped_bytes += byte_length
+
+    if mapped == 0:
+        raise RuntimeError("managed weights map is empty")
+
+    return managed_weights, {
+        "status": "ok",
+        "mapped_weights": mapped,
+        "mapped_bytes": mapped_bytes,
+    }
+
+
+def _resolve_single_engine_file(engine_dir: Path) -> Path:
+    plans = sorted(engine_dir.glob("*.engine"), key=lambda p: p.name)
+    if not plans:
+        raise RuntimeError(f"TensorRT engine directory has no *.engine files: {engine_dir}")
+    if len(plans) > 1:
+        raise RuntimeError(f"TensorRT engine directory must contain exactly one *.engine for TP=1: {engine_dir}")
+    return plans[0]
+
+
+def run_tensorrt_infer(
+    engine_dir: Path,
+    runtime_dir: Path,
+    tensors,
+    native_module,
+    require_direct: bool,
+    device_index: int,
+):
+    from tensorrt_llm.bindings import executor as trtllm
 
     tokenizer = AutoTokenizer.from_pretrained(str(runtime_dir), local_files_only=True, trust_remote_code=True)
     prompt = os.environ.get(
@@ -516,53 +608,119 @@ def run_tensorrt_infer(engine_dir: Path, runtime_dir: Path, require_direct: bool
     if not input_ids:
         raise RuntimeError("tokenizer returned empty input ids")
 
-    max_input_len = max(int(os.environ.get("TRT_MAX_INPUT_LEN", "512")), len(input_ids))
     max_output_len = int(os.environ.get("TRT_MAX_OUTPUT_LEN", "64"))
     runner_use_gds = parse_bool_env("TENSORRT_RUNNER_USE_GDS", False) and require_direct
+    kv_cache_fraction = float(os.environ.get("TRT_KV_CACHE_FREE_GPU_MEMORY_FRACTION", "0.5"))
 
-    runner = ModelRunnerCpp.from_dir(
-        engine_dir=str(engine_dir),
-        rank=0,
-        max_batch_size=1,
-        max_input_len=max_input_len,
-        max_output_len=max_output_len,
-        max_beam_width=1,
-        use_gpu_direct_storage=runner_use_gds,
-        gpu_weights_percent=1.0,
+    managed_weights, managed_stats = build_managed_weights_from_tensor_map(
+        tensors,
+        native_module=native_module,
+        device_index=device_index,
+    )
+
+    executor_cfg_kwargs = {
+        "max_batch_size": 1,
+        "max_beam_width": 1,
+        "kv_cache_config": trtllm.KvCacheConfig(free_gpu_memory_fraction=kv_cache_fraction),
+        "use_gpu_direct_storage": runner_use_gds,
+        "gpu_weights_percent": 1.0,
+    }
+    try:
+        executor_cfg = trtllm.ExecutorConfig(
+            alias_managed_weights_from_gpu=True,
+            **executor_cfg_kwargs,
+        )
+    except TypeError as exc:
+        raise RuntimeError(
+            "TensorRT-LLM image does not support alias_managed_weights_from_gpu; "
+            "use a runtime image built from the PR branch"
+        ) from exc
+
+    config_path = engine_dir / "config.json"
+    if not config_path.exists():
+        raise RuntimeError(f"TensorRT engine config.json missing: {config_path}")
+    engine_path = _resolve_single_engine_file(engine_dir)
+
+    engine_buffer = engine_path.read_bytes()
+    json_config_str = config_path.read_text(encoding="utf-8")
+
+    executor = trtllm.Executor(
+        engine_buffer,
+        json_config_str,
+        trtllm.ModelType.DECODER_ONLY,
+        executor_cfg,
+        managed_weights,
     )
     print(
         "TENSORRT_GDS_RUNNER_READY "
         f"use_gpu_direct_storage={runner_use_gds} "
+        "managed_weights_source=tensor_map "
         f"engine_dir={engine_dir}"
+    )
+    print(
+        "TENSORRT_MANAGED_WEIGHTS_ALIAS_OK "
+        f"status={managed_stats.get('status', 'unknown')} "
+        f"mapped_weights={managed_stats.get('mapped_weights', 0)} "
+        f"mapped_bytes={managed_stats.get('mapped_bytes', 0)} "
+        "alias_enabled=true"
     )
 
     infer_start_ms = monotonic_ms()
-    outputs = runner.generate(
-        batch_input_ids=[torch.tensor(input_ids, dtype=torch.int32)],
-        max_new_tokens=max_output_len,
-        end_id=tokenizer.eos_token_id,
+    wait_slice_ms = int(os.environ.get("TRT_EXECUTOR_WAIT_SLICE_MS", "100"))
+    if wait_slice_ms <= 0:
+        wait_slice_ms = 100
+    max_wait_ms = int(os.environ.get("TRT_EXECUTOR_MAX_WAIT_MS", "120000"))
+    if max_wait_ms <= 0:
+        max_wait_ms = 120000
+
+    request = trtllm.Request(
+        input_token_ids=input_ids,
+        max_tokens=max_output_len,
         pad_id=tokenizer.eos_token_id,
-        temperature=0.7,
-        top_p=0.9,
-        top_k=40,
-        output_sequence_lengths=True,
-        return_dict=True,
+        end_id=tokenizer.eos_token_id,
+        streaming=False,
+        sampling_config=trtllm.SamplingConfig(
+            beam_width=1,
+            top_k=40,
+            top_p=0.9,
+            temperature=0.7,
+        ),
     )
 
-    output_ids = outputs["output_ids"]
-    sequence_lengths = outputs["sequence_lengths"]
-    seq_len = int(sequence_lengths[0][0].item())
-    tokens = output_ids[0][0].tolist()
-    generated_ids = tokens[len(input_ids):seq_len]
-    answer = tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
-    if not answer:
-        answer = tokenizer.decode(tokens, skip_special_tokens=True).strip()
+    tokens = []
+    elapsed_ms = 0
+    done = False
+    req_id = executor.enqueue_request(request)
+    try:
+        while not done and elapsed_ms < max_wait_ms:
+            responses = executor.await_responses(req_id, datetime.timedelta(milliseconds=wait_slice_ms))
+            elapsed_ms += wait_slice_ms
+            for response in responses:
+                if response.has_error():
+                    raise RuntimeError(
+                        f"TensorRT executor request failed: request_id={response.request_id} "
+                        f"error={response.error_msg}"
+                    )
+                result = response.result
+                done = done or bool(result.is_final)
+                new_tokens = result.output_token_ids[0]
+                if new_tokens:
+                    tokens.extend(int(t) for t in new_tokens)
+    finally:
+        executor.shutdown()
+
+    if not done:
+        raise RuntimeError(f"TensorRT executor timed out waiting for final response: max_wait_ms={max_wait_ms}")
+    if not tokens:
+        raise RuntimeError("TensorRT inference returned no output tokens")
+
+    answer = tokenizer.decode(tokens, skip_special_tokens=True).strip()
     if not answer:
         raise RuntimeError("TensorRT inference returned empty answer")
 
     answer_sha = hashlib.sha256(answer.encode("utf-8")).hexdigest()
-    print(f"TENSORRT_QWEN_INFER_OK answer_sha256={answer_sha}")
-    return answer_sha, monotonic_ms() - infer_start_ms
+    print(f"TENSORRT_QWEN_INFER_OK answer_sha256={answer_sha} tokens={len(tokens)}")
+    return answer_sha, monotonic_ms() - infer_start_ms, managed_stats
 
 
 def validate_tensor_map_handles(tensors, parity_mode: str):
@@ -726,6 +884,7 @@ def main():
     answer_sha = ""
     heartbeat = None
     source_mode = "symlink"
+    managed_weights_source = "none"
     fallback_reads = 1
     map_stats = {
         "status": "skipped",
@@ -740,6 +899,11 @@ def main():
         "imported_shards": 0,
         "imported_bytes": 0,
         "unresolved_shards": 0,
+    }
+    managed_stats = {
+        "status": "skipped",
+        "mapped_weights": 0,
+        "mapped_bytes": 0,
     }
     attach_client_id = f"{lease_holder}-trt-{os.getpid()}"
 
@@ -837,6 +1001,7 @@ def main():
             device_index=device_index,
         )
         source_mode = "ipc_materialized"
+        managed_weights_source = "tensor_map"
         fallback_reads = 0
         print(
             "TENSORRT_IPC_IMPORT_OK "
@@ -851,6 +1016,7 @@ def main():
         print(
             "TENSORRT_FULL_SOURCE_OK "
             f"source={source_mode} "
+            f"managed_weights_source={managed_weights_source} "
             f"fallback_reads={fallback_reads} "
             f"parity_mode={parity_mode}"
         )
@@ -869,6 +1035,8 @@ def main():
             raise RuntimeError(f"full parity mode requires unresolved_shards=0; got {import_stats}")
         if fallback_reads != 0:
             raise RuntimeError(f"full parity mode requires fallback_reads=0; got {fallback_reads}")
+        if managed_weights_source != "tensor_map":
+            raise RuntimeError(f"full parity mode requires managed_weights_source=tensor_map; got {managed_weights_source}")
 
         engine_dir = build_engine(
             runtime_dir,
@@ -882,12 +1050,22 @@ def main():
         )
         if heartbeat is not None:
             heartbeat.assert_healthy()
-        answer_sha, first_token_ms = run_tensorrt_infer(
+        answer_sha, first_token_ms, managed_stats = run_tensorrt_infer(
             engine_dir,
             runtime_dir,
+            tensors=tensors,
+            native_module=native_module,
             require_direct=require_direct,
             device_index=device_index,
         )
+        if managed_stats.get("status") != "ok":
+            raise RuntimeError(f"full parity mode requires managed weights status=ok; got {managed_stats}")
+        mapped_weights = int(managed_stats.get("mapped_weights", 0))
+        if mapped_weights != int(map_stats.get("total_tensors", 0)):
+            raise RuntimeError(
+                "full parity mode requires managed weights coverage to equal tensor-map coverage; "
+                f"managed={mapped_weights} tensor_map={map_stats.get('total_tensors', 0)}"
+            )
         emit_phase_timing("first-token", first_token_ms, mode=perf_mode)
         if heartbeat is not None:
             heartbeat.stop()
@@ -973,6 +1151,8 @@ def main():
         f"imported_shards={import_stats.get('imported_shards', 0)} "
         f"imported_bytes={import_stats.get('imported_bytes', 0)} "
         f"source_mode={source_mode} "
+        f"managed_weights_source={managed_weights_source} "
+        f"managed_weights={managed_stats.get('mapped_weights', 0)} "
         f"startup_mode={startup_mode} "
         f"fallback_reads={fallback_reads} "
         f"cuda_device={cuda_name}"

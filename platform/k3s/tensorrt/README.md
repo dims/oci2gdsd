@@ -20,7 +20,8 @@ Runtime-specific assets for TensorRT-LLM paths in k3s daemonset mode.
   - `TENSORRT_IPC_TENSOR_MAP_OK`
   - `TENSORRT_IPC_BIND_OK`
   - `TENSORRT_IPC_IMPORT_OK`
-- In `full` mode, runtime shards are materialized from daemon-exported IPC handles (`source=ipc_materialized`) and fallback reads are rejected (`fallback_reads=0`).
+  - `TENSORRT_MANAGED_WEIGHTS_ALIAS_OK`
+- In `full` mode, runtime shards are materialized from daemon-exported IPC handles (`source=ipc_materialized`), managed weights are passed from daemon tensor-map IPC views (`managed_weights_source=tensor_map`), and fallback reads are rejected (`fallback_reads=0`).
 
 ## Startup modes
 
