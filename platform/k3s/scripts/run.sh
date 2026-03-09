@@ -255,7 +255,7 @@ phase_slo_max_ms() {
       if [[ "${runtime}" == "tensorrt" && "${startup_mode}" == "parity" ]]; then
         echo "${PERF_SLO_PHASE_BIND_TENSORRT_PARITY_MAX_MS:-60000}"
       else
-        echo "${PERF_SLO_PHASE_BIND_DEFAULT_MAX_MS:-40000}"
+        echo "${PERF_SLO_PHASE_BIND_DEFAULT_MAX_MS:-60000}"
       fi
       ;;
     first-token)
