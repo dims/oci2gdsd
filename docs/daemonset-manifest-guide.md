@@ -20,7 +20,7 @@ Runtime contract matrix: [runtime-contract-matrix.md](runtime-contract-matrix.md
 
 1. Deploys a privileged `oci2gdsd` DaemonSet on GPU nodes.
    - Daemon pod uses `runtimeClassName: nvidia` and sets `NVIDIA_VISIBLE_DEVICES=all`.
-2. Shares hostPath cache root and UNIX socket with workload pods.
+2. Shares hostPath UNIX socket wiring with workload pods (runtime clients do not mount daemon host model-cache/root paths).
 3. Runs runtime workloads that call allocation-centric daemon APIs:
    - `POST /v2/gpu/allocate`
    - `GET /v2/runtime-bundles/{token}`
