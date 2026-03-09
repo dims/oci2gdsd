@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -203,15 +204,18 @@ func (h *handler) handleRuntimeBundleToken(w http.ResponseWriter, r *http.Reques
 		writeAppError(w, app.NewAppError(app.ExitValidation, app.ReasonValidationFailed, "invalid runtime bundle token encoding", err))
 		return
 	}
+	prepareStart := time.Now()
 	res, err := h.svc.RuntimeBundleByToken(r.Context(), unescapedToken)
 	if err != nil {
 		writeAppErrorWithResult(w, err, res)
 		return
 	}
+	prepareMS := time.Since(prepareStart).Milliseconds()
 
 	w.Header().Set("Content-Type", "application/x-tar")
 	w.Header().Set("X-Oci2gdsd-Model-Id", res.ModelID)
 	w.Header().Set("X-Oci2gdsd-Manifest-Digest", res.ManifestDigest)
+	w.Header().Set("X-Oci2gdsd-Runtime-Bundle-Prepare-Ms", strconv.FormatInt(prepareMS, 10))
 	if strings.TrimSpace(res.AllocationID) != "" {
 		w.Header().Set("X-Oci2gdsd-Allocation-Id", res.AllocationID)
 	}

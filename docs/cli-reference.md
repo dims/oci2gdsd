@@ -409,6 +409,10 @@ lifecycle calls (`attach`, `heartbeat`, `tensor-map`, `export`, `detach`, `unloa
 Daemon v2 JSON handlers reject unknown request fields (strict schema decode) and
 return `VALIDATION_FAILED` for malformed payloads.
 
+`GET /v2/runtime-bundles/{token}` returns timing metadata header
+`X-Oci2gdsd-Runtime-Bundle-Prepare-Ms` so harness/runtime clients can split bundle
+prepare time from transfer/extract time in machine-readable perf summaries.
+
 `POST /v2/gpu/tensor-map` returns a safetensors-derived tensor index for each shard
 with byte ranges and optional exported CUDA IPC handle metadata. This endpoint is used by
 the k3s daemon-client runtime parity checks.

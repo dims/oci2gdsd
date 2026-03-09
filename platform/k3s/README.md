@@ -170,7 +170,11 @@ Harness perf behavior:
 
 - `K3S_PERF_MODES` defaults to `cold,warm`.
 - p50/p95 warm-vs-cold regression gate uses `PERF_MAX_REGRESSION_PCT` (default `35`).
+- absolute SLO gate is enabled by default via `PERF_ENFORCE_ABSOLUTE_SLO=true`.
+- runtime-level absolute budgets are controlled by `PERF_SLO_*_MAX_MS` vars.
+- phase-level absolute budgets are controlled by `PERF_SLO_PHASE_*_MAX_MS` vars.
 - required per-run phase timings: `ensure`, `bundle`, `load`, `tensor-map`, `bind`, `first-token`.
+- runtime-bundle prepare timing marker `DAEMON_RUNTIME_BUNDLE_TIMING` is required and is exported in perf JSON as `api_observed.runtime_bundle_prepare_ms`.
 
 ## Cleanup
 

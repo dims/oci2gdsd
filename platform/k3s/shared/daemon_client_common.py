@@ -305,7 +305,8 @@ def hydrate_runtime_bundle(socket_path: str, runtime_root: Path, runtime_bundle_
     if not token:
         raise RuntimeError("runtime bundle token is required")
     token_path = urllib.parse.quote(token, safe="")
-    code, _, payload = unix_http_request(
+    phase_start = monotonic_ms()
+    code, headers, payload = unix_http_request(
         socket_path=socket_path,
         method="GET",
         path=f"/v2/runtime-bundles/{token_path}",
@@ -321,6 +322,20 @@ def hydrate_runtime_bundle(socket_path: str, runtime_root: Path, runtime_bundle_
         raise RuntimeError(f"runtime bundle missing metadata/model.json in {runtime_root}")
     if not (runtime_root / "shards" / "config.json").exists():
         raise RuntimeError(f"runtime bundle missing shards/config.json in {runtime_root}")
+    bundle_elapsed_ms = monotonic_ms() - phase_start
+    prepare_ms_raw = str(headers.get("x-oci2gdsd-runtime-bundle-prepare-ms", "")).strip()
+    prepare_ms = -1
+    if prepare_ms_raw:
+        try:
+            prepare_ms = int(prepare_ms_raw)
+        except ValueError:
+            prepare_ms = -1
+    print(
+        "DAEMON_RUNTIME_BUNDLE_TIMING "
+        f"prepare_ms={prepare_ms} "
+        f"transfer_extract_ms={bundle_elapsed_ms} "
+        f"payload_bytes={len(payload)}"
+    )
     print(f"DAEMON_RUNTIME_BUNDLE_READY files_root={runtime_root}")
 
 

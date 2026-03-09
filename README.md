@@ -221,11 +221,15 @@ Each run records phase timings for:
 - `tensor-map`
 - `bind`
 - `first-token`
+- API-observed runtime-bundle prepare timing (`api_observed.runtime_bundle_prepare_ms`)
 
 Harness mode defaults:
 
 - `K3S_PERF_MODES=cold,warm`
 - p50/p95 warm-vs-cold regression gate: `PERF_MAX_REGRESSION_PCT=35` (overrideable)
+- absolute SLO gate enabled: `PERF_ENFORCE_ABSOLUTE_SLO=true`
+- runtime-level absolute budgets via `PERF_SLO_<RUNTIME>_<MODE>_MAX_MS`
+- phase-level absolute budgets via `PERF_SLO_PHASE_*`
 
 ## Packaging Models as OCI Artifacts
 

@@ -78,6 +78,9 @@ For runtime-specific overrides and full operational examples, use:
 - `REQUIRE_FULL_IPC_BIND` (default `true`)
 - `K3S_PERF_MODES` (default `cold,warm`)
 - `PERF_MAX_REGRESSION_PCT` (default `35`; p50/p95 warm-vs-cold gate)
+- `PERF_ENFORCE_ABSOLUTE_SLO` (default `true`; runtime+phase absolute gate)
+- `PERF_SLO_*_MAX_MS` (runtime absolute budgets)
+- `PERF_SLO_PHASE_*_MAX_MS` (phase absolute budgets)
 - `TENSORRT_STARTUP_MODE` (`parity` or `fast`; TensorRT only, default `parity`)
 - `TENSORRT_ENGINE_CACHE_HOST_PATH` (TensorRT host cache path, default `/mnt/nvme/oci2gdsd-tensorrt-cache`)
 
@@ -97,6 +100,7 @@ The daemon-client workload log (`platform/k3s/work/artifacts/results/pytorch-dae
 
 - `DAEMON_MODEL_ENSURE_READY`
 - `DAEMON_NO_RUNTIME_ARTIFACT_ACCESS_OK`
+- `DAEMON_RUNTIME_BUNDLE_TIMING`
 - `DAEMON_RUNTIME_BUNDLE_READY`
 - `DAEMON_GPU_LOAD_READY`
 - `DAEMON_GPU_STATUS_OK`
@@ -168,6 +172,8 @@ Perf harness mode/gates:
 
 - `K3S_PERF_MODES` defaults to `cold,warm`
 - `PERF_MAX_REGRESSION_PCT` controls p50/p95 warm-vs-cold regression gate (default `35`)
+- `PERF_ENFORCE_ABSOLUTE_SLO=true` enforces absolute runtime and phase budgets for each run
+- runtime perf JSON includes `api_observed.runtime_bundle_prepare_ms`
 
 vLLM daemon-client log (`platform/k3s/work/artifacts/results/vllm-daemon-client.log`) must include:
 

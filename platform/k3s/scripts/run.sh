@@ -87,6 +87,18 @@ phase_duration_ms_from_log() {
   echo "${duration}"
 }
 
+runtime_bundle_prepare_ms_from_log() {
+  local log_path="$1"
+  local duration
+  duration="$(
+    grep -E "DAEMON_RUNTIME_BUNDLE_TIMING " "${log_path}" \
+      | tail -n1 \
+      | gsed -n 's/.*prepare_ms=\(-\{0,1\}[0-9]\+\).*/\1/p'
+  )"
+  [[ -n "${duration}" ]] || die "missing DAEMON_RUNTIME_BUNDLE_TIMING marker in ${log_path}"
+  echo "${duration}"
+}
+
 resolve_tensorrt_fastpath_state() {
   local log_path="$1"
   WORKLOAD_FASTPATH_PHASE="n/a"
@@ -120,13 +132,14 @@ write_perf_mode_report() {
   if [[ "${WORKLOAD_RUNTIME}" == "tensorrt" ]]; then
     startup_mode="${TENSORRT_STARTUP_MODE}"
   fi
-  local ensure_ms bundle_ms load_ms tensor_map_ms bind_ms first_token_ms
+  local ensure_ms bundle_ms load_ms tensor_map_ms bind_ms first_token_ms bundle_prepare_ms
   ensure_ms="$(phase_duration_ms_from_log "${WORKLOAD_RESULT_LOG}" "ensure")"
   bundle_ms="$(phase_duration_ms_from_log "${WORKLOAD_RESULT_LOG}" "bundle")"
   load_ms="$(phase_duration_ms_from_log "${WORKLOAD_RESULT_LOG}" "load")"
   tensor_map_ms="$(phase_duration_ms_from_log "${WORKLOAD_RESULT_LOG}" "tensor-map")"
   bind_ms="$(phase_duration_ms_from_log "${WORKLOAD_RESULT_LOG}" "bind")"
   first_token_ms="$(phase_duration_ms_from_log "${WORKLOAD_RESULT_LOG}" "first-token")"
+  bundle_prepare_ms="$(runtime_bundle_prepare_ms_from_log "${WORKLOAD_RESULT_LOG}")"
   resolve_tensorrt_fastpath_state "${WORKLOAD_RESULT_LOG}"
 
   jq -n \
@@ -144,6 +157,7 @@ write_perf_mode_report() {
     --argjson tensor_map_ms "${tensor_map_ms}" \
     --argjson bind_ms "${bind_ms}" \
     --argjson first_token_ms "${first_token_ms}" \
+    --argjson bundle_prepare_ms "${bundle_prepare_ms}" \
     '{
       timestamp: $ts,
       runtime: $runtime,
@@ -160,11 +174,139 @@ write_perf_mode_report() {
         "tensor-map": {"duration_ms": $tensor_map_ms},
         bind: {"duration_ms": $bind_ms},
         "first-token": {"duration_ms": $first_token_ms}
+      },
+      api_observed: {
+        runtime_bundle_prepare_ms: $bundle_prepare_ms
       }
     }' > "${output_path}"
   PERF_MODE_REPORTS+=("${output_path}")
   cp "${output_path}" "${RESULTS_DIR}/workload-perf-summary.json"
+  enforce_perf_absolute_slo "${output_path}"
   log "wrote workload perf mode report: ${output_path}"
+}
+
+runtime_workload_slo_max_ms() {
+  local runtime="$1"
+  local mode="$2"
+  local startup_mode="$3"
+  case "${runtime}" in
+    pytorch)
+      if [[ "${mode}" == "cold" ]]; then
+        echo "${PERF_SLO_PYTORCH_COLD_MAX_MS:-180000}"
+      else
+        echo "${PERF_SLO_PYTORCH_WARM_MAX_MS:-90000}"
+      fi
+      ;;
+    tensorrt)
+      if [[ "${startup_mode}" == "fast" ]]; then
+        if [[ "${mode}" == "cold" ]]; then
+          echo "${PERF_SLO_TENSORRT_FAST_COLD_MAX_MS:-120000}"
+        else
+          echo "${PERF_SLO_TENSORRT_FAST_WARM_MAX_MS:-75000}"
+        fi
+      else
+        if [[ "${mode}" == "cold" ]]; then
+          echo "${PERF_SLO_TENSORRT_PARITY_COLD_MAX_MS:-300000}"
+        else
+          echo "${PERF_SLO_TENSORRT_PARITY_WARM_MAX_MS:-180000}"
+        fi
+      fi
+      ;;
+    vllm)
+      if [[ "${mode}" == "cold" ]]; then
+        echo "${PERF_SLO_VLLM_COLD_MAX_MS:-210000}"
+      else
+        echo "${PERF_SLO_VLLM_WARM_MAX_MS:-120000}"
+      fi
+      ;;
+    *)
+      die "unsupported runtime for workload SLO: ${runtime}"
+      ;;
+  esac
+}
+
+phase_slo_max_ms() {
+  local phase="$1"
+  local runtime="$2"
+  local mode="$3"
+  local startup_mode="$4"
+  case "${phase}" in
+    ensure)
+      if [[ "${mode}" == "cold" ]]; then
+        echo "${PERF_SLO_PHASE_ENSURE_COLD_MAX_MS:-70000}"
+      else
+        echo "${PERF_SLO_PHASE_ENSURE_WARM_MAX_MS:-10000}"
+      fi
+      ;;
+    bundle)
+      if [[ "${mode}" == "cold" ]]; then
+        echo "${PERF_SLO_PHASE_BUNDLE_COLD_MAX_MS:-20000}"
+      else
+        echo "${PERF_SLO_PHASE_BUNDLE_WARM_MAX_MS:-10000}"
+      fi
+      ;;
+    load)
+      echo "${PERF_SLO_PHASE_LOAD_MAX_MS:-20000}"
+      ;;
+    tensor-map)
+      echo "${PERF_SLO_PHASE_TENSOR_MAP_MAX_MS:-8000}"
+      ;;
+    bind)
+      if [[ "${runtime}" == "tensorrt" && "${startup_mode}" == "parity" ]]; then
+        echo "${PERF_SLO_PHASE_BIND_TENSORRT_PARITY_MAX_MS:-60000}"
+      else
+        echo "${PERF_SLO_PHASE_BIND_DEFAULT_MAX_MS:-40000}"
+      fi
+      ;;
+    first-token)
+      echo "${PERF_SLO_PHASE_FIRST_TOKEN_MAX_MS:-60000}"
+      ;;
+    runtime-bundle-prepare)
+      if [[ "${mode}" == "cold" ]]; then
+        echo "${PERF_SLO_PHASE_RUNTIME_BUNDLE_PREPARE_COLD_MAX_MS:-10000}"
+      else
+        echo "${PERF_SLO_PHASE_RUNTIME_BUNDLE_PREPARE_WARM_MAX_MS:-5000}"
+      fi
+      ;;
+    *)
+      die "unsupported phase for SLO budget: ${phase}"
+      ;;
+  esac
+}
+
+enforce_perf_absolute_slo() {
+  local report_path="$1"
+  if ! is_true "${PERF_ENFORCE_ABSOLUTE_SLO:-true}"; then
+    return
+  fi
+  [[ -f "${report_path}" ]] || die "perf report missing for absolute SLO gate: ${report_path}"
+
+  local runtime mode startup_mode workload_ms workload_budget
+  runtime="$(jq -r '.runtime' "${report_path}")"
+  mode="$(jq -r '.mode' "${report_path}")"
+  startup_mode="$(jq -r '.startup_mode // "n/a"' "${report_path}")"
+  workload_ms="$(jq -r '.workload_duration_ms' "${report_path}")"
+  workload_budget="$(runtime_workload_slo_max_ms "${runtime}" "${mode}" "${startup_mode}")"
+  jq -en --argjson got "${workload_ms}" --argjson max "${workload_budget}" '$got <= $max' >/dev/null || \
+    die "absolute SLO failed (workload): runtime=${runtime} mode=${mode} startup_mode=${startup_mode} got_ms=${workload_ms} max_ms=${workload_budget}"
+
+  local phases=("ensure" "bundle" "load" "tensor-map" "bind" "first-token")
+  local phase got max
+  for phase in "${phases[@]}"; do
+    got="$(jq -r --arg phase "${phase}" '.phases[$phase].duration_ms' "${report_path}")"
+    max="$(phase_slo_max_ms "${phase}" "${runtime}" "${mode}" "${startup_mode}")"
+    jq -en --argjson got "${got}" --argjson max "${max}" '$got <= $max' >/dev/null || \
+      die "absolute SLO failed (phase): runtime=${runtime} mode=${mode} startup_mode=${startup_mode} phase=${phase} got_ms=${got} max_ms=${max}"
+  done
+
+  local bundle_prepare_ms bundle_prepare_budget
+  bundle_prepare_ms="$(jq -r '.api_observed.runtime_bundle_prepare_ms // -1' "${report_path}")"
+  if [[ "${bundle_prepare_ms}" =~ ^-?[0-9]+$ ]] && (( bundle_prepare_ms >= 0 )); then
+    bundle_prepare_budget="$(phase_slo_max_ms "runtime-bundle-prepare" "${runtime}" "${mode}" "${startup_mode}")"
+    jq -en --argjson got "${bundle_prepare_ms}" --argjson max "${bundle_prepare_budget}" '$got <= $max' >/dev/null || \
+      die "absolute SLO failed (runtime bundle prepare): runtime=${runtime} mode=${mode} got_ms=${bundle_prepare_ms} max_ms=${bundle_prepare_budget}"
+  fi
+  log "absolute SLO gate passed: runtime=${runtime} mode=${mode} startup_mode=${startup_mode}"
 }
 
 write_perf_summary() {

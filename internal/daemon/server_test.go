@@ -368,6 +368,9 @@ func TestRuntimeBundleTokenStreamsTarball(t *testing.T) {
 	if got := rr.Header().Get("X-Oci2gdsd-Allocation-Id"); got != alloc.AllocationID {
 		t.Fatalf("unexpected allocation header: %q", got)
 	}
+	if got := rr.Header().Get("X-Oci2gdsd-Runtime-Bundle-Prepare-Ms"); strings.TrimSpace(got) == "" {
+		t.Fatalf("expected runtime bundle prepare timing header")
+	}
 
 	tr := tar.NewReader(bytes.NewReader(rr.Body.Bytes()))
 	files := map[string][]byte{}

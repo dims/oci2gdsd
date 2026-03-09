@@ -54,6 +54,7 @@ Related harness outputs:
 | Runtime model ref env (`MODEL_REF`) | REQUIRED | REQUIRED | REQUIRED |
 | Harness perf mode env (`PERF_MODE`) | REQUIRED | REQUIRED | REQUIRED |
 | Runtime no-artifact marker (`DAEMON_NO_RUNTIME_ARTIFACT_ACCESS_OK`) | REQUIRED | REQUIRED | REQUIRED |
+| Runtime-bundle timing marker (`DAEMON_RUNTIME_BUNDLE_TIMING`) | REQUIRED | REQUIRED | REQUIRED |
 
 ## qwen-hello Profile Contract
 
