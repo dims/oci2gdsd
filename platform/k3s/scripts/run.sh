@@ -259,7 +259,9 @@ phase_slo_max_ms() {
       echo "${PERF_SLO_PHASE_TENSOR_MAP_MAX_MS:-8000}"
       ;;
     bind)
-      if [[ "${runtime}" == "tensorrt" && "${startup_mode}" == "parity" ]]; then
+      if [[ "${runtime}" == "sglang" ]]; then
+        echo "${PERF_SLO_PHASE_BIND_SGLANG_MAX_MS:-65000}"
+      elif [[ "${runtime}" == "tensorrt" && "${startup_mode}" == "parity" ]]; then
         echo "${PERF_SLO_PHASE_BIND_TENSORRT_PARITY_MAX_MS:-60000}"
       else
         echo "${PERF_SLO_PHASE_BIND_DEFAULT_MAX_MS:-60000}"
