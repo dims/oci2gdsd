@@ -49,8 +49,8 @@ Guide: [docs/quickstart-a100.md](docs/quickstart-a100.md)
 ### 3) Kubernetes DaemonSet end-to-end
 
 ```bash
-# qwen daemonset full parity
-make verify-k3s-qwen
+# PyTorch daemonset full parity
+make verify-k3s-pytorch
 
 # TensorRT-LLM suite (daemonset + parity)
 make verify-k3s-tensor
@@ -58,8 +58,11 @@ make verify-k3s-tensor
 # vLLM suite (daemonset + parity)
 make verify-k3s-vllm
 
+# SGLang suite (daemonset + parity)
+make verify-k3s-sglang
+
 # Run all runtime suites
-make verify-k3s-qwen verify-k3s-tensor verify-k3s-vllm
+make verify-k3s-pytorch verify-k3s-tensor verify-k3s-vllm verify-k3s-sglang
 ```
 
 Daemon deployment docs:
@@ -160,7 +163,7 @@ oci2gdsd gc --policy lru_no_lease --min-free-bytes 200G --json
 
 ## Kubernetes Modes
 
-The public verify targets run DaemonSet manifest mode (`verify-k3s-{qwen,tensor,vllm}`):
+The public verify targets run DaemonSet manifest mode (`verify-k3s-{pytorch,tensor,vllm,sglang}`):
 node-local `oci2gdsd serve` DaemonSet + daemon-client workloads with full parity checks.
 
 Runtime policy in this mode:
@@ -273,9 +276,10 @@ Common entrypoints:
 - `make prereq`
 - `make verify-local`
 - `make verify-smoke`
-- `make verify-k3s-qwen`
+- `make verify-k3s-pytorch`
 - `make verify-k3s-tensor`
 - `make verify-k3s-vllm`
+- `make verify-k3s-sglang`
 - `make clean-k3s`
 - `make clean`
 
@@ -308,6 +312,7 @@ Platform/runtime docs:
 - [platform/k3s/pytorch/qwen-hello.md](platform/k3s/pytorch/qwen-hello.md)
 - [platform/k3s/tensorrt/README.md](platform/k3s/tensorrt/README.md)
 - [platform/k3s/vllm/README.md](platform/k3s/vllm/README.md)
+- [platform/k3s/sglang/README.md](platform/k3s/sglang/README.md)
 
 Contributor guide:
 
@@ -320,6 +325,6 @@ Implemented and exercised in repo targets:
 - Strict, digest-anchored model lifecycle with journaling and crash-safe publish.
 - Lease-aware GC and lifecycle APIs.
 - Daemon mode with GPU allocation lifecycle and runtime integration test paths.
-- k3s harness covering PyTorch, TensorRT-LLM, and vLLM daemon-client scenarios.
+- k3s harness covering PyTorch, TensorRT-LLM, vLLM, and SGLang daemon-client scenarios.
 
 Planned/future areas are tracked in implementation notes and planning docs under `docs/` and `~/notes`.

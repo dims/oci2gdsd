@@ -10,7 +10,7 @@ help:
 	@echo "  prereq                 Full prereq chain (local -> host -> k3s)"
 	@echo "  verify-core            verify-unit + verify-local"
 	@echo "  verify-smoke           verify-core + host/k3s qwen smoke"
-	@echo "  verify-k3s-qwen        qwen daemonset full parity"
+	@echo "  verify-k3s-pytorch     PyTorch daemonset full parity"
 	@echo "  verify-k3s-tensor      TensorRT-LLM daemonset full parity"
 	@echo "  verify-k3s-vllm        vLLM daemonset full parity"
 	@echo "  verify-k3s-sglang      SGLang daemonset full parity"
@@ -19,7 +19,7 @@ help:
 	@echo ""
 	@echo "Advanced targets: prereq-local prereq-host-gds prereq-k3s prereq-all"
 	@echo "                  verify-unit verify-local"
-	@echo "                  verify-k3s-qwen verify-k3s-tensor verify-k3s-vllm verify-k3s-sglang"
+	@echo "                  verify-k3s-pytorch verify-k3s-tensor verify-k3s-vllm verify-k3s-sglang"
 
 .PHONY: build
 build:
@@ -84,8 +84,8 @@ prereq: prereq-all
 
 K3S_STRICT_GDS_ENV := REQUIRE_DIRECT_GDS=true OCI2GDS_STRICT=true OCI2GDS_PROBE_STRICT=true OCI2GDS_FORCE_NO_COMPAT=true
 
-.PHONY: verify-k3s-qwen
-verify-k3s-qwen: prereq-k3s
+.PHONY: verify-k3s-pytorch
+verify-k3s-pytorch: prereq-k3s
 	$(K3S_STRICT_GDS_ENV) WORKLOAD_RUNTIME=pytorch ./platform/k3s/scripts/run.sh
 
 .PHONY: verify-k3s-tensor

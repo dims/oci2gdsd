@@ -23,7 +23,7 @@ Related references:
 From repo root:
 
 ```bash
-make verify-k3s-qwen
+make verify-k3s-pytorch
 make verify-k3s-tensor
 make verify-k3s-vllm
 make verify-k3s-sglang
@@ -32,14 +32,14 @@ make verify-k3s-sglang
 Run all suites:
 
 ```bash
-make verify-k3s-qwen verify-k3s-tensor verify-k3s-vllm verify-k3s-sglang
+make verify-k3s-pytorch verify-k3s-tensor verify-k3s-vllm verify-k3s-sglang
 ```
 
 Each target runs `prereq-k3s` first.
 
 ## Runtime Mapping
 
-- `verify-k3s-qwen` -> `WORKLOAD_RUNTIME=pytorch`
+- `verify-k3s-pytorch` -> `WORKLOAD_RUNTIME=pytorch`
 - `verify-k3s-tensor` -> `WORKLOAD_RUNTIME=tensorrt`
 - `verify-k3s-vllm` -> `WORKLOAD_RUNTIME=vllm`
 - `verify-k3s-sglang` -> `WORKLOAD_RUNTIME=sglang`
@@ -95,7 +95,7 @@ REQUIRE_DIRECT_GDS=false \
 OCI2GDS_STRICT=false \
 OCI2GDS_PROBE_STRICT=false \
 OCI2GDS_FORCE_NO_COMPAT=false \
-make verify-k3s-qwen
+make verify-k3s-pytorch
 ```
 
 ## Common Overrides
@@ -105,7 +105,7 @@ Use prebuilt model identity (skip local package/push):
 ```bash
 MODEL_DIGEST_OVERRIDE=sha256:... \
 MODEL_REF_OVERRIDE=oci-model-registry.oci-model-registry.svc.cluster.local:5000/models/qwen3-0.6b@sha256:... \
-make verify-k3s-qwen
+make verify-k3s-pytorch
 ```
 
 Use a prebuilt daemon image (skip local build/load):
@@ -114,14 +114,14 @@ Use a prebuilt daemon image (skip local build/load):
 SKIP_OCI2GDSD_IMAGE_BUILD=true \
 SKIP_OCI2GDSD_IMAGE_LOAD=true \
 OCI2GDSD_IMAGE=<registry>/<repo>:<tag> \
-make verify-k3s-qwen
+make verify-k3s-pytorch
 ```
 
 Toggle qwen-hello and local host GDS checks:
 
 ```bash
-VALIDATE_QWEN_HELLO=false make verify-k3s-qwen
-VALIDATE_LOCAL_GDS=false make verify-k3s-qwen
+VALIDATE_QWEN_HELLO=false make verify-k3s-pytorch
+VALIDATE_LOCAL_GDS=false make verify-k3s-pytorch
 ```
 
 Enable TensorRT fast startup mode (persistent engine cache reuse):
@@ -135,9 +135,9 @@ make verify-k3s-tensor
 Storage and namespace overrides:
 
 ```bash
-OCI2GDSD_ROOT_PATH=/mnt/nvme/oci2gdsd make verify-k3s-qwen
+OCI2GDSD_ROOT_PATH=/mnt/nvme/oci2gdsd make verify-k3s-pytorch
 MIN_FREE_GB_DOCKER=150 MIN_FREE_GB_K3S=80 MIN_FREE_GB_OCI2GDS_ROOT=40 make prereq-k3s
-E2E_NAMESPACE=oci2gdsd-e2e make verify-k3s-qwen
+E2E_NAMESPACE=oci2gdsd-e2e make verify-k3s-pytorch
 ```
 
 ## Artifacts

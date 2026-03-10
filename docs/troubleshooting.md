@@ -7,7 +7,7 @@
 
 This guide is for failures we repeatedly observed while running:
 
-- `make verify-k3s-qwen`
+- `make verify-k3s-pytorch`
 - `./platform/host/scripts/quick-qwen.sh`
 
 Use it together with:
@@ -26,7 +26,7 @@ Use it together with:
 | Runtime image precheck fails with `missing: c++` | Selected runtime image cannot build native extension path | Use `PYTORCH_RUNTIME_IMAGE=nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1` |
 | Space errors during pull/build/apply | Docker/k3s/model root on small boot disk | Move Docker data-root and k3s/model paths to `/mnt/nvme` |
 | Direct probe says ok but NVFS counters stay zero | `nvidia-fs` IO stats disabled | Enable `rw_stats_enabled=1` or keep counter gate disabled |
-| qwen quick fails with missing model digest/ref | Quick mode does not have model identity yet | Run full `make verify-k3s-qwen` once or pass explicit `MODEL_*_OVERRIDE` |
+| qwen quick fails with missing model digest/ref | Quick mode does not have model identity yet | Run full `make verify-k3s-pytorch` once or pass explicit `MODEL_*_OVERRIDE` |
 | No `nvidia.com/gpu` allocatable | GPU operator/device plugin not ready | Install/repair GPU operator, then re-check node allocatable |
 | `error: failed to initialize state lock: open ... state.db.lock: permission denied` | Model root path contains root-owned files from init-container flow | `sudo chown -R $USER:$USER /mnt/nvme/oci2gdsd` (or your `OCI2GDSD_ROOT_PATH`) |
 | Docker free-space gates fail unexpectedly after reboot | `/mnt/nvme` was not remounted, so Docker data-root path resolves on `/` | Remount NVMe first, then confirm `docker info --format '{{.DockerRootDir}}'` |
@@ -168,7 +168,7 @@ ls /dev/nvme* 2>/dev/null || true
 make prereq-host-gds
 make prereq-k3s
 ./platform/host/scripts/quick-qwen.sh
-make verify-k3s-qwen
+make verify-k3s-pytorch
 ```
 
 ## 5) `enable-cuda-compat` Hook Failure
@@ -300,17 +300,17 @@ Repo default now uses `REQUIRE_NVFS_STATS_DELTA_MODE=auto` to avoid false negati
 
 ## 11) Quick Target Fails Due To Model Identity
 
-`make verify-k3s-qwen` needs model digest and registry ref.
+`make verify-k3s-pytorch` needs model digest and registry ref.
 
 Ways to satisfy:
 
-1. Run `make verify-k3s-qwen` once to seed identity artifacts.
+1. Run `make verify-k3s-pytorch` once to seed identity artifacts.
 2. Set explicit overrides:
 
 ```bash
 MODEL_DIGEST_OVERRIDE=sha256:... \
 MODEL_REF_OVERRIDE=oci-model-registry.oci-model-registry.svc.cluster.local:5000/models/qwen3-0.6b@sha256:... \
-make verify-k3s-qwen
+make verify-k3s-pytorch
 ```
 
 ## 12) Recommended Recovery Sequence (Fresh A100)
@@ -329,7 +329,7 @@ make prereq-k3s
 
 ```bash
 ./platform/host/scripts/quick-qwen.sh
-make verify-k3s-qwen
+make verify-k3s-pytorch
 ```
 
 3. If strict direct gate still fails, follow the runbook remediation tree and stop criteria.

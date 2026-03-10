@@ -37,7 +37,7 @@ make verify-smoke
 ## 4) Run full k3s runtime suite (2nd-level validation)
 
 ```bash
-make verify-k3s-qwen verify-k3s-tensor verify-k3s-vllm verify-k3s-sglang
+make verify-k3s-pytorch verify-k3s-tensor verify-k3s-vllm verify-k3s-sglang
 ```
 
 Runtime-specific knobs/defaults live in:

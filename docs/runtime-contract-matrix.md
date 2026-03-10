@@ -12,7 +12,7 @@ The goal is to keep strict direct-GDS preconditions consistent across daemon-cli
 Contract checks run in:
 
 1. `make prereq-k3s` via `platform/k3s/scripts/prereq-check.sh`
-2. `make verify-k3s-{qwen,tensor,vllm,sglang}` run paths via `platform/k3s/scripts/run.sh`
+2. `make verify-k3s-{pytorch,tensor,vllm,sglang}` run paths via `platform/k3s/scripts/run.sh`
 
 Report artifact:
 
@@ -78,7 +78,7 @@ When adding/changing runtime manifests:
 2. Update templates.
 3. Run `make prereq-k3s` (includes runtime-contract checks).
 4. Run runtime suites to confirm behavior:
-   - `make verify-k3s-qwen`
+   - `make verify-k3s-pytorch`
    - `make verify-k3s-tensor`
    - `make verify-k3s-vllm`
    - `make verify-k3s-sglang`

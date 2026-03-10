@@ -213,11 +213,11 @@ Run in order:
 1. `make verify-unit`
 2. `make verify-local`
 3. `make verify-smoke`
-4. `make verify-k3s-qwen`
+4. `make verify-k3s-pytorch`
 5. `make verify-k3s-tensor`
 6. `make verify-k3s-vllm`
 7. `make verify-k3s-sglang`
-8. `make verify-k3s-qwen verify-k3s-tensor verify-k3s-vllm verify-k3s-sglang`
+8. `make verify-k3s-pytorch verify-k3s-tensor verify-k3s-vllm verify-k3s-sglang`
 
 If strict host qualification fails, do not report strict direct-GDS pass for downstream e2e.
 

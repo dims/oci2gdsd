@@ -60,7 +60,7 @@ For vLLM daemon-client mode, the workload:
 Use the canonical verify targets:
 
 ```bash
-make verify-k3s-qwen verify-k3s-tensor verify-k3s-vllm verify-k3s-sglang
+make verify-k3s-pytorch verify-k3s-tensor verify-k3s-vllm verify-k3s-sglang
 ```
 
 For runtime-specific overrides and full operational examples, use:
