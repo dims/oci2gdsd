@@ -141,12 +141,11 @@ maybe_auto_configure_storage() {
     fi
   fi
 
-  local k3s_dir k3s_need k3s_avail nvme_avail
+  local k3s_dir k3s_need nvme_avail
   k3s_dir="$(k3s_data_dir)"
   k3s_need=$((MIN_FREE_GB_K3S * 1024 * 1024))
-  k3s_avail="$(path_available_kb "${k3s_dir}")"
   nvme_avail="$(path_available_kb "/mnt/nvme")"
-  if (( k3s_avail < k3s_need )) && [[ "${k3s_dir}" != /mnt/nvme/* ]] && (( nvme_avail >= k3s_need )); then
+  if [[ "${k3s_dir}" != /mnt/nvme/* ]] && (( nvme_avail >= k3s_need )); then
     configure_k3s_data_dir "/mnt/nvme/k3s"
   fi
 }

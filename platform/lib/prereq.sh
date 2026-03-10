@@ -21,11 +21,16 @@ prereq_ensure_apt_available() {
 
 prereq_apt_install() {
   prereq_ensure_apt_available
+  local -a dpkg_opts=(
+    "-o" "Dpkg::Options::=--force-confdef"
+    "-o" "Dpkg::Options::=--force-confold"
+  )
   if [[ "${PREREQ_APT_UPDATED}" -eq 0 ]]; then
-    maybe_sudo apt-get update -y >/dev/null
+    maybe_sudo env DEBIAN_FRONTEND=noninteractive apt-get update -y >/dev/null
     PREREQ_APT_UPDATED=1
   fi
-  maybe_sudo apt-get install -y "$@" >/dev/null
+  maybe_sudo env DEBIAN_FRONTEND=noninteractive \
+    apt-get install -y "${dpkg_opts[@]}" "$@" >/dev/null
 }
 
 prereq_ensure_cmd_or_install() {

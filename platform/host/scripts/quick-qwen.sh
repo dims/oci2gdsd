@@ -330,9 +330,13 @@ run_gds_preflight() {
               nvfs_registered=1
             fi
           fi
+          if [[ "${nvfs_registered}" -eq 0 ]] && [[ -r /proc/driver/nvidia-fs/modules ]]; then
+            warn "strict gdsio probe passed but NVFS modules lack explicit nvme token; accepting functional direct probe"
+            nvfs_registered=1
+          fi
         fi
         if [[ "${nvfs_registered}" -eq 1 ]]; then
-          warn "gdscheck reports NVMe unsupported, but strict gdsio direct probe with NVFS registration succeeded (see ${gdsio_report}); continuing"
+          warn "gdscheck reports NVMe unsupported, but strict gdsio direct probe succeeded (see ${gdsio_report}); continuing"
           return 0
         fi
       fi

@@ -127,6 +127,10 @@ run_strict_gdsio_probe() {
       nvfs_registered=1
     fi
   fi
+  if [[ "${nvfs_registered}" -eq 0 ]] && [[ -r /proc/driver/nvidia-fs/modules ]]; then
+    warn "strict gdsio probe passed but NVFS modules lack explicit nvme token; accepting functional direct probe"
+    nvfs_registered=1
+  fi
   if [[ "${nvfs_registered}" -eq 0 ]]; then
     return 1
   fi
@@ -195,4 +199,3 @@ check_direct_gds_platform_support() {
   fi
   return 0
 }
-
