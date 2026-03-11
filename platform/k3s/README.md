@@ -35,7 +35,10 @@ Run all suites:
 make verify-k3s-pytorch verify-k3s-tensor verify-k3s-vllm verify-k3s-sglang
 ```
 
-Each target runs `prereq-k3s` first.
+Each target runs the prereq chain before workload execution. `verify-k3s-tensor`
+reruns the k3s prereq stage with `WORKLOAD_RUNTIME=tensorrt` so TensorRT-LLM
+image/toolchain checks apply to the TensorRT path instead of the default
+PyTorch path.
 
 ## Runtime Mapping
 
@@ -124,11 +127,40 @@ VALIDATE_QWEN_HELLO=false make verify-k3s-pytorch
 VALIDATE_LOCAL_GDS=false make verify-k3s-pytorch
 ```
 
+Override host CUDA dev package/path discovery for local GDS validation when the
+host exposes CUDA under non-default locations:
+
+```bash
+CUDA_DEV_PACKAGE_SERIES=13-2 \
+CUDA_INCLUDE_DIR=/usr/local/cuda/targets/x86_64-linux/include \
+CUDA_LIB_DIR=/usr/local/cuda/targets/x86_64-linux/lib \
+make verify-k3s-tensor
+```
+
 Enable TensorRT fast startup mode (persistent engine cache reuse):
 
 ```bash
+TENSORRTLLM_BACKEND=tensorrt \
 TENSORRT_STARTUP_MODE=fast \
 TENSORRT_ENGINE_CACHE_HOST_PATH=/mnt/nvme/oci2gdsd-tensorrt-cache \
+make verify-k3s-tensor
+```
+
+Build a TensorRT-LLM release image from the `torch-alias-main-single` branch
+and run TensorRT-LLM PyTorch parity against that image:
+
+```bash
+cd /path/to/TensorRT-LLM
+git checkout torch-alias-main-single
+git lfs install
+git lfs pull
+make -C docker release_build IMAGE_TAG=torch-alias-main-single CUDA_ARCHS="80-real" GIT_COMMIT="$(git rev-parse --short HEAD)"
+
+cd /path/to/oci2gdsd
+TENSORRTLLM_BACKEND=pytorch \
+TENSORRT_STARTUP_MODE=parity \
+TENSORRTLLM_RUNTIME_IMAGE=tensorrt_llm/release:torch-alias-main-single \
+TENSORRTLLM_IMAGE=tensorrt_llm/release:torch-alias-main-single \
 make verify-k3s-tensor
 ```
 
@@ -167,8 +199,11 @@ Harness reports a two-leg performance model:
 
 TensorRT split policy:
 
-- `TENSORRT_STARTUP_MODE=parity` must not emit fastpath markers.
-- `TENSORRT_STARTUP_MODE=fast` must emit `TENSORRT_ENGINE_FASTPATH_OK` and classify run as cold (`cache_hit=false`) or warm (`cache_hit=true`).
+- `TENSORRTLLM_BACKEND=pytorch` (default) runs parity-only and must not emit fastpath markers.
+- `TENSORRTLLM_BACKEND=pytorch` expects the runtime image to be built from `torch-alias-main-single` (or an equivalent TensorRT-LLM build that includes `maybe_alias_or_copy_tensor` support).
+- `TENSORRTLLM_BACKEND=tensorrt` preserves the startup split:
+  - `TENSORRT_STARTUP_MODE=parity` must not emit fastpath markers.
+  - `TENSORRT_STARTUP_MODE=fast` must emit `TENSORRT_ENGINE_FASTPATH_OK` and classify run as cold (`cache_hit=false`) or warm (`cache_hit=true`).
 
 Harness perf behavior:
 

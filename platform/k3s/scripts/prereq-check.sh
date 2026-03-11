@@ -11,11 +11,39 @@ source "${LIB_DIR}/prereq.sh"
 INSTALL_MISSING_PREREQS="${INSTALL_MISSING_PREREQS:-true}"
 PREPULL_RUNTIME_IMAGE="${PREPULL_RUNTIME_IMAGE:-true}"
 
+prepull_runtime_image_if_needed() {
+  local image="$1"
+  if [[ "${PREPULL_RUNTIME_IMAGE}" != "true" ]]; then
+    return 0
+  fi
+  if maybe_sudo docker image inspect "${image}" >/dev/null 2>&1; then
+    log "runtime image already exists locally; skipping pull for ${image}"
+    return 0
+  fi
+  log "pre-pulling runtime image ${image}"
+  maybe_sudo docker pull "${image}" >/dev/null
+}
+
 check_runtime_image_toolchain() {
   local image="$1"
   local probe_log="${RESULTS_DIR}/runtime-image-prereq.log"
   if [[ "${WORKLOAD_RUNTIME}" == "tensorrt" ]]; then
-    local probe='set -eu
+    local probe
+    if [[ "${TENSORRTLLM_BACKEND}" == "pytorch" ]]; then
+      probe='set -eu
+command -v python3 >/dev/null || { echo "missing: python3"; exit 41; }
+command -v c++ >/dev/null 2>&1 || { echo "missing: c++"; exit 45; }
+python3 -c "from tensorrt_llm import LLM, SamplingParams" >/dev/null 2>&1 || { echo "missing: tensorrt_llm LLM API"; exit 42; }
+python3 -c "from tensorrt_llm._torch.models.checkpoints.hf.checkpoint_loader import HfCheckpointLoader" >/dev/null 2>&1 || { echo "missing: TensorRT-LLM PyTorch checkpoint loader"; exit 43; }
+python3 -c "from tensorrt_llm._torch.models.modeling_utils import maybe_alias_or_copy_tensor" >/dev/null 2>&1 || { echo "missing: TensorRT-LLM PyTorch aliasing support"; exit 47; }
+python3 -c "from torch.utils.cpp_extension import load_inline" >/dev/null 2>&1 || { echo "missing: torch cpp extension"; exit 46; }
+if [ ! -e /usr/local/cuda/lib64/libcufile.so ] && [ ! -e /usr/local/cuda/lib64/libcufile.so.0 ] && [ ! -e /usr/lib/x86_64-linux-gnu/libcufile.so ]; then
+  echo "missing: libcufile"
+  exit 44
+fi
+echo "runtime-image-probe:ok"'
+    else
+      probe='set -eu
 command -v python3 >/dev/null || { echo "missing: python3"; exit 41; }
 command -v trtllm-build >/dev/null || { echo "missing: trtllm-build"; exit 42; }
 python3 -c "from tensorrt_llm.runtime import ModelRunnerCpp" >/dev/null 2>&1 || { echo "missing: tensorrt_llm.runtime.ModelRunnerCpp"; exit 43; }
@@ -26,10 +54,8 @@ if [ ! -e /usr/local/cuda/lib64/libcufile.so ] && [ ! -e /usr/local/cuda/lib64/l
   exit 44
 fi
 echo "runtime-image-probe:ok"'
-    if [[ "${PREPULL_RUNTIME_IMAGE}" == "true" ]]; then
-      log "pre-pulling runtime image ${image}"
-      maybe_sudo docker pull "${image}" >/dev/null
     fi
+    prepull_runtime_image_if_needed "${image}"
     log "checking TensorRT runtime image toolchain: ${image}"
     if ! maybe_sudo docker run --rm --privileged --gpus all --user 0:0 \
       "${image}" /bin/sh -lc "${probe}" >"${probe_log}" 2>&1; then
@@ -50,10 +76,7 @@ if [ ! -e /usr/local/cuda/lib64/libcufile.so ] && [ ! -e /usr/local/cuda/lib64/l
   exit 55
 fi
 echo "runtime-image-probe:ok"'
-    if [[ "${PREPULL_RUNTIME_IMAGE}" == "true" ]]; then
-      log "pre-pulling runtime image ${image}"
-      maybe_sudo docker pull "${image}" >/dev/null
-    fi
+    prepull_runtime_image_if_needed "${image}"
     log "checking vLLM runtime image toolchain: ${image}"
     if ! maybe_sudo docker run --rm --privileged --gpus all --user 0:0 \
       "${image}" /bin/sh -lc "${probe}" >"${probe_log}" 2>&1; then
@@ -73,10 +96,7 @@ if [ ! -e /usr/local/cuda/lib64/libcufile.so ] && [ ! -e /usr/local/cuda/lib64/l
   exit 65
 fi
 echo "runtime-image-probe:ok"'
-    if [[ "${PREPULL_RUNTIME_IMAGE}" == "true" ]]; then
-      log "pre-pulling runtime image ${image}"
-      maybe_sudo docker pull "${image}" >/dev/null
-    fi
+    prepull_runtime_image_if_needed "${image}"
     log "checking SGLang runtime image toolchain: ${image}"
     if ! maybe_sudo docker run --rm --privileged --gpus all --user 0:0 \
       "${image}" /bin/sh -lc "${probe}" >"${probe_log}" 2>&1; then

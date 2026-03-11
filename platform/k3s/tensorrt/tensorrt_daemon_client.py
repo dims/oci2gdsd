@@ -17,12 +17,14 @@ from daemon_client_common import (
     assert_http_ok,
     assert_no_runtime_artifact_access,
     create_gpu_allocation,
+    dtype_size_bytes,
     emit_phase_timing,
     ensure_model_ready,
     hydrate_runtime_bundle,
     monotonic_ms,
     parse_bool_env,
     resolve_device_uuid,
+    torch_dtype_from_safetensors,
     unix_http_json,
     load_native_module as _load_native_module_common,
 )
@@ -116,6 +118,28 @@ def build_runtime_dir_symlink(model_root: Path, shard_entries) -> Path:
         src = model_root / "shards" / name
         if not src.exists():
             raise RuntimeError(f"missing shard file: {src}")
+        os.symlink(src, runtime_dir / name)
+    link_metadata_assets(model_root, runtime_dir)
+    return runtime_dir
+
+
+def build_runtime_dir_metadata_only(model_root: Path, shard_entries) -> Path:
+    runtime_dir = reset_runtime_dir()
+    for shard in shard_entries:
+        name = str(shard.get("name", "")).strip()
+        if not name:
+            raise RuntimeError("empty shard name in profile")
+        src = model_root / "shards" / name
+        if not src.exists():
+            kind = str(shard.get("kind", "")).strip().lower()
+            is_weight = kind in {"", "weight"} or name.endswith(".safetensors")
+            if is_weight:
+                continue
+            raise RuntimeError(f"missing runtime shard file: {src}")
+        kind = str(shard.get("kind", "")).strip().lower()
+        is_weight = kind in {"", "weight"} or name.endswith(".safetensors")
+        if is_weight:
+            continue
         os.symlink(src, runtime_dir / name)
     link_metadata_assets(model_root, runtime_dir)
     return runtime_dir
@@ -225,6 +249,233 @@ def build_runtime_dir_from_ipc(model_root: Path, shard_entries, tensor_map, nati
         "required_ipc_shards": required_ipc_shards,
         "unresolved_shards": len(unresolved),
     }
+
+
+def build_tensor_binding_index(tensor_map):
+    tensor_index = {}
+    shard_names = set()
+    total_bytes = 0
+    for entry in tensor_map:
+        name = str(entry.get("name", "")).strip()
+        if not name:
+            continue
+        if name in tensor_index:
+            raise RuntimeError(f"duplicate tensor {name} found in tensor map")
+        handle = str(entry.get("ipc_handle", "")).strip()
+        if not handle:
+            raise RuntimeError(f"tensor map entry {name} is missing ipc_handle")
+        shard_size = int(entry.get("shard_size", 0))
+        byte_offset = int(entry.get("byte_offset", 0))
+        byte_length = int(entry.get("byte_length", 0))
+        if byte_offset < 0 or byte_length <= 0:
+            raise RuntimeError(f"invalid tensor map byte range for {name}")
+        if shard_size > 0 and byte_offset + byte_length > shard_size:
+            raise RuntimeError(f"tensor map byte range exceeds shard size for {name}")
+        dtype_code = str(entry.get("dtype", "")).strip()
+        shape = [int(x) for x in entry.get("shape", [])]
+        shard_name = str(entry.get("shard_name", "")).strip()
+        if shard_name:
+            shard_names.add(shard_name)
+        tensor_index[name] = {
+            "dtype": dtype_code,
+            "shape": shape,
+            "byte_offset": byte_offset,
+            "byte_length": byte_length,
+            "handle": handle,
+            "shard_bytes": shard_size,
+            "shard_name": shard_name,
+        }
+        total_bytes += byte_length
+    if not tensor_index:
+        raise RuntimeError("gpu/tensor-map returned no tensor descriptors")
+    return tensor_index, {
+        "tensor_count": len(tensor_index),
+        "tensor_bytes": total_bytes,
+        "shard_count": len(shard_names),
+    }
+
+
+def collect_parameter_alias_stats(model, imported_tensors):
+    imported_ptrs = {int(t.data_ptr()): t for t in imported_tensors.values()}
+    aliased_params = []
+    aliased_bytes = 0
+    same_name_params = 0
+    same_name_compatible = 0
+    same_name_aliasable = 0
+    skipped_tied_aliasable = 0
+    required_alias_params = 0
+    first_compatible_param = ""
+    tie_word_embeddings = bool(getattr(getattr(model, "config", None), "tie_word_embeddings", False))
+    for name, param in model.named_parameters():
+        ptr = int(param.data_ptr())
+        if ptr not in imported_ptrs:
+            src = imported_tensors.get(name)
+            if src is None:
+                continue
+            same_name_params += 1
+            if src.device == param.device and src.shape == param.shape and src.dtype == param.dtype:
+                same_name_compatible += 1
+                if not first_compatible_param:
+                    first_compatible_param = name
+                if src.is_contiguous():
+                    same_name_aliasable += 1
+                    if tie_word_embeddings and name.startswith("lm_head"):
+                        skipped_tied_aliasable += 1
+                    else:
+                        required_alias_params += 1
+            continue
+        aliased_params.append(name)
+        aliased_bytes += int(param.element_size()) * int(param.nelement())
+    return {
+        "status": "ok" if aliased_params else "none",
+        "aliased_params": len(aliased_params),
+        "aliased_bytes": aliased_bytes,
+        "first_aliased_param": aliased_params[0] if aliased_params else "",
+        "same_name_params": same_name_params,
+        "same_name_compatible": same_name_compatible,
+        "same_name_aliasable": same_name_aliasable,
+        "skipped_tied_aliasable": skipped_tied_aliasable,
+        "required_alias_params": required_alias_params,
+        "first_compatible_param": first_compatible_param,
+    }
+
+
+def load_tensorrtllm_pytorch_model(runtime_dir: Path, tensor_map, native_module, device_index: int):
+    os.environ["TRTLLM_DISABLE_FLASHINFER"] = "1"
+    if torch.cuda.is_available():
+        torch.cuda.set_device(int(device_index))
+    from tensorrt_llm import LLM
+    from tensorrt_llm._torch.models.checkpoints.base_weight_loader import (
+        BaseWeightLoader,
+        ConsumableWeightsDict,
+    )
+    from tensorrt_llm._torch.models.checkpoints.hf.checkpoint_loader import HfCheckpointLoader
+
+    class TensorMapWeightLoader(BaseWeightLoader):
+        def __init__(self, tensors, native, device: int):
+            self._tensors = list(tensors)
+            self._native = native
+            self._device = int(device)
+            self.imported_tensors = {}
+            self.stats = {
+                "status": "skipped",
+                "imported_tensors": 0,
+                "imported_bytes": 0,
+                "shard_count": 0,
+            }
+
+        def load_weights(self, checkpoint_dir: str, mapping) -> ConsumableWeightsDict:
+            tensor_index, tensor_stats = build_tensor_binding_index(self._tensors)
+            imported = {}
+            imported_bytes = 0
+            for name, spec in tensor_index.items():
+                dtype_code = str(spec["dtype"]).strip()
+                expected_shape = tuple(int(x) for x in spec["shape"])
+                byte_offset = int(spec["byte_offset"])
+                byte_length = int(spec["byte_length"])
+                shard_bytes = int(spec["shard_bytes"])
+                if byte_offset < 0 or byte_length <= 0:
+                    raise RuntimeError(f"invalid byte range for {name}")
+                if shard_bytes > 0 and byte_offset + byte_length > shard_bytes:
+                    raise RuntimeError(
+                        f"tensor byte range exceeds shard size for {name}: offset={byte_offset} length={byte_length} shard_bytes={shard_bytes}"
+                    )
+                tensor = self._native.import_ipc_tensor_view(
+                    str(spec["handle"]),
+                    int(byte_offset),
+                    list(expected_shape),
+                    dtype_code,
+                    int(self._device),
+                )
+                if not isinstance(tensor, torch.Tensor):
+                    raise RuntimeError(f"native import returned non-tensor for {name}")
+                if not tensor.is_cuda:
+                    raise RuntimeError(f"native import returned non-cuda tensor for {name}")
+                expected_dtype = torch_dtype_from_safetensors(dtype_code)
+                if tensor.dtype != expected_dtype:
+                    raise RuntimeError(f"imported tensor dtype mismatch for {name}: {tensor.dtype} vs {expected_dtype}")
+                if tuple(tensor.shape) != expected_shape:
+                    raise RuntimeError(
+                        f"imported tensor shape mismatch for {name}: {tuple(tensor.shape)} vs {expected_shape}"
+                    )
+                expected_bytes = _shape_numel(expected_shape) * dtype_size_bytes(dtype_code)
+                if expected_bytes != byte_length:
+                    raise RuntimeError(
+                        f"tensor byte length mismatch for {name}: got={byte_length} expected={expected_bytes}"
+                    )
+                imported[name] = tensor
+                imported_bytes += byte_length
+
+            self.imported_tensors = imported
+            self.stats = {
+                "status": "ok",
+                "imported_tensors": len(imported),
+                "imported_bytes": imported_bytes,
+                "shard_count": tensor_stats["shard_count"],
+            }
+            return ConsumableWeightsDict(imported)
+
+        def cleanup(self) -> None:
+            self.imported_tensors = {}
+
+    weight_loader = TensorMapWeightLoader(tensor_map, native_module, device_index)
+    checkpoint_loader = HfCheckpointLoader(weight_loader=weight_loader)
+    # Keep TP1 PyTorch startup in-process so the custom checkpoint loader can
+    # consume preloaded GPU tensors without going through MPI pickle transport.
+    os.environ["TLLM_WORKER_USE_SINGLE_PROCESS"] = "1"
+    llm = LLM(
+        model=str(runtime_dir),
+        backend="pytorch",
+        checkpoint_loader=checkpoint_loader,
+        tensor_parallel_size=1,
+        trust_remote_code=True,
+    )
+    executor = getattr(llm, "_executor", None)
+    py_executor = getattr(executor, "engine", executor) if executor is not None else None
+    model_engine = getattr(py_executor, "model_engine", None) if py_executor is not None else None
+    model = getattr(model_engine, "model", None) if model_engine is not None else None
+    if model is None:
+        checkpoint_loader.cleanup()
+        raise RuntimeError("TensorRT-LLM PyTorch executor did not expose model_engine.model")
+    alias_stats = collect_parameter_alias_stats(model, weight_loader.imported_tensors)
+    return llm, checkpoint_loader, weight_loader.stats, alias_stats
+
+
+def run_tensorrtllm_pytorch_infer(llm):
+    from tensorrt_llm import SamplingParams
+
+    prompt = os.environ.get(
+        "PROMPT",
+        "Explain in one sentence why loading model weights directly into GPU memory is useful.",
+    )
+    sampling_params = SamplingParams(max_tokens=48)
+    infer_start_ms = monotonic_ms()
+    output = llm.generate(prompt, sampling_params=sampling_params, use_tqdm=False)
+    if isinstance(output, list):
+        if not output:
+            raise RuntimeError("TensorRT-LLM generate returned no outputs")
+        output = output[0]
+    if not output.outputs:
+        raise RuntimeError("TensorRT-LLM generate returned no completion outputs")
+    answer = str(output.outputs[0].text or "").strip()
+    if not answer:
+        raise RuntimeError("TensorRT-LLM generate returned empty text")
+    answer_sha = hashlib.sha256(answer.encode("utf-8")).hexdigest()
+    print(f"TENSORRT_QWEN_INFER_OK answer_sha256={answer_sha} tokens={len(answer.split())} backend=pytorch")
+    return answer_sha, monotonic_ms() - infer_start_ms
+
+
+def shutdown_tensorrtllm_pytorch(llm, checkpoint_loader, device_index: int):
+    try:
+        if llm is not None:
+            llm.shutdown()
+    finally:
+        if checkpoint_loader is not None:
+            checkpoint_loader.cleanup()
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.synchronize(int(device_index))
+        torch.cuda.empty_cache()
 
 
 def find_qwen_convert_script() -> Path:
@@ -819,18 +1070,26 @@ def main():
     model_digest = os.environ.get("MODEL_DIGEST", "").strip()
     lease_holder = os.environ["LEASE_HOLDER"]
     socket_path = os.environ.get("OCI2GDS_DAEMON_SOCKET", "/run/oci2gdsd/daemon.sock")
-    device_index = int(os.environ.get("DEVICE_INDEX", "0"))
+    requested_device_index = int(os.environ.get("DEVICE_INDEX", "0"))
+    device_index = requested_device_index
+    runtime_device_index = device_index
     device_uuid = resolve_device_uuid(device_index)
     require_direct = parse_bool_env("REQUIRE_DIRECT_GDS", True)
     strict_load = parse_bool_env("OCI2GDS_STRICT", True)
+    tensorrtllm_backend = str(os.environ.get("TENSORRTLLM_BACKEND", "pytorch")).strip().lower()
+    if tensorrtllm_backend not in {"pytorch", "tensorrt"}:
+        raise RuntimeError("TENSORRTLLM_BACKEND must be one of: pytorch, tensorrt")
     startup_mode = str(os.environ.get("TENSORRT_STARTUP_MODE", "parity")).strip().lower()
     if startup_mode not in {"parity", "fast"}:
         raise RuntimeError("TENSORRT_STARTUP_MODE must be one of: parity, fast")
+    if tensorrtllm_backend != "tensorrt" and startup_mode != "parity":
+        raise RuntimeError("TENSORRT_STARTUP_MODE=fast is supported only when TENSORRTLLM_BACKEND=tensorrt")
 
     parity_mode = str(os.environ.get("RUNTIME_PARITY_MODE", "full")).strip().lower()
     if parity_mode != "full":
         raise RuntimeError("TensorRT daemon-client requires RUNTIME_PARITY_MODE=full; path-backed modes are removed")
-    print(f"TENSORRT_STARTUP_MODE_OK mode={startup_mode}")
+    print(f"TENSORRTLLM_BACKEND_OK backend={tensorrtllm_backend}")
+    print(f"TENSORRT_STARTUP_MODE_OK mode={startup_mode} backend={tensorrtllm_backend}")
 
     ensure_phase_start = monotonic_ms()
     ensure_payload = ensure_model_ready(
@@ -857,12 +1116,25 @@ def main():
     allocation_id = str(allocation.get("allocation_id", "")).strip()
     if not allocation_id:
         raise RuntimeError(f"gpu/allocate returned empty allocation_id: {allocation}")
+    device_index = int(allocation.get("device_index", device_index))
+    allocation_device_uuid = str(allocation.get("device_uuid", device_uuid)).strip()
+    if allocation_device_uuid:
+        device_uuid = allocation_device_uuid
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(device_index)
+    runtime_device_index = 0
     runtime_bundle_token = str(allocation.get("runtime_bundle_token", "")).strip()
     if not runtime_bundle_token:
         raise RuntimeError(f"gpu/allocate returned empty runtime_bundle_token: {allocation}")
     model_digest = str(allocation.get("manifest_digest", model_digest)).strip()
     if not model_digest:
         raise RuntimeError(f"gpu/allocate returned empty manifest digest: {allocation}")
+    print(
+        "DAEMON_GPU_TARGET_DEVICE "
+        f"requested_index={requested_device_index} "
+        f"allocation_index={device_index} "
+        f"runtime_index={runtime_device_index} "
+        f"device_uuid={device_uuid}"
+    )
     bundle_phase_start = monotonic_ms()
     hydrate_runtime_bundle(socket_path, runtime_root, runtime_bundle_token)
     emit_phase_timing("bundle", monotonic_ms() - bundle_phase_start, mode=perf_mode)
@@ -904,6 +1176,12 @@ def main():
         "status": "skipped",
         "mapped_weights": 0,
         "mapped_bytes": 0,
+    }
+    alias_stats = {
+        "status": "skipped",
+        "aliased_params": 0,
+        "aliased_bytes": 0,
+        "first_aliased_param": "",
     }
     attach_client_id = f"{lease_holder}-trt-{os.getpid()}"
 
@@ -970,6 +1248,11 @@ def main():
         }
         tensor_code, tensor_payload = unix_http_json(socket_path, "POST", "/v2/gpu/tensor-map", tensor_req, timeout_seconds=300)
         assert_http_ok(tensor_code, tensor_payload, "gpu/tensor-map")
+        tensor_device_index = int(tensor_payload.get("device_index", device_index))
+        if tensor_device_index != int(device_index):
+            raise RuntimeError(
+                f"gpu/tensor-map device_index mismatch: allocation={device_index} tensor_map={tensor_device_index}"
+            )
         tensors = tensor_payload.get("tensors", []) if isinstance(tensor_payload, dict) else []
         if not tensors:
             raise RuntimeError(f"gpu/tensor-map returned no tensors: {tensor_payload}")
@@ -990,83 +1273,167 @@ def main():
             f"parity_mode={parity_mode}"
         )
 
-        shard_entries = profile_shards_from_metadata(metadata)
-        content_key = profile_content_key(shard_entries)
         native_module = load_native_module()
-        runtime_dir, import_stats = build_runtime_dir_from_ipc(
-            model_root=runtime_root,
-            shard_entries=shard_entries,
-            tensor_map=tensors,
-            native_module=native_module,
-            device_index=device_index,
-        )
-        source_mode = "ipc_materialized"
-        managed_weights_source = "tensor_map"
-        fallback_reads = 0
-        print(
-            "TENSORRT_IPC_IMPORT_OK "
-            f"status={import_stats.get('status', 'unknown')} "
-            f"imported_shards={import_stats.get('imported_shards', 0)} "
-            f"imported_bytes={import_stats.get('imported_bytes', 0)} "
-            f"linked_runtime_files={import_stats.get('linked_runtime_files', 0)} "
-            f"required_ipc_shards={import_stats.get('required_ipc_shards', 0)} "
-            f"unresolved_shards={import_stats.get('unresolved_shards', 0)} "
-            f"parity_mode={parity_mode}"
-        )
-        print(
-            "TENSORRT_FULL_SOURCE_OK "
-            f"source={source_mode} "
-            f"managed_weights_source={managed_weights_source} "
-            f"fallback_reads={fallback_reads} "
-            f"parity_mode={parity_mode}"
-        )
-        emit_phase_timing("bind", monotonic_ms() - bind_phase_start, mode=perf_mode)
+        shard_entries = profile_shards_from_metadata(metadata)
+        if tensorrtllm_backend == "pytorch":
+            runtime_dir = build_runtime_dir_metadata_only(runtime_root, shard_entries)
+            source_mode = "ipc_tensor_map"
+            managed_weights_source = "checkpoint_loader"
+            fallback_reads = 0
+            llm = None
+            checkpoint_loader = None
+            try:
+                llm, checkpoint_loader, import_stats, alias_stats = load_tensorrtllm_pytorch_model(
+                    runtime_dir=runtime_dir,
+                    tensor_map=tensors,
+                    native_module=native_module,
+                    device_index=runtime_device_index,
+                )
+                print(
+                    "TENSORRT_IPC_IMPORT_OK "
+                    f"status={import_stats.get('status', 'unknown')} "
+                    f"imported_tensors={import_stats.get('imported_tensors', 0)} "
+                    f"imported_bytes={import_stats.get('imported_bytes', 0)} "
+                    f"shard_count={import_stats.get('shard_count', 0)} "
+                    f"parity_mode={parity_mode} "
+                    "backend=pytorch"
+                )
+                print(
+                    "TENSORRTLLM_PYTORCH_RUNNER_READY "
+                    f"status=ok backend=pytorch runtime_dir={runtime_dir}"
+                )
+                print(
+                    "TENSORRT_PYTORCH_ALIAS_OK "
+                    f"status={alias_stats.get('status', 'unknown')} "
+                    f"aliased_params={alias_stats.get('aliased_params', 0)} "
+                    f"aliased_bytes={alias_stats.get('aliased_bytes', 0)} "
+                    f"first_aliased_param={alias_stats.get('first_aliased_param', '')} "
+                    f"same_name_params={alias_stats.get('same_name_params', 0)} "
+                    f"same_name_compatible={alias_stats.get('same_name_compatible', 0)} "
+                    f"same_name_aliasable={alias_stats.get('same_name_aliasable', 0)} "
+                    f"skipped_tied_aliasable={alias_stats.get('skipped_tied_aliasable', 0)} "
+                    f"required_alias_params={alias_stats.get('required_alias_params', 0)} "
+                    f"first_compatible_param={alias_stats.get('first_compatible_param', '')}"
+                )
+                print(
+                    "TENSORRT_FULL_SOURCE_OK "
+                    f"source={source_mode} "
+                    f"managed_weights_source={managed_weights_source} "
+                    f"fallback_reads={fallback_reads} "
+                    f"parity_mode={parity_mode} "
+                    "backend=pytorch"
+                )
+                emit_phase_timing("bind", monotonic_ms() - bind_phase_start, mode=perf_mode)
 
-        if heartbeat is not None:
-            heartbeat.assert_healthy()
-        if import_stats.get("status") != "ok":
-            raise RuntimeError(f"full parity mode requires import status=ok; got {import_stats}")
-        required_ipc_shards = int(import_stats.get("required_ipc_shards", 0))
-        if int(import_stats.get("imported_shards", 0)) != required_ipc_shards:
-            raise RuntimeError(
-                f"full parity mode requires imported_shards={required_ipc_shards}; got {import_stats.get('imported_shards', 0)}"
-            )
-        if int(import_stats.get("unresolved_shards", 0)) != 0:
-            raise RuntimeError(f"full parity mode requires unresolved_shards=0; got {import_stats}")
-        if fallback_reads != 0:
-            raise RuntimeError(f"full parity mode requires fallback_reads=0; got {fallback_reads}")
-        if managed_weights_source != "tensor_map":
-            raise RuntimeError(f"full parity mode requires managed_weights_source=tensor_map; got {managed_weights_source}")
+                if heartbeat is not None:
+                    heartbeat.assert_healthy()
+                if import_stats.get("status") != "ok":
+                    raise RuntimeError(f"full parity mode requires import status=ok; got {import_stats}")
+                if int(import_stats.get("imported_tensors", 0)) != int(map_stats.get("total_tensors", 0)):
+                    raise RuntimeError(
+                        "full parity mode requires imported_tensors to match tensor-map coverage; "
+                        f"imported={import_stats.get('imported_tensors', 0)} tensor_map={map_stats.get('total_tensors', 0)}"
+                    )
+                if int(import_stats.get("imported_bytes", 0)) != int(map_stats.get("mapped_bytes", 0)):
+                    raise RuntimeError(
+                        "full parity mode requires imported_bytes to match mapped_bytes; "
+                        f"imported={import_stats.get('imported_bytes', 0)} mapped={map_stats.get('mapped_bytes', 0)}"
+                    )
+                required_alias_params = int(alias_stats.get("required_alias_params", 0))
+                if int(alias_stats.get("aliased_params", 0)) < required_alias_params:
+                    raise RuntimeError(
+                        "full parity mode requires aliased_params to cover all required direct-alias candidates; "
+                        f"required={required_alias_params} got={alias_stats}"
+                    )
+                if fallback_reads != 0:
+                    raise RuntimeError(f"full parity mode requires fallback_reads=0; got {fallback_reads}")
+                if managed_weights_source != "checkpoint_loader":
+                    raise RuntimeError(
+                        f"full parity mode requires managed_weights_source=checkpoint_loader; got {managed_weights_source}"
+                    )
 
-        engine_dir = build_engine(
-            runtime_dir,
-            model_root=runtime_root,
-            source_mode=source_mode,
-            model_id=model_id,
-            manifest_digest=model_digest,
-            content_key=content_key,
-            startup_mode=startup_mode,
-            force_rebuild_override=(startup_mode != "fast"),
-        )
-        if heartbeat is not None:
-            heartbeat.assert_healthy()
-        answer_sha, first_token_ms, managed_stats = run_tensorrt_infer(
-            engine_dir,
-            runtime_dir,
-            tensors=tensors,
-            native_module=native_module,
-            require_direct=require_direct,
-            device_index=device_index,
-        )
-        if managed_stats.get("status") != "ok":
-            raise RuntimeError(f"full parity mode requires managed weights status=ok; got {managed_stats}")
-        mapped_weights = int(managed_stats.get("mapped_weights", 0))
-        if mapped_weights != int(map_stats.get("total_tensors", 0)):
-            raise RuntimeError(
-                "full parity mode requires managed weights coverage to equal tensor-map coverage; "
-                f"managed={mapped_weights} tensor_map={map_stats.get('total_tensors', 0)}"
+                answer_sha, first_token_ms = run_tensorrtllm_pytorch_infer(llm)
+                emit_phase_timing("first-token", first_token_ms, mode=perf_mode)
+            finally:
+                shutdown_tensorrtllm_pytorch(llm, checkpoint_loader, runtime_device_index)
+        else:
+            content_key = profile_content_key(shard_entries)
+            runtime_dir, import_stats = build_runtime_dir_from_ipc(
+                model_root=runtime_root,
+                shard_entries=shard_entries,
+                tensor_map=tensors,
+                native_module=native_module,
+                device_index=runtime_device_index,
             )
-        emit_phase_timing("first-token", first_token_ms, mode=perf_mode)
+            source_mode = "ipc_materialized"
+            managed_weights_source = "tensor_map"
+            fallback_reads = 0
+            print(
+                "TENSORRT_IPC_IMPORT_OK "
+                f"status={import_stats.get('status', 'unknown')} "
+                f"imported_shards={import_stats.get('imported_shards', 0)} "
+                f"imported_bytes={import_stats.get('imported_bytes', 0)} "
+                f"linked_runtime_files={import_stats.get('linked_runtime_files', 0)} "
+                f"required_ipc_shards={import_stats.get('required_ipc_shards', 0)} "
+                f"unresolved_shards={import_stats.get('unresolved_shards', 0)} "
+                f"parity_mode={parity_mode} "
+                "backend=tensorrt"
+            )
+            print(
+                "TENSORRT_FULL_SOURCE_OK "
+                f"source={source_mode} "
+                f"managed_weights_source={managed_weights_source} "
+                f"fallback_reads={fallback_reads} "
+                f"parity_mode={parity_mode} "
+                "backend=tensorrt"
+            )
+            emit_phase_timing("bind", monotonic_ms() - bind_phase_start, mode=perf_mode)
+
+            if heartbeat is not None:
+                heartbeat.assert_healthy()
+            if import_stats.get("status") != "ok":
+                raise RuntimeError(f"full parity mode requires import status=ok; got {import_stats}")
+            required_ipc_shards = int(import_stats.get("required_ipc_shards", 0))
+            if int(import_stats.get("imported_shards", 0)) != required_ipc_shards:
+                raise RuntimeError(
+                    f"full parity mode requires imported_shards={required_ipc_shards}; got {import_stats.get('imported_shards', 0)}"
+                )
+            if int(import_stats.get("unresolved_shards", 0)) != 0:
+                raise RuntimeError(f"full parity mode requires unresolved_shards=0; got {import_stats}")
+            if fallback_reads != 0:
+                raise RuntimeError(f"full parity mode requires fallback_reads=0; got {fallback_reads}")
+            if managed_weights_source != "tensor_map":
+                raise RuntimeError(f"full parity mode requires managed_weights_source=tensor_map; got {managed_weights_source}")
+
+            engine_dir = build_engine(
+                runtime_dir,
+                model_root=runtime_root,
+                source_mode=source_mode,
+                model_id=model_id,
+                manifest_digest=model_digest,
+                content_key=content_key,
+                startup_mode=startup_mode,
+                force_rebuild_override=(startup_mode != "fast"),
+            )
+            if heartbeat is not None:
+                heartbeat.assert_healthy()
+            answer_sha, first_token_ms, managed_stats = run_tensorrt_infer(
+                engine_dir,
+                runtime_dir,
+                tensors=tensors,
+                native_module=native_module,
+                require_direct=require_direct,
+                device_index=runtime_device_index,
+            )
+            if managed_stats.get("status") != "ok":
+                raise RuntimeError(f"full parity mode requires managed weights status=ok; got {managed_stats}")
+            mapped_weights = int(managed_stats.get("mapped_weights", 0))
+            if mapped_weights != int(map_stats.get("total_tensors", 0)):
+                raise RuntimeError(
+                    "full parity mode requires managed weights coverage to equal tensor-map coverage; "
+                    f"managed={mapped_weights} tensor_map={map_stats.get('total_tensors', 0)}"
+                )
+            emit_phase_timing("first-token", first_token_ms, mode=perf_mode)
         if heartbeat is not None:
             heartbeat.stop()
             heartbeat = None
@@ -1137,7 +1504,7 @@ def main():
             except Exception as exc:
                 print(f"DAEMON_GPU_UNLOAD_WARN error={exc}")
 
-    cuda_name = torch.cuda.get_device_name(device_index)
+    cuda_name = torch.cuda.get_device_name(runtime_device_index)
     print(
         "TENSORRT_DAEMON_CLIENT_SUCCESS "
         f"model_id={metadata.get('modelId')} "
@@ -1145,14 +1512,18 @@ def main():
         f"sample_sha256={sample_sha} "
         f"direct_files={direct_files} "
         f"answer_sha256={answer_sha} "
+        f"backend={tensorrtllm_backend} "
         f"parity_mode={parity_mode} "
         f"mapped_tensors={map_stats.get('mapped_tensors', 0)} "
         f"mapped_bytes={map_stats.get('mapped_bytes', 0)} "
         f"imported_shards={import_stats.get('imported_shards', 0)} "
+        f"imported_tensors={import_stats.get('imported_tensors', 0)} "
         f"imported_bytes={import_stats.get('imported_bytes', 0)} "
         f"source_mode={source_mode} "
         f"managed_weights_source={managed_weights_source} "
         f"managed_weights={managed_stats.get('mapped_weights', 0)} "
+        f"aliased_params={alias_stats.get('aliased_params', 0)} "
+        f"aliased_bytes={alias_stats.get('aliased_bytes', 0)} "
         f"startup_mode={startup_mode} "
         f"fallback_reads={fallback_reads} "
         f"cuda_device={cuda_name}"

@@ -83,21 +83,31 @@ validate_local_gds_loader() {
   local bin_path="${WORK_DIR}/oci2gdsd-gds"
   local gds_root="${WORK_DIR}/gds-root"
   local model_path="${gds_root}/models/demo/sha256-1111111111111111111111111111111111111111111111111111111111111111"
-  log "building local oci2gdsd binary with -tags gds for preflight validation"
+  local cuda_build_env cuda_include_dir cuda_ldflags cuda_runtime_library_path
+  mapfile -t cuda_build_env < <(resolve_local_gds_cuda_build_env)
+  cuda_include_dir="${cuda_build_env[0]:-}"
+  cuda_ldflags="${cuda_build_env[1]:-}"
+  cuda_runtime_library_path="${cuda_build_env[2]:-}"
+  [[ -n "${cuda_include_dir}" ]] || die "failed to resolve CUDA include directory for local GDS validation"
+  [[ -n "${cuda_ldflags}" ]] || die "failed to resolve CUDA linker flags for local GDS validation"
+  [[ -n "${cuda_runtime_library_path}" ]] || die "failed to resolve CUDA runtime library path for local GDS validation"
+  log "building local oci2gdsd binary with -tags gds for preflight validation (cuda_include=${cuda_include_dir})"
   (
     cd "${REPO_ROOT}"
     CGO_ENABLED=1 \
-      CGO_CFLAGS="-I${CUDA_INCLUDE_DIR}" \
-      CGO_LDFLAGS="-L${CUDA_LIB_DIR}" \
+      CGO_CFLAGS="-I${cuda_include_dir}" \
+      CGO_LDFLAGS="${cuda_ldflags}" \
       go build -buildvcs=false -tags gds -o "${bin_path}" ./cmd/oci2gdsd
   )
-  "${bin_path}" --root "${gds_root}" --target-root "${gds_root}/models" gpu devices --json > "${RESULTS_DIR}/gpu-devices.json"
+  env LD_LIBRARY_PATH="${cuda_runtime_library_path}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    "${bin_path}" --root "${gds_root}" --target-root "${gds_root}/models" gpu devices --json > "${RESULTS_DIR}/gpu-devices.json"
   local device_uuid
   device_uuid="$(jq -r '.[0].uuid // empty' "${RESULTS_DIR}/gpu-devices.json")"
   if [[ -z "${device_uuid}" ]]; then
     die "local GDS device discovery returned no devices; see ${RESULTS_DIR}/gpu-devices.json"
   fi
-  "${bin_path}" --root "${gds_root}" --target-root "${gds_root}/models" gpu probe --device-uuid "${device_uuid}" --json > "${RESULTS_DIR}/gpu-probe.json"
+  env LD_LIBRARY_PATH="${cuda_runtime_library_path}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    "${bin_path}" --root "${gds_root}" --target-root "${gds_root}/models" gpu probe --device-uuid "${device_uuid}" --json > "${RESULTS_DIR}/gpu-probe.json"
   if ! jq -e '.available == true' "${RESULTS_DIR}/gpu-probe.json" >/dev/null; then
     die "local GDS probe failed; see ${RESULTS_DIR}/gpu-probe.json"
   fi
@@ -117,7 +127,8 @@ validate_local_gds_loader() {
     "R_SIZE=${r_size}"
   printf "ok\n" > "${model_path}/READY"
 
-  "${bin_path}" --root "${gds_root}" --target-root "${gds_root}/models" \
+  env LD_LIBRARY_PATH="${cuda_runtime_library_path}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+    "${bin_path}" --root "${gds_root}" --target-root "${gds_root}/models" \
     gpu load --path "${model_path}" --mode benchmark --device-uuid "${device_uuid}" --chunk-bytes 4096 --strict --json > "${RESULTS_DIR}/gpu-load-benchmark.json"
   if ! jq -e '.status == "READY"' "${RESULTS_DIR}/gpu-load-benchmark.json" >/dev/null; then
     die "local GDS benchmark load failed; see ${RESULTS_DIR}/gpu-load-benchmark.json"
@@ -129,4 +140,3 @@ validate_local_gds_loader() {
     die "expected direct=true in local GDS benchmark result; see ${RESULTS_DIR}/gpu-load-benchmark.json"
   fi
 }
-

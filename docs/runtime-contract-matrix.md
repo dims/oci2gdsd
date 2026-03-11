@@ -84,7 +84,7 @@ When adding/changing runtime manifests:
    - `make verify-k3s-sglang`
 5. Confirm runtime logs still emit `DAEMON_NO_RUNTIME_ARTIFACT_ACCESS_OK`.
 6. For TensorRT, confirm startup split policy still holds:
-   - parity mode: no fastpath marker
-   - fast mode: `TENSORRT_ENGINE_FASTPATH_OK cache_hit=...`
+   - `TENSORRTLLM_BACKEND=pytorch`: parity-only, no fastpath marker, using a TensorRT-LLM image that contains `maybe_alias_or_copy_tensor` support
+   - `TENSORRTLLM_BACKEND=tensorrt`: parity mode has no fastpath marker, fast mode emits `TENSORRT_ENGINE_FASTPATH_OK cache_hit=...`
 
 If a contract rule is no longer needed, remove it from the contract and document why in this file.

@@ -106,6 +106,9 @@ resolve_tensorrt_fastpath_state() {
   if [[ "${WORKLOAD_RUNTIME}" != "tensorrt" ]]; then
     return
   fi
+  if [[ "${TENSORRTLLM_BACKEND:-pytorch}" != "tensorrt" ]]; then
+    return
+  fi
   if grep -Eq 'TENSORRT_ENGINE_FASTPATH_OK .*cache_hit=true' "${log_path}"; then
     WORKLOAD_FASTPATH_CACHE_HIT="true"
     WORKLOAD_FASTPATH_PHASE="warm"
@@ -129,7 +132,9 @@ write_perf_mode_report() {
   local mode="$1"
   local output_path="${RESULTS_DIR}/perf-${WORKLOAD_RUNTIME}-${mode}.json"
   local startup_mode="n/a"
+  local tensorrtllm_backend="n/a"
   if [[ "${WORKLOAD_RUNTIME}" == "tensorrt" ]]; then
+    tensorrtllm_backend="${TENSORRTLLM_BACKEND:-pytorch}"
     startup_mode="${TENSORRT_STARTUP_MODE}"
   fi
   local ensure_ms bundle_ms load_ms tensor_map_ms bind_ms first_token_ms bundle_prepare_ms
@@ -148,6 +153,7 @@ write_perf_mode_report() {
     --arg mode "${mode}" \
     --arg parity_mode "${RUNTIME_PARITY_MODE}" \
     --arg startup_mode "${startup_mode}" \
+    --arg tensorrtllm_backend "${tensorrtllm_backend}" \
     --arg fastpath_phase "${WORKLOAD_FASTPATH_PHASE}" \
     --arg fastpath_cache_hit "${WORKLOAD_FASTPATH_CACHE_HIT}" \
     --argjson workload_duration_ms "${WORKLOAD_DURATION_MS}" \
@@ -164,6 +170,7 @@ write_perf_mode_report() {
       mode: $mode,
       parity_mode: $parity_mode,
       startup_mode: $startup_mode,
+      tensorrtllm_backend: $tensorrtllm_backend,
       workload_duration_ms: $workload_duration_ms,
       fastpath_phase: $fastpath_phase,
       fastpath_cache_hit: $fastpath_cache_hit,
@@ -237,6 +244,7 @@ phase_slo_max_ms() {
   local runtime="$2"
   local mode="$3"
   local startup_mode="$4"
+  local tensorrtllm_backend="${TENSORRTLLM_BACKEND:-tensorrt}"
   case "${phase}" in
     ensure)
       if [[ "${mode}" == "cold" ]]; then
@@ -261,6 +269,8 @@ phase_slo_max_ms() {
     bind)
       if [[ "${runtime}" == "sglang" ]]; then
         echo "${PERF_SLO_PHASE_BIND_SGLANG_MAX_MS:-65000}"
+      elif [[ "${runtime}" == "tensorrt" && "${tensorrtllm_backend}" == "pytorch" ]]; then
+        echo "${PERF_SLO_PHASE_BIND_TENSORRTLLM_PYTORCH_MAX_MS:-90000}"
       elif [[ "${runtime}" == "tensorrt" && "${startup_mode}" == "parity" ]]; then
         echo "${PERF_SLO_PHASE_BIND_TENSORRT_PARITY_MAX_MS:-60000}"
       else

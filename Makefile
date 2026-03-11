@@ -89,7 +89,8 @@ verify-k3s-pytorch: prereq-k3s
 	$(K3S_STRICT_GDS_ENV) WORKLOAD_RUNTIME=pytorch ./platform/k3s/scripts/run.sh
 
 .PHONY: verify-k3s-tensor
-verify-k3s-tensor: prereq-k3s
+verify-k3s-tensor: prereq-host-gds
+	$(K3S_STRICT_GDS_ENV) WORKLOAD_RUNTIME=tensorrt ./platform/k3s/scripts/prereq-check.sh
 	$(K3S_STRICT_GDS_ENV) WORKLOAD_RUNTIME=tensorrt ./platform/k3s/scripts/run.sh
 
 .PHONY: verify-k3s-vllm

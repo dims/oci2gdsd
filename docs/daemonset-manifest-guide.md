@@ -45,6 +45,7 @@ For TensorRT-LLM daemon-client mode, the workload:
 - Mounts host `/run/udev` and `/etc/cufile.json` so cuFile device registration
   can succeed for strict direct-GDS engine loading.
 - Enforces startup-mode split policy:
+  - `TENSORRTLLM_BACKEND=pytorch`: requires a TensorRT-LLM runtime image built from `torch-alias-main-single` (or equivalent alias-support build).
   - `TENSORRT_STARTUP_MODE=parity`: fastpath markers are forbidden.
   - `TENSORRT_STARTUP_MODE=fast`: fastpath cache marker is required.
 
@@ -84,6 +85,7 @@ For runtime-specific overrides and full operational examples, use:
 - `PERF_SLO_PHASE_*_MAX_MS` (phase absolute budgets)
 - `TENSORRT_STARTUP_MODE` (`parity` or `fast`; TensorRT only, default `parity`)
 - `TENSORRT_ENGINE_CACHE_HOST_PATH` (TensorRT host cache path, default `/mnt/nvme/oci2gdsd-tensorrt-cache`)
+- `TENSORRTLLM_RUNTIME_IMAGE` / `TENSORRTLLM_IMAGE` (for `TENSORRTLLM_BACKEND=pytorch`, point these at a TensorRT-LLM image built from `torch-alias-main-single`)
 
 ## Contract enforcement
 
@@ -130,23 +132,27 @@ TensorRT daemon-client log (`platform/k3s/work/artifacts/results/tensorrt-daemon
 - `TENSORRT_IPC_TENSOR_MAP_OK`
 - `TENSORRT_IPC_BIND_OK`
 - `TENSORRT_IPC_IMPORT_OK`
-- `TENSORRT_ENGINE_BUILD_OK`
 - `TENSORRT_STARTUP_MODE_OK`
-- `TENSORRT_GDS_RUNNER_READY`
 - `TENSORRT_QWEN_INFER_OK`
 - `DAEMON_GPU_DETACH_OK`
 - `DAEMON_GPU_UNLOAD_OK`
 - `TENSORRT_DAEMON_CLIENT_SUCCESS`
 
+Backend-specific required markers:
+
+- `TENSORRTLLM_BACKEND=pytorch`: `TENSORRTLLM_PYTORCH_RUNNER_READY`, `TENSORRT_PYTORCH_ALIAS_OK`
+- `TENSORRTLLM_BACKEND=tensorrt`: `TENSORRT_ENGINE_BUILD_OK`, `TENSORRT_GDS_RUNNER_READY`
+
 For `RUNTIME_PARITY_MODE=full`, harness also validates:
 
 - `TENSORRT_IPC_BIND_OK status=ok`
-- `TENSORRT_IPC_IMPORT_OK status=ok unresolved_shards=0`
-- `TENSORRT_FULL_SOURCE_OK source=ipc_materialized fallback_reads=0`
+- `TENSORRT_IPC_IMPORT_OK status=ok`
+- `TENSORRTLLM_BACKEND=pytorch`: `TENSORRT_PYTORCH_ALIAS_OK status=ok aliased_params>0`, `TENSORRT_FULL_SOURCE_OK source=ipc_tensor_map fallback_reads=0`
+- `TENSORRTLLM_BACKEND=tensorrt`: `TENSORRT_IPC_IMPORT_OK unresolved_shards=0`, `TENSORRT_FULL_SOURCE_OK source=ipc_materialized fallback_reads=0`
 
 When `TENSORRT_STARTUP_MODE=fast`, logs additionally emit:
 
-- `TENSORRT_ENGINE_FASTPATH_OK cache_hit=... built=...`
+- `TENSORRT_ENGINE_FASTPATH_OK cache_hit=... built=...` (only when `TENSORRTLLM_BACKEND=tensorrt`)
 
 Per-run perf summary artifact:
 

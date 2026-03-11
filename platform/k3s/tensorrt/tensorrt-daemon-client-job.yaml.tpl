@@ -102,6 +102,8 @@ spec:
           value: "false"
         - name: TENSORRT_STARTUP_MODE
           value: "__TENSORRT_STARTUP_MODE__"
+        - name: TENSORRTLLM_BACKEND
+          value: "__TENSORRTLLM_BACKEND__"
         - name: TENSORRT_ENGINE_CACHE_ROOT
           value: "/var/cache/oci2gdsd/tensorrt"
         resources:

@@ -25,6 +25,7 @@ Use it together with:
 | `error loading config file "/etc/rancher/k3s/k3s.yaml": permission denied` | Non-root user reading k3s kubeconfig without permission | Use `sudo k3s kubectl ...` or configure kubeconfig mode |
 | Runtime image precheck fails with `missing: c++` | Selected runtime image cannot build native extension path | Use `PYTORCH_RUNTIME_IMAGE=nvcr.io/nvidia/ai-dynamo/vllm-runtime:0.8.1` |
 | Space errors during pull/build/apply | Docker/k3s/model root on small boot disk | Move Docker data-root and k3s/model paths to `/mnt/nvme` |
+| `k3s` fails to start with `listen tcp :6443: bind: address already in use` | Host already has a kubeadm-style control plane listening on `6443` | Run `sudo kubeadm reset -f`, disable `kubelet`, then retry prereqs |
 | Direct probe says ok but NVFS counters stay zero | `nvidia-fs` IO stats disabled | Enable `rw_stats_enabled=1` or keep counter gate disabled |
 | qwen quick fails with missing model digest/ref | Quick mode does not have model identity yet | Run full `make verify-k3s-pytorch` once or pass explicit `MODEL_*_OVERRIDE` |
 | No `nvidia.com/gpu` allocatable | GPU operator/device plugin not ready | Install/repair GPU operator, then re-check node allocatable |
