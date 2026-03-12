@@ -38,10 +38,6 @@ spec:
         hostPath:
           path: /etc/cufile.json
           type: File
-      - name: host-cuda-include
-        hostPath:
-          path: /usr/local/cuda/include
-          type: Directory
       containers:
       - name: pytorch-daemon-client
         image: __PYTORCH_IMAGE__
@@ -107,7 +103,4 @@ spec:
           readOnly: true
         - name: host-cufile-config
           mountPath: /etc/cufile.json
-          readOnly: true
-        - name: host-cuda-include
-          mountPath: /usr/local/cuda/include
           readOnly: true

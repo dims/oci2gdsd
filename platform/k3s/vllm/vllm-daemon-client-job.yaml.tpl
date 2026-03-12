@@ -38,10 +38,6 @@ spec:
         hostPath:
           path: /etc/cufile.json
           type: File
-      - name: host-cuda-include
-        hostPath:
-          path: /usr/local/cuda/include
-          type: Directory
       containers:
       - name: vllm-daemon-client
         image: __VLLM_IMAGE__
@@ -113,7 +109,4 @@ spec:
           readOnly: true
         - name: host-cufile-config
           mountPath: /etc/cufile.json
-          readOnly: true
-        - name: host-cuda-include
-          mountPath: /usr/local/cuda/include
           readOnly: true

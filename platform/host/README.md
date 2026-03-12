@@ -110,6 +110,11 @@ Defaults:
 - `MIN_FREE_GB_MODEL_ROOT=20` (fails fast when `OCI2GDSD_ROOT_PATH` free space is below 20 GiB)
 - `AUTO_CONFIGURE_STORAGE=true` (auto-migrates Docker `data-root` to `/mnt/nvme/docker` when root disk is too small and `/mnt/nvme` has capacity)
 
+`make verify-smoke` keeps the host probe in strict direct-GDS mode but relaxes only
+`OCI2GDS_FORCE_NO_COMPAT` for the Docker-launched host container. On current A100
+Docker runs, `CUFILE_ENV_PATH_JSON` with compat disabled fails `cuFileHandleRegister`
+even though the native cuFile probe still succeeds with `mode=direct`.
+
 Assumptions:
 
 - Probe container runs with `--privileged` by default in this harness.

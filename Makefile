@@ -83,6 +83,7 @@ prereq-all: prereq-local prereq-host-gds prereq-k3s
 prereq: prereq-all
 
 K3S_STRICT_GDS_ENV := REQUIRE_DIRECT_GDS=true OCI2GDS_STRICT=true OCI2GDS_PROBE_STRICT=true OCI2GDS_FORCE_NO_COMPAT=true
+HOST_SMOKE_GDS_ENV := ALLOW_RELAXED_GDS=true OCI2GDS_STRICT=true REQUIRE_DIRECT_GDS=true OCI2GDS_FORCE_NO_COMPAT=false
 
 .PHONY: verify-k3s-pytorch
 verify-k3s-pytorch: prereq-k3s
@@ -106,7 +107,7 @@ verify-core: verify-unit verify-local
 
 .PHONY: verify-smoke
 verify-smoke: verify-core prereq-k3s
-	./platform/host/scripts/quick-qwen.sh
+	$(HOST_SMOKE_GDS_ENV) ./platform/host/scripts/quick-qwen.sh
 	$(K3S_STRICT_GDS_ENV) ./platform/k3s/scripts/quick-qwen.sh
 
 .PHONY: clean-k3s

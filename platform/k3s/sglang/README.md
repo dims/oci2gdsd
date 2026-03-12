@@ -17,6 +17,9 @@ Implementation notes:
   runtime image at job start.
 - The private loader imports CUDA IPC tensor views from daemon tensor-map
   descriptors and feeds them into SGLang model loading.
+- The SGLang job intentionally uses the image's own CUDA headers. Mounting host
+  `/usr/local/cuda/include` can mask required toolkit headers such as
+  `fatbinary_section.h` and break SGLang JIT kernel compilation during startup.
 - Runtime marker coverage includes:
   - `DAEMON_NO_RUNTIME_ARTIFACT_ACCESS_OK`
   - `SGLANG_IPC_TENSOR_MAP_OK`

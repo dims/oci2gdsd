@@ -18,8 +18,6 @@
       "mountPath:[[:space:]]*/etc/cufile\\.json",
       "-[[:space:]]+name:[[:space:]]*CUFILE_ENV_PATH_JSON",
       "value:[[:space:]]*\"/etc/cufile\\.json\"",
-      "-[[:space:]]+name:[[:space:]]*host-cuda-include",
-      "mountPath:[[:space:]]*/usr/local/cuda/include",
       "mountPath:[[:space:]]*/run/oci2gdsd"
     ]
   },
