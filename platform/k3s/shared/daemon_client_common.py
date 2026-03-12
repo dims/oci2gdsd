@@ -368,11 +368,6 @@ def ensure_cuda_linkage_paths():
     if not usr_link.exists() and cufile_link.exists():
         usr_link.symlink_to(cufile_link)
 
-    libcuda_soname = cuda_lib / "libcuda.so.1"
-    compat_libcuda = Path("/usr/local/cuda/compat/libcuda.so.1")
-    if not libcuda_soname.exists() and compat_libcuda.exists():
-        libcuda_soname.symlink_to(compat_libcuda)
-
 
 def load_native_module(
     *,

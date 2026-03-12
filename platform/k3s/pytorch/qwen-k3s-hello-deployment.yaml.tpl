@@ -133,9 +133,6 @@ spec:
           if [ ! -e /usr/lib/x86_64-linux-gnu/libcufile.so ] && [ -e /usr/local/cuda/lib64/libcufile.so ]; then
             ln -sf /usr/local/cuda/lib64/libcufile.so /usr/lib/x86_64-linux-gnu/libcufile.so
           fi
-          if [ ! -e /usr/local/cuda/lib64/libcuda.so.1 ] && [ -e /usr/local/cuda/compat/libcuda.so.1 ]; then
-            ln -sf /usr/local/cuda/compat/libcuda.so.1 /usr/local/cuda/lib64/libcuda.so.1
-          fi
           if [ -d /host-dev ]; then
             for nvfs in /host-dev/nvidia-fs*; do
               [ -c "${nvfs}" ] || continue

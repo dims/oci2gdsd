@@ -39,7 +39,7 @@ If CUDA appears unavailable in pods (`torch.cuda.is_available() == False` while 
 
 - `/etc/nvidia-container-runtime/config.toml` has `accept-nvidia-visible-devices-envvar-when-unprivileged=true`
 - `k3s` is restarted after that change
-- no manual hostPath mounts are forcing `libcuda.so.1` into the container (these can conflict with NVIDIA runtime hooks)
+- no manual hostPath mounts or compat symlinks are forcing `libcuda.so.1` into the container (these can conflict with NVIDIA runtime hooks and trigger CUDA error 803)
 
 ## Files
 
